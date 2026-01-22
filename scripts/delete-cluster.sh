@@ -36,11 +36,6 @@ then
 		CLUSTER_DIR="test"
 	fi
 	export CLUSTER_DIR
-	if [ -d "${CLUSTER_DIR}" ]
-	then
-		echo "Error: The directory ${CLUSTER_DIR} exists.  Please delete it and try again."
-		exit 1
-	fi
 fi
 
 if [ ! -d "${CLUSTER_DIR}" ]
