@@ -518,6 +518,17 @@ then
 	exit 1
 fi
 
+PowerVC-Tool \
+	check-alive \
+	--serverIP ${SERVER_IP} \
+	--shouldDebug true
+RC=$?
+if [ ${RC} -gt 0 ]
+then
+	echo "Error: PowerVC-Tool check-alive failed with an RC of ${RC}"
+	exit 1
+fi
+
 openshift-install create cluster --dir=${CLUSTER_DIR} --log-level=debug
 RC=$?
 if [ ${RC} -gt 0 ]
