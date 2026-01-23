@@ -1349,7 +1349,9 @@ func handleConnection(conn net.Conn, cloud string) error {
 			log.Debugf("handleConnection: result from handleCheckAlive is %v", result)
 
 			cmd.Command = "is-alive"
-			cmd.Result = result
+			if result != nil {
+				cmd.Result = result.Error()
+			}
 
 			marshalledData, err = json.Marshal(cmd)
 			if err != nil {
@@ -1382,15 +1384,18 @@ func handleConnection(conn net.Conn, cloud string) error {
 			result = <-errChan
 			log.Debugf("handleConnection: result from handleCreateBastion is %v", result)
 
-			log.Debugf("handleConnection: waiting on result from handleCreateBastion")
 			cmd.Command = "bastion-created"
-			cmd.Result = result
+			if result != nil {
+				cmd.Result = result.Error()
+			}
+			log.Debugf("handleConnection: cmd = %+v", cmd)
 
 			marshalledData, err = json.Marshal(cmd)
 			if err != nil {
 				log.Debugf("handleConnection: json.Marshal returns %v", err)
 				return err
 			}
+			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
 
 			err = sendByteArray(conn, marshalledData)
 			if err != nil {

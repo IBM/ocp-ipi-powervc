@@ -220,32 +220,33 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 	if err != nil {
 		return err
 	}
-	log.Debugf("flavor = %+v", flavor)
+	log.Debugf("createServer: flavor = %+v", flavor)
 
 	image, err = findImage(ctx, cloudName, imageName)
 	if err != nil {
 		return err
 	}
-	log.Debugf("image = %+v", image)
+	log.Debugf("createServer: image = %+v", image)
 
 	network, err = findNetwork(ctx, cloudName, networkName)
 	if err != nil {
 		return err
 	}
-	log.Debugf("network = %+v", network)
+	log.Debugf("createServer: network = %+v", network)
 
 	if sshKeyName != "" {
 		sshKeyPair, err = findKeyPair(ctx, cloudName, sshKeyName)
 		if err != nil {
 			return err
 		}
+		log.Debugf("createServer: sshKeyPair = %+v", sshKeyPair)
 	}
 
 	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
 	if err != nil {
 		return err
 	}
-	fmt.Printf("connNetwork = %+v\n", connNetwork)
+	fmt.Printf("createServer: connNetwork = %+v\n", connNetwork)
 
 	portCreateOpts = ports.CreateOpts{
 		Name:                  fmt.Sprintf("%s-port", bastionName),
@@ -259,20 +260,20 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 	}
 
 	builder = portCreateOpts
-	log.Debugf("builder = %+v\n", builder)
+	log.Debugf("createServer: builder = %+v\n", builder)
 
 	port, err := ports.Create(ctx, connNetwork, builder).Extract()
 	if err != nil {
 		return err
 	}
-	log.Debugf("port = %+v\n", port)
-	log.Debugf("port.ID = %v\n", port.ID)
+	log.Debugf("createServer: port = %+v\n", port)
+	log.Debugf("createServer: port.ID = %v\n", port.ID)
 
 	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
 	if err != nil {
 		return err
 	}
-	fmt.Printf("connCompute = %+v\n", connCompute)
+	fmt.Printf("createServer: connCompute = %+v\n", connCompute)
 
 	portList = []servers.Network{
 		{ Port: port.ID, },
@@ -293,7 +294,7 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 //		ConfigDrive:      &instanceSpec.ConfigDrive,
 //		BlockDevice:      blockDevices,
 	}
-	log.Debugf("serverCreateOpts = %+v\n", serverCreateOpts)
+	log.Debugf("createServer: serverCreateOpts = %+v\n", serverCreateOpts)
 
 	if sshKeyName != "" {
 		newServer, err = servers.Create(ctx,
@@ -309,10 +310,10 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 	if err != nil {
 		return err
 	}
-	log.Debugf("newServer = %+v\n", newServer)
+	log.Debugf("createServer: newServer = %+v\n", newServer)
 
 	err = waitForServer(ctx, cloudName, bastionName)
-	log.Debugf("waitForServer = %v\n", err)
+	log.Debugf("createServer: waitForServer = %v\n", err)
 	if err != nil {
 		return err
 	}
@@ -333,7 +334,7 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	if err != nil {
 		return err
 	}
-	log.Debugf("setupBastionServer: homeDir = %s", homeDir)
+	log.Debugf("addServerKnownHosts: homeDir = %s", homeDir)
 
 	// Does ipAddress already exist in the known hosts file?
 	outb, err = runSplitCommand2([]string{
@@ -343,11 +344,11 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 		ipAddress,
 	})
 	outs = strings.TrimSpace(string(outb))
-	log.Debugf("setupBastionServer: outs = \"%s\"", outs)
+	log.Debugf("addServerKnownHosts: outs = \"%s\"", outs)
 	if errors.As(err, &exitError) {
-		log.Debugf("setupBastionServer: exitError.ExitCode() = %+v\n", exitError.ExitCode())
+		log.Debugf("addServerKnownHosts: exitError.ExitCode() = %+v\n", exitError.ExitCode())
 
-		log.Debugf("setupBastionServer: %v", exitError.ExitCode() == 1)
+		log.Debugf("addServerKnownHosts: %v", exitError.ExitCode() == 1)
 		if exitError.ExitCode() == 1 {
 
 			outb, err = keyscanServer(ctx, ipAddress, false)
@@ -356,7 +357,7 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 			}
 
 			knownHosts := path.Join(homeDir, ".ssh/known_hosts")
-			log.Debugf("setupBastionServer: knownHosts = %s", knownHosts)
+			log.Debugf("addServerKnownHosts: knownHosts = %s", knownHosts)
 
 			fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, 0644)
 			if err != nil {
@@ -421,6 +422,8 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			log.Debugf("setupBastionServer: outs = \"%s\"", outs)
 			if outs == "ready" {
 				break
+			} else if strings.Contains(outs, "Permission denied") {
+				return fmt.Errorf("Error: ssh publickey Permission denied")
 			}
 			time.Sleep(15 * time.Second)
 		}
@@ -722,6 +725,7 @@ func dnsForServer(ctx context.Context, cloudName string, apiKey string, bastionN
 
 	dnsService, err = loadDnsServiceAPI(apiKey, crnstr, zoneID)
 	if err != nil {
+		log.Errorf("dnsForServer: loadDnsServiceAPI returns %v", err)
 		return err
 	}
 	log.Debugf("dnsForServer: dnsService = %+v", dnsService)
@@ -732,18 +736,32 @@ func dnsForServer(ctx context.Context, cloudName string, apiKey string, bastionN
 		ipAddress,
 		true,
 		dnsService)
+	if err != nil {
+		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(1) returns %v", err)
+		return err
+	}
+
 	err = createOrDeletePublicDNSRecord(ctx,
 		dnsrecordsv1.CreateDnsRecordOptions_Type_A,
 		fmt.Sprintf("api-int.%s.%s", bastionName, domainName),
 		ipAddress,
 		true,
 		dnsService)
+	if err != nil {
+		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(2) returns %v", err)
+		return err
+	}
+
 	err = createOrDeletePublicDNSRecord(ctx,
 		dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
 		fmt.Sprintf("*.apps.%s.%s", bastionName, domainName),
 		fmt.Sprintf("api.%s.%s", bastionName, domainName),
 		true,
 		dnsService)
+	if err != nil {
+		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(3) returns %v", err)
+		return err
+	}
 
 	return nil
 }

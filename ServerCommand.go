@@ -18,6 +18,7 @@ import (
 	"bufio"
 //	"bytes"
 	"encoding/json"
+	"fmt"
 //	"io"
 	"io/ioutil"
 	"net"
@@ -41,12 +42,12 @@ type CommandHeader struct {
 }
 
 type CommandCheckAlive struct {
-	Command  string          `json:"Command"`
+	Command string           `json:"Command"`
 }
 
 type CommandIsAlive struct {
-	Command  string          `json:"Command"`
-	Result   error           `json:"Result"`
+	Command string           `json:"Command"`
+	Result  string           `json:"Result"`
 }
 
 type CommandCreateBastion struct {
@@ -57,8 +58,8 @@ type CommandCreateBastion struct {
 }
 
 type CommandBastionCreated struct {
-	Command    string        `json:"Command"`
-	Result     error         `json:"Result"`
+	Command string           `json:"Command"`
+	Result  string           `json:"Result"`
 }
 
 type CommandSendMetadata struct {
@@ -92,13 +93,14 @@ func receiveResponse(conn net.Conn) (response string, err error) {
 
 func sendCheckAlive(serverIP string) error {
 	var (
-		cmd            CommandCheckAlive
+		cmdIn          CommandCheckAlive
+		cmdOut         CommandIsAlive
 		marshalledData []byte
 		response       string
 		err            error
 	)
 
-	cmd = CommandCheckAlive{
+	cmdIn = CommandCheckAlive{
 		Command: "check-alive",
 	}
 
@@ -115,7 +117,7 @@ func sendCheckAlive(serverIP string) error {
 	// Close the connection when we're done
 	defer conn.Close()
 
-	marshalledData, err = json.Marshal(cmd)
+	marshalledData, err = json.Marshal(cmdIn)
 	if err != nil {
 		log.Debugf("sendCheckAlive: json.Marshal returns %v", err)
 		return err
@@ -135,6 +137,18 @@ func sendCheckAlive(serverIP string) error {
 		return err
 	}
 	log.Debugf("sendCheckAlive: read: %s", response)
+
+	err = json.Unmarshal([]byte(response), &cmdOut)
+	if err != nil {
+		log.Debugf("sendCheckAlive: json.Unmarshal returns %v", err)
+		return err
+	}
+	log.Debugf("sendCheckAlive: cmdOut = %+v", cmdOut)
+
+	if cmdOut.Result != "" {
+		return fmt.Errorf("%s", cmdOut.Result)
+	}
+
 	log.Debugf("sendCheckAlive: Done!")
 
 	return nil
@@ -142,13 +156,14 @@ func sendCheckAlive(serverIP string) error {
 
 func sendCreateBastion(serverIP string, cloudName string, serverName string, domainName string) error {
 	var (
-		cmd            CommandCreateBastion
+		cmdIn          CommandCreateBastion
+		cmdOut         CommandBastionCreated
 		marshalledData []byte
 		response       string
 		err            error
 	)
 
-	cmd = CommandCreateBastion{
+	cmdIn = CommandCreateBastion{
 		Command:    "create-bastion",
 		CloudName:  cloudName,
 		ServerName: serverName,
@@ -168,7 +183,7 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	// Close the connection when we're done
 	defer conn.Close()
 
-	marshalledData, err = json.Marshal(cmd)
+	marshalledData, err = json.Marshal(cmdIn)
 	if err != nil {
 		log.Debugf("sendCreateBastion: json.Marshal returns %v", err)
 		return err
@@ -188,6 +203,18 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 		return err
 	}
 	log.Debugf("sendCreateBastion: read: %s", response)
+
+	err = json.Unmarshal([]byte(response), &cmdOut)
+	if err != nil {
+		log.Debugf("sendCreateBastion: json.Unmarshal returns %v", err)
+		return err
+	}
+	log.Debugf("sendCreateBastion: cmdOut = %+v", cmdOut)
+
+	if cmdOut.Result != "" {
+		return fmt.Errorf("%s", cmdOut.Result)
+	}
+
 	log.Debugf("sendCreateBastion: Done!")
 
 	return nil
