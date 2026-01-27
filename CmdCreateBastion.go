@@ -323,11 +323,11 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 
 func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	var (
-		homeDir      string
-		outb         []byte
-		outs         string
-		exitError    *exec.ExitError
-		err          error
+		homeDir    string
+		knownHosts string
+		outb       []byte
+		outs       string
+		err        error
 	)
 
 	homeDir, err = os.UserHomeDir()
@@ -336,41 +336,42 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	}
 	log.Debugf("addServerKnownHosts: homeDir = %s", homeDir)
 
-	// Does ipAddress already exist in the known hosts file?
+	knownHosts = path.Join(homeDir, ".ssh/known_hosts")
+	log.Debugf("addServerKnownHosts: knownHosts = %s", knownHosts)
+
+	// Remove ipAddress from known_hosts
 	outb, err = runSplitCommand2([]string{
 		"ssh-keygen",
-		"-H",
-		"-F",
+		"-f",
+		knownHosts,
+		"-R",
 		ipAddress,
 	})
 	outs = strings.TrimSpace(string(outb))
 	log.Debugf("addServerKnownHosts: outs = \"%s\"", outs)
-	if errors.As(err, &exitError) {
-		log.Debugf("addServerKnownHosts: exitError.ExitCode() = %+v\n", exitError.ExitCode())
 
-		log.Debugf("addServerKnownHosts: %v", exitError.ExitCode() == 1)
-		if exitError.ExitCode() == 1 {
-
-			outb, err = keyscanServer(ctx, ipAddress, false)
-			if err != nil {
-				return err
-			}
-
-			knownHosts := path.Join(homeDir, ".ssh/known_hosts")
-			log.Debugf("addServerKnownHosts: knownHosts = %s", knownHosts)
-
-			fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, 0644)
-			if err != nil {
-				return err
-			}
-
-			fileKnownHosts.Write(outb)
-
-			defer fileKnownHosts.Close()
-		}
+	outb, err = keyscanServer(ctx, ipAddress, false)
+	if err != nil {
+		return err
 	}
 
-	return err
+	fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+
+	defer fileKnownHosts.Close()
+
+	n, err := fileKnownHosts.Write(outb)
+	if err != nil {
+		return err
+	}
+
+	if n != len(outb) {
+		return fmt.Errorf("Could not write entire data to known_hosts")
+	}
+
+	return nil
 }
 
 func setupBastionServer(ctx context.Context, cloudName string, serverName string, domainName string, bastionRsa string) error {
