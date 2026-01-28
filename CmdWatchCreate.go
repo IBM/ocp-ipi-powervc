@@ -45,16 +45,6 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		err                error
 	)
 
-	// ibmcloud is optional
-	apiKey = os.Getenv("IBMCLOUD_API_KEY")
-	if len(apiKey) != 0 {
-		// Before we do a lot of work, validate the apikey!
-		_, err = InitBXService(apiKey)
-		if err != nil {
-			return err
-		}
-	}
-
 	ptrCloud = watchCreateClusterFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrMetadata = watchCreateClusterFlags.String("metadata", "", "The location of the metadata.json file")
 	ptrKubeConfig = watchCreateClusterFlags.String("kubeconfig", "", "The KUBECONFIG file")
@@ -84,6 +74,16 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		Out:       out,
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
+	}
+
+	// ibmcloud is optional
+	apiKey = os.Getenv("IBMCLOUD_API_KEY")
+	if len(apiKey) != 0 {
+		// Before we do a lot of work, validate the apikey!
+		_, err = InitBXService(apiKey)
+		if err != nil {
+			return err
+		}
 	}
 
 	if ptrCloud == nil || *ptrCloud == "" {
