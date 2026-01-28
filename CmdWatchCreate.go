@@ -35,7 +35,6 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		ptrBastionUsername *string
 		ptrBastionRsa      *string
 		ptrBaseDomain      *string
-		ptrCisInstanceCRN  *string
 		ptrShouldDebug     *string
 		metadata           *Metadata
 		services           *Services
@@ -51,7 +50,6 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	ptrBastionUsername = watchCreateClusterFlags.String("bastionUsername", "", "The username of the bastion VM to use")
 	ptrBastionRsa = watchCreateClusterFlags.String("bastionRsa", "", "The RSA filename for the bastion VM to use")
 	ptrBaseDomain = watchCreateClusterFlags.String("baseDomain", "", "The DNS base name to use")
-	ptrCisInstanceCRN = watchCreateClusterFlags.String("cisInstanceCRN", "", "The IBMCloud DNS CRN to use")
 	ptrShouldDebug = watchCreateClusterFlags.String("shouldDebug", "false", "Should output debug output")
 
 	watchCreateClusterFlags.Parse(args)
@@ -110,7 +108,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	}
 	robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewVMs,          "Virtual Machines"})
 	robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewLoadBalancer, "Load Balancer"})
-	if *ptrBaseDomain != "" && *ptrCisInstanceCRN != "" {
+	if *ptrBaseDomain != "" {
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewIBMDNS, "IBM Domain Name Service"})
 	}
 
@@ -122,7 +120,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	}
 	log.Debugf("metadata = %+v", metadata)
 
-	services, err = NewServices(metadata, apiKey, *ptrKubeConfig, *ptrCloud, *ptrBastionUsername, *ptrBastionRsa, *ptrBaseDomain, *ptrCisInstanceCRN)
+	services, err = NewServices(metadata, apiKey, *ptrKubeConfig, *ptrCloud, *ptrBastionUsername, *ptrBastionRsa, *ptrBaseDomain)
 	if err != nil {
 		return fmt.Errorf("Error: Could not create a Services object (%s)!\n", err)
 	}

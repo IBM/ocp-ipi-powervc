@@ -28,9 +28,16 @@ import (
 
 	"github.com/IBM/go-sdk-core/v5/core"
 
+	"github.com/IBM/networking-go-sdk/zonesv1"
+
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 
 	"github.com/golang-jwt/jwt"
+)
+
+const (
+	// cisServiceID is the Cloud Internet Services' catalog service ID.
+	cisServiceID = "75874a60-cb12-11e7-948e-37ac098eb1b9"
 )
 
 type Services struct {
@@ -80,12 +87,13 @@ type User struct {
 	generation int
 }
 
-func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud string, bastionUsername string, installerRsa string, baseDomain string, cisInstanceCRN string) (*Services, error) {
+func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud string, bastionUsername string, installerRsa string, baseDomain string) (*Services, error) {
 	var (
 		ctx             context.Context
 		controllerSvc   *resourcecontrollerv2.ResourceControllerV2
 		bxSession       *bxsession.Session
 		user            *User
+		cisInstanceCRN  string
 		services        *Services
 		err             error
 	)
@@ -110,6 +118,9 @@ func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud str
 		if err != nil {
 			return nil, err
 		}
+
+		cisInstanceCRN, err = getCISInstanceCRN(apiKey, controllerSvc, baseDomain)
+		log.Debugf("NewServices: cisInstanceCRN = %v, err = %+v", cisInstanceCRN, err)
 	}
 
 	services = &Services{
@@ -283,4 +294,68 @@ func initCloudObjectStorageService(apiKey string) (*resourcecontrollerv2.Resourc
 	}
 
 	return controllerSvc, nil
+}
+
+func getCISInstanceCRN(apiKey string, controllerSvc *resourcecontrollerv2.ResourceControllerV2, baseDomain string) (CISInstanceCRN string, err error) {
+	var (
+		listInstanceOptions           *resourcecontrollerv2.ListResourceInstancesOptions
+		listResourceInstancesResponse *resourcecontrollerv2.ResourceInstancesList
+		authenticator                 core.Authenticator
+		instance                      resourcecontrollerv2.ResourceInstance
+		zonesService                  *zonesv1.ZonesV1
+		listZonesOptions              *zonesv1.ListZonesOptions
+		listZonesResponse             *zonesv1.ListZonesResp
+	)
+
+	listInstanceOptions = controllerSvc.NewListResourceInstancesOptions()
+	listInstanceOptions.SetResourceID(cisServiceID)
+	log.Debugf("getCISInstanceCRN: listInstanceOptions = %+v", listInstanceOptions)
+
+	listResourceInstancesResponse, _, err = controllerSvc.ListResourceInstances(listInstanceOptions)
+	if err != nil {
+		err = fmt.Errorf("Error: getCISInstanceCRN: ListResourceInstances: returns %v", err)
+		return
+	}
+
+	for _, instance = range listResourceInstancesResponse.Resources {
+		log.Debugf("getCISInstanceCRN: instance = %+v", instance)
+
+		authenticator = &core.IamAuthenticator{
+			ApiKey: apiKey,
+		}
+		err = authenticator.Validate()
+		if err != nil {
+			err = fmt.Errorf("Error: :getCISInstanceCRN: authenticator.Validate: %v", err)
+			return
+		}
+
+		zonesService, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
+			Authenticator: authenticator,
+			Crn:           instance.CRN,
+		})
+		if err != nil {
+			err = fmt.Errorf("Error: getCISInstanceCRN: NewZonesV1: %v", err)
+			return
+		}
+
+		listZonesOptions = zonesService.NewListZonesOptions()
+
+		listZonesResponse, _, err = zonesService.ListZones(listZonesOptions)
+		if listZonesResponse == nil {
+			err = fmt.Errorf("Error: getCISInstanceCRN: ListZones: %v", err)
+			return
+		}
+
+		for _, zone := range listZonesResponse.Result {
+			log.Debugf("getCISInstanceCRN: zone.Name = %s, zone.Status = %s", *zone.Name, *zone.Status)
+
+			if *zone.Status == "active" {
+				if *zone.Name == baseDomain {
+					CISInstanceCRN = *instance.CRN
+				}
+			}
+		}
+	}
+
+	return
 }
