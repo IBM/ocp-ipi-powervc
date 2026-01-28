@@ -107,7 +107,7 @@ The environment variable `IBMCLOUD_API_KEY` needs to be set.
 
 Example usage:
 
-`$ PowerVC-Tool watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --cisInstanceCRN ${ibmcloud_cis_crn} --shouldDebug false`
+`$ PowerVC-Tool watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false`
 
 args:
 - `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
@@ -121,8 +121,6 @@ args:
 - `bastionRsa` the SSH private key file for the default username for the HAProxy VM.
 
 - `baseDomain` the domain name of the OpenShift cluster.
-
-- `cisInstanceCRN` the CRN of the IBM Cloud CIS DNS instance.
 
 - `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
 

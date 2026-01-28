@@ -560,34 +560,6 @@ then
 		fi
 	fi
 
-	if ibmcloud target 2>&1 | grep "Not logged in"
-	then
-		# Skip the next if test
-		IBMCLOUD_API_KEY=""
-	fi
-
-	CIS_INSTANCE_CRN=""
-	if [ -n "${IBMCLOUD_API_KEY}" ]
-	then
-		while read CRN
-		do
-			ibmcloud cis instance-set "${CRN}" >/dev/null
-			while read ID NAME STATUS;
-			do
-				if [ "${STATUS}" == "pending" ]
-				then
-					continue
-				fi
-				if [ "${NAME}" == "${BASEDOMAIN}" ]
-				then
-					CIS_INSTANCE_CRN=${CRN}
-					break
-				fi
-			done < <(ibmcloud cis domains --output json | jq -r '.[] | "\(.id) \(.name) \(.status)"')
-		done < <(ibmcloud cis instances --output json | jq -r '.[].crn')
-	fi
-	echo "CIS_INSTANCE_CRN=${CIS_INSTANCE_CRN}"
-
 	ARGS="watch-create \
 		--cloud ${CLOUD} \
 		--metadata ${CLUSTER_DIR}/metadata.json \
@@ -596,10 +568,6 @@ then
 		--bastionRsa ${BASTION_RSA} \
 		--baseDomain ${BASEDOMAIN} \
 		--shouldDebug false"
-	if [ -n "${CIS_INSTANCE_CRN}" ]
-	then
-		ARGS+=" --cisInstanceCRN ${CIS_INSTANCE_CRN}"
-	fi
 
 	PowerVC-Tool ${ARGS}
 
