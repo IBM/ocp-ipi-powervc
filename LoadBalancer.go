@@ -144,6 +144,12 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		return
 	}
 
+	err = addServerKnownHosts(ctx, ipAddress)
+	if err != nil {
+		fmt.Printf("%s: Error: addServerKnownHosts returns error %v\n", LoadBalancerName, err)
+		return
+	}
+
 	outb, err = runSplitCommand2([]string{
 		"ssh",
 		"-i",
