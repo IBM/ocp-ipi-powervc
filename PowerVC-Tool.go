@@ -40,7 +40,7 @@ var (
 )
 
 func printUsage(executableName string) {
-	fmt.Fprintf(os.Stderr, "version = %v\nrelease = %v\n", version, release)
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	fmt.Fprintf(os.Stderr, "Usage: %s [ "+
 		"check-alive "+

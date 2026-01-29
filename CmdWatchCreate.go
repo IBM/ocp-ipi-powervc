@@ -44,6 +44,8 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		err                error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	ptrCloud = watchCreateClusterFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrMetadata = watchCreateClusterFlags.String("metadata", "", "The location of the metadata.json file")
 	ptrKubeConfig = watchCreateClusterFlags.String("kubeconfig", "", "The KUBECONFIG file")
@@ -111,8 +113,6 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	if *ptrBaseDomain != "" {
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewIBMDNS, "IBM Domain Name Service"})
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	metadata, err = NewMetadataFromCCMetadata(*ptrMetadata)
 	if err != nil {

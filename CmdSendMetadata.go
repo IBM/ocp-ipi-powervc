@@ -37,6 +37,8 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		err                  error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	ptrCreateMetadata = sendMetadataFlags.String("createMetadata", "", "Create the metadata of this file")
 	ptrDeleteMetadata = sendMetadataFlags.String("deleteMetadata", "", "Delete the metadata of this file")
 	ptrServerIP = sendMetadataFlags.String("serverIP", "", "The IP address of the server to send the command to")
@@ -79,8 +81,6 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	err = sendMetadata(metadataFile, *ptrServerIP, shouldCreateMetadata)
 

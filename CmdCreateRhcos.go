@@ -57,6 +57,8 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 		err             error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	// NOTE: This is optional
 	apiKey = os.Getenv("IBMCLOUD_API_KEY")
 
@@ -114,8 +116,6 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
 	defer cancel()

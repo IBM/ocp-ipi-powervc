@@ -32,6 +32,8 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 		err            error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	ptrServerIP = checkAliveFlags.String("serverIP", "", "The IP address of the server to send the command to")
 	ptrShouldDebug = checkAliveFlags.String("shouldDebug", "false", "Should output debug output")
 
@@ -60,8 +62,6 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	err = sendCheckAlive(*ptrServerIP)
 

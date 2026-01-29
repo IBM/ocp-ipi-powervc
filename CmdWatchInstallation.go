@@ -115,6 +115,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		err                 error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	apiKey = os.Getenv("IBMCLOUD_API_KEY")
 
 	ptrCloud = watchInstallationFlags.String("cloud", "", "The cloud to use in clouds.yaml")
@@ -195,8 +197,6 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	bastionRsa = *ptrBastionRsa
 

@@ -70,6 +70,8 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 		err            error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	ptrCloud = createBastionFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrBastionName = createBastionFlags.String("bastionName", "", "The name of the bastion VM to use")
 	ptrBastionRsa = createBastionFlags.String("bastionRsa", "", "The RSA filename for the bastion VM to use")
@@ -138,8 +140,6 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
 	defer cancel()

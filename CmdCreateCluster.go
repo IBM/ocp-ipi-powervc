@@ -42,6 +42,8 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 		err            error
 	)
 
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
 	ptrDirectory = createClusterFlags.String("directory", "", "The location of the installation directory")
 	ptrShouldDebug = createClusterFlags.String("shouldDebug", "false", "Should output debug output")
 
@@ -70,8 +72,6 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 	if *ptrDirectory == "" {
 		return fmt.Errorf("Error: No directory key set, use -directory")
 	}
-
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	for _, function := range functions {
 		err = function(*ptrDirectory)
