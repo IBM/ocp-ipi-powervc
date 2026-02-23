@@ -232,7 +232,7 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	// Connect to the server
 	conn, err := net.Dial("tcp", net.JoinHostPort(serverIP, "8080"))
 	if err != nil {
-		log.Debugf("sendMetadata: net.Dial return %v", err)
+		log.Debugf("sendMetadata: net.Dial returns %v", err)
 		return err
 	}
 
@@ -242,7 +242,7 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	// Read metadata.json into a buffer
 	content, err = ioutil.ReadFile(metadataFile)
 	if err != nil {
-		log.Debugf("sendMetadata: ioutil.ReadFile return %v", err)
+		log.Debugf("sendMetadata: ioutil.ReadFile returns %v", err)
 		return err
 	}
 	log.Debugf("sendMetadata: content = %s", content)
@@ -262,7 +262,7 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 
 	marshalledData, err = json.Marshal(cmd)
 	if err != nil {
-		log.Debugf("sendMetadata: json.Marshal return %v", err)
+		log.Debugf("sendMetadata: json.Marshal returns %v", err)
 		return err
 	}
 	log.Debugf("sendMetadata: marshalledData = %v", string(marshalledData))
