@@ -264,6 +264,13 @@ then
 	exit 1
 fi
 ${DEBUG} && echo "PRIMARY_HMC_UUID=${PRIMARY_HMC_UUID}"
+if [ "${PRIMARY_HMC_UUID}" == "null" ]
+then
+	echo "Error: Could not find primary HMC UUID in:"
+	cat ${HYPERVISOR_FILE}
+	echo
+	exit 1
+fi
 
 PRIMARY_HMC_DISPLAY_NAME=$(jq -r '.host[].registration | select(length > 0) | .host_display_name' ${HYPERVISOR_FILE})
 RC=$?
