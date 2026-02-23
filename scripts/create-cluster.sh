@@ -158,6 +158,10 @@ then
 	export NETWORK_NAME
 fi
 
+if [[ -v PULLSECRET_FILE ]] && [[ ! -f "${PULLSECRET_FILE}" ]]
+then
+	echo "Warning: PULLSECRET_FILE (${PULLSECRET_FILE}) does not exist"
+fi
 if [[ -v PULLSECRET_FILE ]] && [[ -f "${PULLSECRET_FILE}" ]]
 then
 	PULL_SECRET=$(cat "${PULLSECRET_FILE}")
@@ -229,46 +233,40 @@ then
 	exit 1
 fi
 
-if [[ ! -v SERVER_IP ]]
+if [[ ! -v CONTROLLER_IP ]]
 then
-	read -p "What is the PowerVC server IP []: " SERVER_IP
-	if [ -z "${SERVER_IP}" ]
+	read -p "What is the PowerVC-Tool master controller IP []: " CONTROLLER_IP
+	if [ -z "${CONTROLLER_IP}" ]
 	then
 		echo "Error: You must enter something"
 		exit 1
 	fi
-	export SERVER_IP
+	export CONTROLLER_IP
 fi
 
-ping -c1 ${SERVER_IP}
+ping -c1 ${CONTROLLER_IP}
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: Trying to ping ${SERVER_IP} returned an RC of ${RC}"
+	echo "Error: Trying to ping ${CONTROLLER_IP} returned an RC of ${RC}"
 	exit 1
 fi
 
-# Should be discoverable!
-if true # @BUG
+PowerVC-Tool \
+	check-alive \
+	--serverIP "${CONTROLLER_IP}" \
+	--shouldDebug true
+RC=$?
+if [ ${RC} -gt 0 ]
 then
-if [[ ! -v RHCOS_IMAGE_NAME ]]
-then
-	read -p "What is the RHCOS image name to use for the cluster []: " RHCOS_IMAGE_NAME
-	if [ -z "${RHCOS_IMAGE_NAME}" ]
-	then
-		echo "Error: You must enter something"
-		exit 1
-	fi
-	export RHCOS_IMAGE_NAME
-fi
-else
-	export RHCOS_IMAGE_NAME=${RHCOS_FILENAME}
+	echo "Error: master controller returned an RC of ${RC}"
+	exit 1
 fi
 
-openstack --os-cloud=${CLOUD} image show ${RHCOS_IMAGE_NAME} 1>/dev/null
+openstack --os-cloud=${CLOUD} image show ${RHCOS_FILENAME} 1>/dev/null
 if [ $? -gt 0 ]
 then
-	echo "Error: Cannot find image (${RHCOS_IMAGE_NAME}). Is openstack configured correctly?"
+	echo "Error: Cannot find image (${RHCOS_FILENAME}). Is openstack configured correctly?"
 	export RHCOS_IMAGE_NAME=${RHCOS_FILENAME}
 	#exit 1 @BUG
 fi
@@ -293,7 +291,7 @@ fi
 
 # NOTE: IBMCLOUD_API_KEY is an optional environment variable
 declare -a ENV_VARS
-ENV_VARS=( "BASEDOMAIN" "BASTION_IMAGE_NAME" "BASTION_USERNAME" "CLOUD" "CLUSTER_DIR" "CLUSTER_NAME" "FLAVOR_NAME" "MACHINE_TYPE" "NETWORK_NAME" "RHCOS_IMAGE_NAME" "SERVER_IP" "SSHKEY_NAME" )
+ENV_VARS=( "BASEDOMAIN" "BASTION_IMAGE_NAME" "BASTION_USERNAME" "CLOUD" "CLUSTER_DIR" "CLUSTER_NAME" "FLAVOR_NAME" "MACHINE_TYPE" "NETWORK_NAME" "RHCOS_FILENAME" "CONTROLLER_IP" "SSHKEY_NAME" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -322,7 +320,7 @@ PowerVC-Tool \
 	--sshKeyName "${SSHKEY_NAME}" \
 	--domainName "${BASEDOMAIN}" \
 	--enableHAProxy true \
-	--serverIP "${SERVER_IP}" \
+	--serverIP "${CONTROLLER_IP}" \
 	--shouldDebug true
 RC=$?
 if [ ${RC} -gt 0 ]
@@ -445,7 +443,7 @@ platform:
     apiVIPs:
     - ${VIP_API}
     cloud: ${CLOUD}
-    clusterOSImage: ${RHCOS_IMAGE_NAME}
+    clusterOSImage: ${RHCOS_FILENAME}
     defaultMachinePlatform:
       type: ${FLAVOR_NAME}
     ingressVIPs:
@@ -499,7 +497,7 @@ fi
 PowerVC-Tool \
 	send-metadata \
 	--createMetadata ${CLUSTER_DIR}/metadata.json \
-	--serverIP ${SERVER_IP} \
+	--serverIP ${CONTROLLER_IP} \
 	--shouldDebug true
 RC=$?
 if [ ${RC} -gt 0 ]
@@ -520,7 +518,7 @@ fi
 
 PowerVC-Tool \
 	check-alive \
-	--serverIP ${SERVER_IP} \
+	--serverIP ${CONTROLLER_IP} \
 	--shouldDebug true
 RC=$?
 if [ ${RC} -gt 0 ]
