@@ -347,8 +347,27 @@ fi
 # Make sure all required DNS entries exist!
 while true
 do
+	# Try the wildcard DNS entry first
 	FOUND_ALL=true
-	for PREFIX in api api-int console.apps
+	echo "Trying up to 60 times resolving *.apps.${CLUSTER_NAME}.${BASEDOMAIN} ..."
+	for (( TRIES=0; TRIES<=60; TRIES++ ))
+	do
+		DNS="a${TRIES}.apps.${CLUSTER_NAME}.${BASEDOMAIN}"
+		FOUND=false
+		if getent ahostsv4 ${DNS}
+		then
+			echo "Found! ${DNS}"
+			FOUND=true
+			break
+		fi
+		sleep 5s
+	done
+	if ! ${FOUND}
+	then
+		FOUND_ALL=false
+		continue
+	fi
+	for PREFIX in api api-int
 	do
 		DNS="${PREFIX}.${CLUSTER_NAME}.${BASEDOMAIN}"
 		FOUND=false
@@ -357,7 +376,7 @@ do
 			echo "Trying ${DNS}"
 			if getent ahostsv4 ${DNS}
 			then
-				echo "Found!"
+				echo "Found! ${DNS}"
 				FOUND=true
 				break
 			fi
