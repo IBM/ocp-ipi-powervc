@@ -44,29 +44,29 @@ then
 	exit 1
 fi
 
-if [[ ! -v SERVER_IP ]]
+if [[ ! -v CONTROLLER_IP ]]
 then
-	read -p "What is the PowerVC server IP []: " SERVER_IP
-	if [ -z "${SERVER_IP}" ]
+	read -p "What is the PowerVC-Tool master controller IP []: " CONTROLLER_IP
+	if [ -z "${CONTROLLER_IP}" ]
 	then
 		echo "Error: You must enter something"
 		exit 1
 	fi
-	export SERVER_IP
+	export CONTROLLER_IP
 fi
 
-ping -c1 ${SERVER_IP}
+ping -c1 ${CONTROLLER_IP}
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: Trying to ping ${SERVER_IP} returned an RC of ${RC}"
+	echo "Error: Trying to ping ${CONTROLLER_IP} returned an RC of ${RC}"
 	exit 1
 fi
 
 PowerVC-Tool \
 	send-metadata \
 	--deleteMetadata ${CLUSTER_DIR}/metadata.json \
-	--serverIP ${SERVER_IP} \
+	--serverIP ${CONTROLLER_IP} \
 	--shouldDebug true
 RC=$?
 
