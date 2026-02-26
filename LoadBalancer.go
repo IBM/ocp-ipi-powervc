@@ -156,6 +156,21 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		lbs.services.GetInstallerRsa(),
 		fmt.Sprintf("%s@%s", lbs.services.GetBastionUsername(), ipAddress),
 		"sudo",
+		"cat",
+		"/etc/haproxy/haproxy.cfg",
+	})
+	outs = strings.TrimSpace(string(outb))
+	if err != nil {
+		fmt.Printf("%s: Error: Catting haproxy configuration returns error %v\n", LoadBalancerName, err)
+		return
+	}
+
+	outb, err = runSplitCommand2([]string{
+		"ssh",
+		"-i",
+		lbs.services.GetInstallerRsa(),
+		fmt.Sprintf("%s@%s", lbs.services.GetBastionUsername(), ipAddress),
+		"sudo",
 		"systemctl",
 		"status",
 		"haproxy.service",
@@ -167,6 +182,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		fmt.Printf("%s: Error: Finding haproxy status returns error %v\n", LoadBalancerName, err)
 		return
 	}
+
 	fmt.Printf("%s: Cluster bastion has the following status:\n", LoadBalancerName)
 	fmt.Println(outs)
 }
