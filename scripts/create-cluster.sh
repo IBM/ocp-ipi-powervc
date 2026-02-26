@@ -16,6 +16,21 @@
 
 set -uo pipefail
 
+function cleanup_metadata()
+{
+	if [ ! -f "${CLUSTER_DIR}/metadata.json" ]
+	then
+		exit 0
+	fi
+
+	echo "Deleting metadata.json"
+	PowerVC-Tool \
+		send-metadata \
+		--deleteMetadata "${CLUSTER_DIR}/metadata.json" \
+		--serverIP "${CONTROLLER_IP}" \
+		--shouldDebug true
+}
+
 if [[ ! -v CLOUD ]]
 then
 	read -p "What is the cloud name in ~/.config/openstack/clouds.yaml []: " CLOUD
@@ -528,10 +543,13 @@ fi
 #jq --arg NEW_INFRA_ID ${CLUSTER_NAME} -r -c '. | .infraID = $NEW_INFRA_ID' ${CLUSTER_DIR}/metadata.json
 #jq --arg NEW_INFRA_ID ${CLUSTER_NAME} -r -c '. | .powervc.identifier.openshiftClusterID = $NEW_INFRA_ID' ${CLUSTER_DIR}/metadata.json
 
+set +e
 openshift-install create manifests --dir=${CLUSTER_DIR}
 RC=$?
+set -e
 if [ ${RC} -gt 0 ]
 then
+	cleanup_metadata
 	exit 1
 fi
 
@@ -543,11 +561,14 @@ RC=$?
 if [ ${RC} -gt 0 ]
 then
 	echo "Error: PowerVC-Tool check-alive failed with an RC of ${RC}"
+	cleanup_metadata
 	exit 1
 fi
 
+set +e
 openshift-install create cluster --dir=${CLUSTER_DIR} --log-level=debug
 RC=$?
+set -e
 if [ ${RC} -gt 0 ]
 then
 	echo "Error: openshift-install create cluster failed with an RC of ${RC}"
@@ -587,6 +608,8 @@ then
 		--shouldDebug false"
 
 	PowerVC-Tool ${ARGS}
+
+	cleanup_metadata
 
 	exit 1
 fi
