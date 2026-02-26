@@ -574,6 +574,8 @@ then
 	echo "Error: openshift-install create cluster failed with an RC of ${RC}"
 	echo
 
+	cleanup_metadata
+
 	if [[ ! -v BASTION_USERNAME ]]
 	then
 		read -p "What is the username for the bastion [cloud-user]: " BASTION_USERNAME
@@ -608,8 +610,6 @@ then
 		--shouldDebug false"
 
 	PowerVC-Tool ${ARGS}
-
-	cleanup_metadata
 
 	exit 1
 fi
