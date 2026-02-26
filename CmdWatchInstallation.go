@@ -662,6 +662,9 @@ func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastion
 		if !bastionInformation.Valid {
 			continue
 		}
+		if bastionInformation.NumVMs == 0 {
+			continue
+		}
 
 		filename = "/tmp/haproxy.cfg"
 		fmt.Printf("Writing %s\n\n", filename)
