@@ -164,6 +164,8 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		fmt.Printf("%s: Error: Catting haproxy configuration returns error %v\n", LoadBalancerName, err)
 		return
 	}
+	fmt.Printf("%s: Cluster bastion has the following config:\n", LoadBalancerName)
+	fmt.Println(outs)
 
 	outb, err = runSplitCommand2([]string{
 		"ssh",
