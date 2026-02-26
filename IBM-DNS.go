@@ -110,6 +110,10 @@ func initIBMDNSService(services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.
 		err                 error
 	)
 
+	if services == nil {
+		return nil, nil, nil
+	}
+
 	authenticator = &core.IamAuthenticator{
 		ApiKey: services.GetApiKey(),
 	}
@@ -211,7 +215,13 @@ func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 		result   []string
 	)
 
-	log.Debugf("listIBMDNSRecords: Listing IBMDNS records")
+	log.Debugf("listIBMDNSRecords: Listing IBMDNS records (%v)", dns.services)
+
+	result = make([]string, 0, 3)
+
+	if dns.services == nil {
+		return result, nil
+	}
 
 	metadata = dns.services.GetMetadata()
 
@@ -235,8 +245,6 @@ func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 	dnsRecordsOptions := dns.dnsRecordsSvc.NewListAllDnsRecordsOptions()
 	dnsRecordsOptions.PerPage = &perPage
 	dnsRecordsOptions.Page = &page
-
-	result = make([]string, 0, 3)
 
 	dnsMatcher, err := regexp.Compile(fmt.Sprintf(`.*\Q%s.%s\E$`, metadata.GetClusterName(), dns.services.GetBaseDomain()))
 	if err != nil {
@@ -323,6 +331,11 @@ func (dns *IBMDNS) ClusterStatus() {
 	)
 
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
+
+	if dns.services == nil {
+		fmt.Printf("%s is NOTOK. It has not been initialized.\n", IBMDNSName)
+		return
+	}
 
 	metadata = dns.services.GetMetadata()
 
