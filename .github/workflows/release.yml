@@ -58,7 +58,8 @@ jobs:
     - name: Release scripts
       uses: softprops/action-gh-release@v2
       # https://github.com/softprops/action-gh-release
-      if: ${{ env.GOARCH }} == 'amd64'
+      if: ${{ env.GOARCH == 'amd64' }}
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
       with:
         files: |
           scripts/create-cluster.sh
