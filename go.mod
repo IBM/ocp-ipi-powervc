@@ -7,7 +7,7 @@ require (
 	github.com/IBM/go-sdk-core/v5 v5.21.0
 	github.com/IBM/networking-go-sdk v0.51.14
 	github.com/IBM/platform-services-go-sdk v0.90.0
-	github.com/coreos/ignition/v2 v2.24.0
+	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/gophercloud/gophercloud/v2 v2.10.0
 	github.com/gophercloud/utils/v2 v2.0.0-20251103115625-7dba497d90f8
@@ -46,10 +46,10 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.3 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.34.1 // indirect
