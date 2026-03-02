@@ -10,7 +10,7 @@ require (
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/gophercloud/gophercloud/v2 v2.10.0
-	github.com/gophercloud/utils/v2 v2.0.0-20251103115625-7dba497d90f8
+	github.com/gophercloud/utils/v2 v2.0.0-20260107124036-1d7954eb9711
 	github.com/openshift/api v0.0.0-20260228183123-9b2ee997d297
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.35.2
