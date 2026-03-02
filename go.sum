@@ -10,6 +10,8 @@ github.com/IBM/networking-go-sdk v0.51.14 h1:WYUdTmFZKeEDYctOk4YpNHNtjN3OOvV8/JD
 github.com/IBM/networking-go-sdk v0.51.14/go.mod h1:TAXWyBUk3C3R7aS1m84EfKdnDcBMZMAClwLfDj/SYZc=
 github.com/IBM/platform-services-go-sdk v0.90.0 h1:hsUkgZZBGYK+szFb0tF9Q7uy1VjMY+VlYAPgPwFPMrg=
 github.com/IBM/platform-services-go-sdk v0.90.0/go.mod h1:aGD045m6I8pfcB77wft8w2cHqWOJjcM3YSSV55BX0Js=
+github.com/IBM/platform-services-go-sdk v0.95.0 h1:K4le7e+5sbuSNa1GZp5XTKA4AJHpKddCcQUR17mRwCw=
+github.com/IBM/platform-services-go-sdk v0.95.0/go.mod h1:KAnBhxKaYsu9It2aVXV6oCPEj78imvTs2qSG0ScZKpM=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/coreos/go-semver v0.3.1 h1:yi21YpKnrx1gt5R+la8n5WgS0kCrsPp33dmEyHReZr4=
