@@ -11,6 +11,12 @@ jobs:
     name: release linux/amd64
     runs-on: ubuntu-latest
     permissions: write-all
+    strategy:
+      matrix:
+        # List of GOOS and GOARCH pairs from `go tool dist list`
+        goosarch:
+          - 'linux/ppc64le'
+          - 'linux/amd64'
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -20,6 +26,16 @@ jobs:
       with:
         go-version-file: 'go.mod' # Automatically detects the Go version from go.mod
 
+    - name: Get OS and arch info
+      run: |
+        GOOSARCH=${{matrix.goosarch}}
+        GOOS=${GOOSARCH%/*}
+        GOARCH=${GOOSARCH#*/}
+        BINARY_NAME=${{github.repository}}-$GOOS-$GOARCH
+        echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
+        echo "GOOS=$GOOS" >> $GITHUB_ENV
+        echo "GOARCH=$GOARCH" >> $GITHUB_ENV
+
     - name: Set version variable
       run: echo "PROGRAM_VERSION="$(git describe --always --long --dirty) >> ${GITHUB_ENV}
 
@@ -27,13 +43,13 @@ jobs:
       run: echo "PROGRAM_RELEASE="$(git describe --tags --abbrev=0) >> ${GITHUB_ENV}
 
     - name: Build project
-      run: go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o PowerVC-Tool *.go
+      run: go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "$BINARY_NAME" *.go
 
     - name: Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          PowerVC-Tool
+          ${{env.BINARY_NAME}}
           scripts/create-cluster.sh
           scripts/delete-cluster.sh
           scripts/console.sh
