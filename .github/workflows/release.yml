@@ -1,5 +1,7 @@
 # .github/workflows/release.yaml
 
+name: Build and release Go Project
+
 on:
   release:
     types: [created]
@@ -10,8 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
-    - uses: actions/checkout@v6
-    # https://github.com/wangyoucao577/go-release-action
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v5 # Recommended action to set up Go environment
+      with:
+        go-version-file: 'go.mod' # Automatically detects the Go version from go.mod
 
     - name: Set version variable
       run: echo "PROGRAM_VERSION="$(git describe --always --long --dirty) >> ${GITHUB_ENV}
@@ -19,16 +26,16 @@ jobs:
     - name: Set release variable
       run: echo "PROGRAM_RELEASE="$(git describe --tags --abbrev=0) >> ${GITHUB_ENV}
 
-    - uses: wangyoucao577/go-release-action@v1
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux
-        goarch: amd64
-        ldflags: "-X main.version=${{ env.PROGRAM_VERSION }} -X main.release=${{ env.PROGRAM_RELEASE }}"
+    - name: Build project
+      run: go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o PowerVC-Tool *.go
 
-    - uses: wangyoucao577/go-release-action@v1
+    - name: Release
+      uses: softprops/action-gh-release@v1
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux
-        goarch: ppc64le
-        ldflags: "-X main.version=${{ env.PROGRAM_VERSION }} -X main.release=${{ env.PROGRAM_RELEASE }}"
+        files: |
+          PowerVC-Tool
+          scripts/create-cluster.sh
+          scripts/delete-cluster.sh
+          scripts/console.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
