@@ -199,11 +199,11 @@ then
 		echo "Error: You must enter something"
 		exit 1
 	fi
-	if [ ! -f "${INSTALLER_SSHKEY}" ]
-	then
-		echo "Error: File ${INSTALLER_SSHKEY} must exist!"
-		exit 1
-	fi
+fi
+if [ ! -f "${INSTALLER_SSHKEY}" ]
+then
+	echo "Error: File ${INSTALLER_SSHKEY} must exist!"
+	exit 1
 fi
 SSH_KEY=$(cat ${INSTALLER_SSHKEY})
 
@@ -322,6 +322,9 @@ do
 		exit 1
 	fi
 done
+
+# Delete the previous output file from create-bastion
+[ -f /tmp/bastionIp ] && rm /tmp/bastionIp
 
 mkdir ${CLUSTER_DIR}
 
