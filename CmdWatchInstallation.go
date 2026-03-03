@@ -328,8 +328,8 @@ func gatherBastionInformations(rootPath string, username string, installerRsa st
 			// Handle the error (e.g., permission denied)
 			log.Debugf("gatherBastionInformations: Error accessing path %q: %v", path, err)
 
-			// Return the error to stop the walk or continue with the next entry
-			return err
+			// Skip this problematic entry
+			return nil
 		}
 
 		// Process the current file or directory entry
