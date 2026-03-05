@@ -200,55 +200,7 @@ Wait for DNS propagation:
 # Helper loop to check for api, api-int, and console DNS records
 
 ```
-while true
-do
-        # Try the wildcard DNS entry first
-        FOUND_ALL=true
-        echo "Trying up to 60 times resolving *.apps.${CLUSTER_NAME}.${BASEDOMAIN} ..."
-        for (( TRIES=0; TRIES<=60; TRIES++ ))
-        do
-                DNS="a${TRIES}.apps.${CLUSTER_NAME}.${BASEDOMAIN}"
-                FOUND=false
-                if getent ahostsv4 ${DNS}
-                then
-                        echo "Found! ${DNS}"
-                        FOUND=true
-                        break
-                fi
-                sleep 5s
-        done
-        if ! ${FOUND}
-        then
-                FOUND_ALL=false
-                continue
-        fi
-        for PREFIX in api api-int
-        do
-                DNS="${PREFIX}.${CLUSTER_NAME}.${BASEDOMAIN}"
-                FOUND=false
-                for ((I=0; I < 10; I++))
-                do
-                        echo "Trying ${DNS}"
-                        if getent ahostsv4 ${DNS}
-                        then
-                                echo "Found! ${DNS}"
-                                FOUND=true
-                                break
-                        fi
-                        sleep 5s
-                done
-                if ! ${FOUND}
-                then
-                        FOUND_ALL=false
-                fi
-        done
-        echo "FOUND_ALL=${FOUND_ALL}"
-        if ${FOUND_ALL}
-        then
-                break
-        fi
-        sleep 15s
-done
+$ scripts/wait-for-dns.sh
 ```
 
 The bastion acts as a helper node to bring up the cluster.
