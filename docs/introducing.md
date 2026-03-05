@@ -14,7 +14,7 @@ IPI PowerVC is tested with IBM PowerVC 2.3.1 and OpenShift 4.21.0 and higher.
 
 Before starting the installation, ensure you have the following tools installed and configured on your management machine (bastion).
 
-1. Configure the PowerVC Root CA
+## 1. Configure the PowerVC Root CA
 
 If your IBM PowerVC uses a custom Root CA (specifically for the server at 10.20.27.10), you must register it so the OpenStack client can communicate securely.
 
@@ -55,29 +55,38 @@ Copy the powervc cert into the right location.
 
 You've setup the trust between the openshift-installer and PowerVC.
 
-2. Download Tools
+## 2. Download Tools
 
 You need the oc client, the openshift-install binary, the OpenStack CLI, and the IBM Cloud CLI.
 
-A. OpenShift Client (oc) Ensure you are using the latest release for ppc64le or your architecture.
+## 2.A. OpenShift Client (oc)
+
+Ensure you are using the latest release for ppc64le or your architecture.
 
 ```
-$ curl --silent --location https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/stable-4.21/openshift-client-linux.tar.gz -o /tmp/openshift-client-linux.tar.gz
+$ curl --silent --location https://mirror.openshift.com/pub/openshift-v4/$(uname -m)/clients/ocp/stable-4.21/openshift-client-linux.tar.gz -o /tmp/openshift-client-linux.tar.gz
 $ sudo tar -C /usr/local/bin/ -xvf /tmp/openshift-client-linux.tar.gz oc kubectl
 ```
 
 Confirm oc is functional, type oc version.
 
-B. OpenShift Installer (openshift-install)
+```
+$ oc version
+Client Version: 4.21.0
+Kustomize Version: v5.7.1
+Kubernetes Version: v1.34.2
+```
 
-Download the openshift-install
+## 2.B. OpenShift Installer (openshift-install)
+
+Download the IPI installer called openshift-install
 
 ```
-$ curl --silent --location https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/stable-4.21/openshift-install-linux.tar.gz -o /tmp/openshift-install-linux.tar.gz
+$ curl --silent --location https://mirror.openshift.com/pub/openshift-v4/$(uname -m)/clients/ocp/stable-4.21/openshift-install-linux.tar.gz -o /tmp/openshift-install-linux.tar.gz
 $ sudo tar -C /usr/local/bin/ -xvf openshift-install-linux.tar.gz openshift-install
 ```
 
-C. OpenStack CLI
+## 2.C. OpenStack CLI
 
 Install the OpenStack client to interact with PowerVC.
 
@@ -90,22 +99,23 @@ $ sudo dnf install -y centos-release-openstack-dalmatian
 $ sudo dnf install -y python3-openstackclient
 ```
 
-D. IBM Cloud CLI
+## 2.D. IBM Cloud CLI
 
-This is required for managing DNS records via IBM Cloud Internet Services (CIS). You should register the records in your system.
+This is required for managing DNS records via IBM Cloud Internet Services (CIS).
+
+You can either register the records in your system locally with CLI commands or let the tool handle that for you.
 
 ```
 $ curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
 $ for PLUGIN in dns cis; do ibmcloud plugin install ${PLUGIN}; done
 ```
 
-E. PowerVC-Tool Helper
+## 2.E. ocp-ipi-powervc Helper
 
-Download the PowerVC-Tool, a Go-based helper utility that automates bastion creation, DHCP updates, and installation monitoring.
+Download ocp-ipi-powervc, a Go-based helper utility that automates bastion creation, DHCP updates, DNS updates, and installation monitoring.
 
 ```
-$ curl --remote-name --location https://github.com/hamzy/PowerVC-Tool/releases/download/v0.9.2/PowerVC-Tool-v0.9.2-linux-ppc64le.tar.gz
-$ tar xvzf PowerVC-Tool-v0.9.2-linux-ppc64le.tar.gz
+$ curl --remote-name --location https://github.com/IBM/ocp-ipi-powervc/releases/download/v1.2.0/ocp-ipi-powervc-linux-$(uname -a)
 $ export PATH=${PATH}:/home/cloud-user
 ```
 
@@ -127,7 +137,7 @@ $ export SSHKEY_NAME="bastion-key"
 $ export SERVER_IP="10.20.184.56"
 ```
 
-Verify OpenStack Resources
+# Verify OpenStack Resources
 
 Before proceeding, verify that your images, flavors, networks, and keypairs exist in PowerVC:
 
@@ -138,7 +148,7 @@ $ openstack --os-cloud=${CLOUD} network list
 $ openstack --os-cloud=${CLOUD} keypair list
 ```
 
-You may have to add cacert: /home/xxx/.config/openstack/powervc-ca.pem to your clouds.yaml file.
+Note: You may have to add cacert: /home/xxx/.config/openstack/powervc-ca.pem to your clouds.yaml file.
 
 Ensure the RHCOS image is uploaded to PowerVC. If not, extract the URL from the installer and upload it:
 
@@ -147,6 +157,8 @@ $ URL=$(openshift-install coreos print-stream-json | jq -r '.architectures.ppc64
 ```
 
 Download and upload this image to PowerVC as ${RHCOS_IMAGE_NAME}. RHCOS_IMAGE_NAME may be specified as rhcos-image, or match your enterprise rules.
+
+Note: PowerVC only supports OVA images and not QCOW images.  So it will need to be converted.
 
 
 ```
@@ -167,11 +179,11 @@ $ ssh-keygen
 $ chmod 0600 /home/cloud-user/.ssh/id_installer_rsa
 ```
 
-Run the PowerVC-Tool to create the bastion VM. This command will also set up HAProxy and configure DNS entries via IBM Cloud.
+Run the ocp-ipi-powervc-linux-$(uname -a) to create the bastion VM. This command will also set up HAProxy and configure DNS entries via IBM Cloud.
 
 ```
 $ export IBMCLOUD_API_KEY="your-api-key"
-$ PowerVC-Tool create-bastion \
+$ ocp-ipi-powervc-linux-$(uname -a) create-bastion \
     --cloud "${CLOUD}" \
     --bastionName "${CLUSTER_NAME}" \
     --flavorName "${FLAVOR_NAME}" \
@@ -249,7 +261,7 @@ Download your pull-secret from https://console.redhat.com/openshift/install/pull
 
 Copy it to ~/.pull-secret
 
-Important: The loadBalancer type is set to UserManaged because we are using the external HAProxy set up by the PowerVC-Tool in Step 1.
+Important: The loadBalancer type is set to UserManaged because we are using the external HAProxy set up by the ocp-ipi-powervc in Step 1.
 
 ```
 # VIP_API=$(cat /tmp/bastionIp); VIP_INGRESS=${VIP_API}
@@ -327,7 +339,7 @@ Step 3: Start the Watcher & Install the Cluster
 Before running the install, start the watch-installation tool in the background in a clean VM. This tool acts as a bridge, detecting new VMs created by the installer and updating the bastion's HAProxy config and the local DHCP server. The watcher monitors the progress of the installation.
 
 ```
-# PowerVC-Tool watch-installation \
+# ocp-ipi-powervc-linux-$(uname -a) watch-installation \
         --cloud "${CLOUD}" \
         --domainName "${BASEDOMAIN}" \
         --bastionMetadata ${DIRECTORY} \
@@ -352,7 +364,7 @@ $ openshift-install create ignition-configs --dir=${CLUSTER_DIR}
 Send Metadata to Watcher:
 
 ```
-$ PowerVC-Tool send-metadata --createMetadata "${CLUSTER_DIR}/metadata.json" --serverIP "${SERVER_IP}"
+$ ocp-ipi-powervc-linux-$(uname -a) send-metadata --createMetadata "${CLUSTER_DIR}/metadata.json" --serverIP "${SERVER_IP}"
 ```
 
 Create Cluster:
@@ -366,7 +378,7 @@ Step 4: Monitoring & Troubleshooting
 While the cluster installs, you can monitor the progress using the watch-create command:
 
 ```
-$ PowerVC-Tool watch-create \
+$ ocp-ipi-powervc-linux-$(uname -a) watch-create \
         --metadata ${CLUSTER_DIR}/metadata.json \
         --kubeconfig ${CLUSTER_DIR}/auth/kubeconfig \
         --cloud "${CLOUD}" \
@@ -394,5 +406,5 @@ References
 
 IBM PowerVC Product Page
 Installing OpenShift on PowerVC (Official Red Hat Docs)
-PowerVC-Tool GitHub Repository
+ocp-ipi-powervc GitHub Repository https://github.com/IBM/ocp-ipi-powervc
 OpenShift IPI Installer Repository
