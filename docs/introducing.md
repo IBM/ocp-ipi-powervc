@@ -356,7 +356,7 @@ This approach combines the strengths of PowerVC with the automation of Installer
 
 References
 
-[IBM PowerVC Product Page] (https://www.ibm.com/products/powervc)
-[Installing OpenShift on PowerVC (Official Red Hat Docs)] (https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/installing_on_ibm_powervc/preparing-to-install-on-powervc)
-[ocp-ipi-powervc GitHub Repository] (https://github.com/IBM/ocp-ipi-powervc)
-[OpenShift IPI Installer Repository] (https://github.com/openshift/installer/)
+[IBM PowerVC Product Page](https://www.ibm.com/products/powervc)
+[Installing OpenShift on PowerVC (Official Red Hat Docs)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/installing_on_ibm_powervc/preparing-to-install-on-powervc)
+[ocp-ipi-powervc GitHub Repository](https://github.com/IBM/ocp-ipi-powervc)
+[OpenShift IPI Installer Repository](https://github.com/openshift/installer/)
