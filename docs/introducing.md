@@ -340,7 +340,7 @@ $ ocp-ipi-powervc-linux-$(uname -a) watch-create \
 
 Once done, you can start using your cluster, or troubleshoot as you go:
 
-Common Debugging Tips:
+# Common Debugging Tips:
 
 Check Bootstrap: Log into the PowerVC GUI, find the bootstrap VM, and open a console via the HMC connection to check for boot errors.
 Check Load Balancer: Ensure the HAProxy on the bastion is running and routing traffic to the API VIP.
@@ -348,13 +348,13 @@ Check DNS: Verify that api.${CLUSTER_NAME}.${BASEDOMAIN} resolves to your bastio
 
 Here is a concise summary of the blog post, suitable for a social media snippet, newsletter intro, or meta description.
 
-Summary
+# Summary
 
 This article guides the step-by-step process for deploying Red Hat OpenShift Container Platform (OCP) on IBM PowerVC using the TechPreview of the Installer Provisioned Infrastructure (IPI) powervc method. While standard deployments can be complex, IPI PowerVC automates the provisioning of underlying resources, offering a cloud-like experience with on-premise hardware.
 
 This approach combines the strengths of PowerVC with the automation of Installer-Provisioned Infrastrcuture to reduce deployment time and complexity.
 
-References
+# References
 
 [IBM PowerVC Product Page](https://www.ibm.com/products/powervc)
 
