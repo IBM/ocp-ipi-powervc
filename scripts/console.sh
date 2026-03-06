@@ -361,4 +361,5 @@ ${DEBUG} && echo "HOST_DISPLAY_NAME=${HOST_DISPLAY_NAME}"
 # $ SSH_PASSWORDS=( "pass1" "pa552" )
 #
 echo -n 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p $SSH_PASSWORD '
-echo "ssh -t -o PubkeyAuthentication=no ${USER_ID}@${SSH_IP} mkvterm -m ${HOST_DISPLAY_NAME} -p ${INSTANCE_NAME}"
+echo -n "ssh -t -o PubkeyAuthentication=no ${USER_ID}@${SSH_IP} mkvterm -m ${HOST_DISPLAY_NAME} -p ${INSTANCE_NAME}"
+echo "; done"
