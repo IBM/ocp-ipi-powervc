@@ -251,54 +251,114 @@ fi
 
 echo "Querying the hypervisor"
 curl --tlsv1 --insecure --silent --request GET --header "X-Auth-Token:${TOKEN_ID}" https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/os-hosts/${HYPERVISOR} > ${HYPERVISOR_FILE}
-PRIMARY_HMC_UUID=$(jq -r '.host[].registration | select(length > 0) | .primary_hmc_uuid' ${HYPERVISOR_FILE})
+MANAGER_TYPE=$(jq -r '.host[].registration | select(length > 0) | .manager_type' ${HYPERVISOR_FILE})
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: Trying to eval os-hosts returned an RC of ${RC}"
+	echo "Error: Trying to eval(1) os-hosts returned an RC of ${RC}"
 	exit 1
 fi
-if [ -z "${PRIMARY_HMC_UUID}" ]
+if [ -z "${MANAGER_TYPE}" ]
 then
-	echo "Error: primary HMC UUID is empty?"
+	echo "Error: manager type is empty?"
 	exit 1
 fi
-${DEBUG} && echo "PRIMARY_HMC_UUID=${PRIMARY_HMC_UUID}"
-if [ "${PRIMARY_HMC_UUID}" == "null" ]
+${DEBUG} && echo "MANAGER_TYPE=${MANAGER_TYPE}"
+
+if [ "${MANAGER_TYPE}" == "hmc" ]
 then
-	echo "Error: Could not find primary HMC UUID in:"
-	cat ${HYPERVISOR_FILE}
-	echo
+	PRIMARY_HMC_UUID=$(jq -r '.host[].registration | select(length > 0) | .primary_hmc_uuid' ${HYPERVISOR_FILE})
+	RC=$?
+	if [ ${RC} -gt 0 ]
+	then
+		echo "Error: Trying to eval(2) os-hosts returned an RC of ${RC}"
+		exit 1
+	fi
+	if [ -z "${PRIMARY_HMC_UUID}" ]
+	then
+		echo "Error: primary HMC UUID is empty?"
+		exit 1
+	fi
+	${DEBUG} && echo "PRIMARY_HMC_UUID=${PRIMARY_HMC_UUID}"
+	if [ "${PRIMARY_HMC_UUID}" == "null" ]
+	then
+		echo "Error: Could not find primary HMC UUID in:"
+		cat ${HYPERVISOR_FILE}
+		echo
+		exit 1
+	fi
+
+	echo "Querying the ibm-hmcs"
+	SSH_IP=$(curl --tlsv1 --insecure --silent --request GET --header "X-Auth-Token:${TOKEN_ID}" https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/ibm-hmcs/${PRIMARY_HMC_UUID} | jq -r .hmc.registration.access_ip)
+	RC=$?
+	if [ ${RC} -gt 0 ]
+	then
+		echo "Error: Trying to eval ibm-hmcs/hmc returned an RC of ${RC}"
+		exit 1
+	fi
+	if [ -z "${SSH_IP}" ]
+	then
+		echo "Error: HMC IP is empty?"
+		exit 1
+	fi
+	${DEBUG} && echo "SSH_IP=${SSH_IP}"
+
+	USER_ID="hscroot"
+
+elif [ "${MANAGER_TYPE}" == "pvm" ]
+then
+
+	USER_ID=$(jq -r '.host[].registration | select(length > 0) | .user_id' ${HYPERVISOR_FILE})
+	RC=$?
+	if [ ${RC} -gt 0 ]
+	then
+		echo "Error: Trying to eval(3) os-hosts returned an RC of ${RC}"
+		exit 1
+	fi
+	if [ -z "${USER_ID}" ]
+	then
+		echo "Error: user_id is empty?"
+		exit 1
+	fi
+	${DEBUG} && echo "USER_ID=${USER_ID}"
+
+	SSH_IP=$(jq -r '.host[].registration | select(length > 0) | .access_ip' ${HYPERVISOR_FILE})
+	RC=$?
+	if [ ${RC} -gt 0 ]
+	then
+		echo "Error: Trying to eval(4) os-hosts returned an RC of ${RC}"
+		exit 1
+	fi
+	if [ -z "${SSH_IP}" ]
+	then
+		echo "Error: access_ip is empty?"
+		exit 1
+	fi
+	${DEBUG} && echo "SSH_IP=${SSH_IP}"
+
+else
+
+	echo "Error: Unknown manager type (${MANAGER_TYPE})"
 	exit 1
 fi
 
-PRIMARY_HMC_DISPLAY_NAME=$(jq -r '.host[].registration | select(length > 0) | .host_display_name' ${HYPERVISOR_FILE})
+HOST_DISPLAY_NAME=$(jq -r '.host[].registration | select(length > 0) | .host_display_name' ${HYPERVISOR_FILE})
 RC=$?
 if [ ${RC} -gt 0 ]
 then
 	echo "Error: Trying to eval os-hosts/hypervisor returned an RC of ${RC}"
 	exit 1
 fi
-if [ -z "${PRIMARY_HMC_DISPLAY_NAME}" ]
+if [ -z "${HOST_DISPLAY_NAME}" ]
 then
 	echo "Error: primary HMC display name is empty?"
 	exit 1
 fi
-${DEBUG} && echo "PRIMARY_HMC_DISPLAY_NAME=${PRIMARY_HMC_DISPLAY_NAME}"
+${DEBUG} && echo "HOST_DISPLAY_NAME=${HOST_DISPLAY_NAME}"
 
-echo "Querying the ibm-hmcs"
-HMC_IP=$(curl --tlsv1 --insecure --silent --request GET --header "X-Auth-Token:${TOKEN_ID}" https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/ibm-hmcs/${PRIMARY_HMC_UUID} | jq -r .hmc.registration.access_ip)
-RC=$?
-if [ ${RC} -gt 0 ]
-then
-	echo "Error: Trying to eval ibm-hmcs/hmc returned an RC of ${RC}"
-	exit 1
-fi
-if [ -z "${HMC_IP}" ]
-then
-	echo "Error: HMC IP is empty?"
-	exit 1
-fi
-${DEBUG} && echo "HMC_IP=${HMC_IP}"
-
-echo "sshpass -p \$HMC_PASSWORD ssh -t -o PubkeyAuthentication=no hscroot@${HMC_IP} mkvterm -m ${PRIMARY_HMC_DISPLAY_NAME} -p ${INSTANCE_NAME}"
+#
+# Setup something like this previously:
+# $ SSH_PASSWORDS=( "pass1" "pa552" )
+#
+echo -n 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p $SSH_PASSWORD '
+echo "ssh -t -o PubkeyAuthentication=no ${USER_ID}@${SSH_IP} mkvterm -m ${HOST_DISPLAY_NAME} -p ${INSTANCE_NAME}"
