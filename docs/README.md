@@ -9,3 +9,6 @@ To install a PowerVC cluster, you need to have many things configured:
 
 There is an easy installation script you can use [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/easy-installation.md).
 Or there is a set of rather complex installation steps you can follow [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/complex-installation.md).
+
+
+If you have problems, then follow the debugging steps [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/debugging.md).
