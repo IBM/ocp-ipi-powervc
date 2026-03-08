@@ -150,28 +150,29 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	if ptrBastionRsa == nil || *ptrBastionRsa == "" {
 		return fmt.Errorf("Error: --bastionRsa not specified")
 	}
-	if ptrDhcpInterface == nil || *ptrDhcpInterface == "" {
-		return fmt.Errorf("Error: --dhcpInterface not specified")
-	}
-	if ptrDhcpSubnet == nil || *ptrDhcpSubnet == "" {
-		return fmt.Errorf("Error: --dhcpSubnet not specified")
-	}
-	if ptrDhcpNetmask == nil || *ptrDhcpNetmask == "" {
-		return fmt.Errorf("Error: --dhcpNetmask not specified")
-	}
-	if ptrDhcpRouter == nil || *ptrDhcpRouter == "" {
-		return fmt.Errorf("Error: --dhcpRouter not specified")
-	}
-	if ptrDhcpDnsServers == nil || *ptrDhcpDnsServers == "" {
-		return fmt.Errorf("Error: --dhcpDnsServers not specified")
-	}
-	if ptrDhcpServerId == nil || *ptrDhcpServerId == "" {
-		return fmt.Errorf("Error: --dhcpServerId not specified")
-	}
 
 	switch strings.ToLower(*ptrEnableDhcpd) {
 	case "true":
 		enableDhcpd = true
+
+		if ptrDhcpInterface == nil || *ptrDhcpInterface == "" {
+			return fmt.Errorf("Error: --dhcpInterface not specified")
+		}
+		if ptrDhcpSubnet == nil || *ptrDhcpSubnet == "" {
+			return fmt.Errorf("Error: --dhcpSubnet not specified")
+		}
+		if ptrDhcpNetmask == nil || *ptrDhcpNetmask == "" {
+			return fmt.Errorf("Error: --dhcpNetmask not specified")
+		}
+		if ptrDhcpRouter == nil || *ptrDhcpRouter == "" {
+			return fmt.Errorf("Error: --dhcpRouter not specified")
+		}
+		if ptrDhcpDnsServers == nil || *ptrDhcpDnsServers == "" {
+			return fmt.Errorf("Error: --dhcpDnsServers not specified")
+		}
+		if ptrDhcpServerId == nil || *ptrDhcpServerId == "" {
+			return fmt.Errorf("Error: --dhcpServerId not specified")
+		}
 	case "false":
 		enableDhcpd = false
 	default:
