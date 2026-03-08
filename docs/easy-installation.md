@@ -88,7 +88,8 @@ $ sudo dnf install -y jq
 # Install yq
 
 ```
-$ (cd ~/bin/; curl --output yq --location https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_ppc64le && chmod u+x yq)```
+$ (cd ~/bin/; curl --output yq --location https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_ppc64le && chmod u+x yq)
+```
 
 # Create an OpenShift cluster
 
