@@ -16,8 +16,15 @@
 
 set -uo pipefail
 
+ARCH=$(uname -m)
+if [ "${ARCH}" == "x86_64" ]
+then
+	ARCH="amd64"
+fi
+POWERVC_TOOL="ocp-ipi-powervc-linux-${ARCH}"
+
 declare -a PROGRAMS
-PROGRAMS=( PowerVC-Tool openshift-install )
+PROGRAMS=( ${POWERVC_TOOL} openshift-install )
 for PROGRAM in ${PROGRAMS[@]}
 do
 	echo "Checking for program ${PROGRAM}"
@@ -46,7 +53,7 @@ fi
 
 if [[ ! -v CONTROLLER_IP ]]
 then
-	read -p "What is the PowerVC-Tool master controller IP []: " CONTROLLER_IP
+	read -p "What is the ${POWERVC_TOOL} master controller IP []: " CONTROLLER_IP
 	if [ -z "${CONTROLLER_IP}" ]
 	then
 		echo "Error: You must enter something"
@@ -63,7 +70,7 @@ then
 	exit 1
 fi
 
-PowerVC-Tool \
+${POWERVC_TOOL} \
 	send-metadata \
 	--deleteMetadata ${CLUSTER_DIR}/metadata.json \
 	--serverIP ${CONTROLLER_IP} \
@@ -72,7 +79,7 @@ RC=$?
 
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: PowerVC-Tool send-metadata failed with an RC of ${RC}"
+	echo "Error: ${POWERVC_TOOL} send-metadata failed with an RC of ${RC}"
 	exit 1
 fi
 

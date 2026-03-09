@@ -24,7 +24,7 @@ function cleanup_metadata()
 	fi
 
 	echo "Deleting metadata.json"
-	PowerVC-Tool \
+	${POWERVC_TOOL} \
 		send-metadata \
 		--deleteMetadata "${CLUSTER_DIR}/metadata.json" \
 		--serverIP "${CONTROLLER_IP}" \
@@ -42,8 +42,15 @@ then
 	export CLOUD
 fi
 
+ARCH=$(uname -m)
+if [ "${ARCH}" == "x86_64" ]
+then
+	ARCH="amd64"
+fi
+POWERVC_TOOL="ocp-ipi-powervc-linux-${ARCH}"
+
 declare -a PROGRAMS
-PROGRAMS=( PowerVC-Tool openshift-install openstack jq )
+PROGRAMS=( ${POWERVC_TOOL} openshift-install openstack jq )
 for PROGRAM in ${PROGRAMS[@]}
 do
 	echo "Checking for program ${PROGRAM}"
@@ -250,7 +257,7 @@ fi
 
 if [[ ! -v CONTROLLER_IP ]]
 then
-	read -p "What is the PowerVC-Tool master controller IP []: " CONTROLLER_IP
+	read -p "What is the ${POWERVC_TOOL} master controller IP []: " CONTROLLER_IP
 	if [ -z "${CONTROLLER_IP}" ]
 	then
 		echo "Error: You must enter something"
@@ -267,7 +274,7 @@ then
 	exit 1
 fi
 
-PowerVC-Tool \
+${POWERVC_TOOL} \
 	check-alive \
 	--serverIP "${CONTROLLER_IP}" \
 	--shouldDebug true
@@ -328,7 +335,7 @@ done
 
 mkdir ${CLUSTER_DIR}
 
-PowerVC-Tool \
+${POWERVC_TOOL} \
 	create-bastion \
 	--cloud "${CLOUD}" \
 	--bastionName "${CLUSTER_NAME}" \
@@ -343,7 +350,7 @@ PowerVC-Tool \
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: PowerVC-Tool create-bastion failed with an RC of ${RC}"
+	echo "Error: ${POWERVC_TOOL} create-bastion failed with an RC of ${RC}"
 	exit 1
 fi
 
@@ -531,7 +538,7 @@ then
 	exit 1
 fi
 
-PowerVC-Tool \
+${POWERVC_TOOL} \
 	send-metadata \
 	--createMetadata ${CLUSTER_DIR}/metadata.json \
 	--serverIP ${CONTROLLER_IP} \
@@ -539,7 +546,7 @@ PowerVC-Tool \
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: PowerVC-Tool send-metadata failed with an RC of ${RC}"
+	echo "Error: ${POWERVC_TOOL} send-metadata failed with an RC of ${RC}"
 	exit 1
 fi
 
@@ -556,14 +563,14 @@ then
 	exit 1
 fi
 
-PowerVC-Tool \
+${POWERVC_TOOL} \
 	check-alive \
 	--serverIP ${CONTROLLER_IP} \
 	--shouldDebug true
 RC=$?
 if [ ${RC} -gt 0 ]
 then
-	echo "Error: PowerVC-Tool check-alive failed with an RC of ${RC}"
+	echo "Error: ${POWERVC_TOOL} check-alive failed with an RC of ${RC}"
 	cleanup_metadata
 	exit 1
 fi
@@ -612,7 +619,7 @@ then
 		--baseDomain ${BASEDOMAIN} \
 		--shouldDebug false"
 
-	PowerVC-Tool ${ARGS}
+	${POWERVC_TOOL} ${ARGS}
 
 	exit 1
 fi
