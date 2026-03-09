@@ -8,7 +8,7 @@ To install a PowerVC cluster, you need to have many things configured:
 
 1) A PowerVC server
 2) A valid OpenStack environment for CLI administration
-3) A controller VM running code from this repo
+3) A controller VM running code from this repo (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md))
 4) Environment variables defined
 5) The OpenShift IPI installer
 
