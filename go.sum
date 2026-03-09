@@ -6,6 +6,8 @@ github.com/IBM/networking-go-sdk v0.51.16 h1:cu1W8enK1SFgGAhglz2D9+jijV9cIixHHpE
 github.com/IBM/networking-go-sdk v0.51.16/go.mod h1:TAXWyBUk3C3R7aS1m84EfKdnDcBMZMAClwLfDj/SYZc=
 github.com/IBM/platform-services-go-sdk v0.95.0 h1:K4le7e+5sbuSNa1GZp5XTKA4AJHpKddCcQUR17mRwCw=
 github.com/IBM/platform-services-go-sdk v0.95.0/go.mod h1:KAnBhxKaYsu9It2aVXV6oCPEj78imvTs2qSG0ScZKpM=
+github.com/IBM/platform-services-go-sdk v0.96.0 h1:eCo15IwATAPSEeRtwn0uDQPWtBcUlTKu+YTmIek7tNY=
+github.com/IBM/platform-services-go-sdk v0.96.0/go.mod h1:KAnBhxKaYsu9It2aVXV6oCPEj78imvTs2qSG0ScZKpM=
 github.com/coreos/go-semver v0.3.1 h1:yi21YpKnrx1gt5R+la8n5WgS0kCrsPp33dmEyHReZr4=
 github.com/coreos/go-semver v0.3.1/go.mod h1:irMmmIw/7yzSRPWryHsK7EYSg09caPQL03VsM8rvUec=
 github.com/coreos/go-systemd/v22 v22.6.0 h1:aGVa/v8B7hpb0TKl0MWoAavPDmHvobFe5R5zn0bCJWo=
