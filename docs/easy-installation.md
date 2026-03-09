@@ -2,6 +2,53 @@
 
 With the [controller](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md) running, there are scripts which can help you create and delete clusters.  Please write down the IP address of the controller VM.
 
+# Prerequisite Versions
+
+IPI PowerVC is tested with IBM PowerVC 2.3.1 and OpenShift 4.21.0 and higher.
+
+# Prerequisite Setups 
+
+Before starting the installation, ensure you have the following tools installed and configured.  Technically, on the controller, only the helper tool needs to be installed.
+
+## 1. Configure the PowerVC Root CA
+
+If your IBM PowerVC uses a custom Root CA (specifically for the server at 10.20.27.10), you must register it so the OpenStack client can communicate securely.
+
+Download the PEM file for your PowerVC instance to the anchors folder
+
+```
+# echo "" | openssl s_client -showcerts -prexit -connect my-powervc.ibm.net:443 2> /dev/null | sed -n -e '/BEGIN CERTIFICATE/,/END CERTIFICATE/ p' > /etc/pki/ca-trust/source/anchors/my-powervc-443.crt
+```
+
+Check to see that it is a PEM file
+
+```
+# file /etc/pki/ca-trust/source/anchors/my-powervc-443.crt
+/etc/pki/ca-trust/source/anchors/my-powervc-443.crt: PEM certificate
+```
+
+Update the System Trust Store
+
+```
+# update-ca-trust
+```
+
+You can verify (no -k used)
+
+```
+# curl https://mypowervc.ibm.net:8443 -o/dev/null
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 78321  100 78321    0     0  3186k      0 --:--:-- --:--:-- --:--:-- 3186k
+```
+
+Copy the powervc cert into the right location.
+
+```
+# mkdir -p ~/.config/openstack/
+# cp /etc/pki/ca-trust/source/anchors/my-powervc-443.crt ~/.config/openstack/
+```
+
 # Create CentOS image for bastion nodes
 
 Find the latest CentOS cloud image [here](https://cloud.centos.org/centos/10-stream/ppc64le/images/), transform it into an OVA image, then upload it to the PowerVC server.
