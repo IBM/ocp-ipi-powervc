@@ -1,13 +1,25 @@
 # PowerVC-Tool
-Useful tool to create and check OpenShift clusters on IBM Cloud PowerVC
+A useful tool to create and check OpenShift clusters on IBM Cloud PowerVC.
 
-CLI opitons:
-- [create-bastion](https://github.com/hamzy/PowerVC-Tool#create-bastion)
-- [create-cluster](https://github.com/hamzy/PowerVC-Tool#create-cluster)
-- [create-rhcos](https://github.com/hamzy/PowerVC-Tool#create-rhcos)
-- [send-metadata](https://github.com/hamzy/PowerVC-Tool#send-metadata)
-- [watch-create](https://github.com/hamzy/PowerVC-Tool#watch-create)
-- [watch-installation](https://github.com/hamzy/PowerVC-Tool#watch-installation)
+To install an OpenShift cluster, please head to the main documentation root [here](https://github.com/IBM/ocp-ipi-powervc/tree/main/docs).
+
+CLI options:
+- [check-alive](https://github.com/IBM/ocp-ipi-powervc/tree/main#check-alive)
+- [create-bastion](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-bastion)
+- [create-cluster](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-cluster)
+- [create-rhcos](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-rhcos)
+- [send-metadata](https://github.com/IBM/ocp-ipi-powervc/tree/main#send-metadata)
+- [watch-create](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-create)
+- [watch-installation](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-installation)
+
+## check-alive
+
+This will check if the [controller](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md) is alive.
+
+Example usage:
+```
+$ ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip} -shouldDebug false
+```
 
 ## create-bastion
 
@@ -18,7 +30,9 @@ The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure 
 
 Example usage:
 
-`$ PowerVC-Tool create-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshKeyName ${ssh_keyname} --domainName ${domain_name} --shouldDebug true`
+```
+$ ocp-ipi-powervc-linux-amd64 create-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshKeyName ${ssh_keyname} --domainName ${domain_name} --shouldDebug true
+```
 
 args:
 - `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
@@ -45,7 +59,9 @@ This was a development tool used during the initial investigation.  It takes a p
 
 Example usage:
 
-`$ PowerVC-Tool create-cluster --directory ${directory} --shouldDebug true`
+```
+$ ocp-ipi-powervc-linux-amd64 create-cluster --directory ${directory} --shouldDebug true
+```
 
 args:
 - `directory` location to use the IPI installer
@@ -61,7 +77,9 @@ The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure 
 
 Example usage:
 
-`$ PowerVC-Tool create-rhcos --cloud ${cloud_name} --rhcosName ${rhcos_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshPublicKey $(cat ${HOME}/.ssh/id_installer_rsa.pub) --domainName ${domain_name} --shouldDebug true`
+```
+$ ocp-ipi-powervc-linux-amd64 create-rhcos --cloud ${cloud_name} --rhcosName ${rhcos_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshPublicKey $(cat ${HOME}/.ssh/id_installer_rsa.pub) --domainName ${domain_name} --shouldDebug true
+```
 
 args:
 - `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
@@ -88,7 +106,9 @@ This will send a command to the server to either create or delete a local copy o
 
 Example usage:
 
-`$ PowerVC-Tool send-metadata --createMetadata ${directory}/metadata.json --serverIP ${serverIP} --shouldDebug true
+```
+$ ocp-ipi-powervc-linux-amd64 send-metadata --createMetadata ${directory}/metadata.json --serverIP ${serverIP} --shouldDebug true
+```
 
 args:
 
@@ -107,7 +127,9 @@ The environment variable `IBMCLOUD_API_KEY` needs to be set.
 
 Example usage:
 
-`$ PowerVC-Tool watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false`
+```
+$ ocp-ipi-powervc-linux-amd64 watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false
+```
 
 args:
 - `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
@@ -133,7 +155,9 @@ The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure 
 
 Example usage:
 
-`$ PowerVC-Tool watch-installation --cloud ${cloud_name} --domainName ${domain_name} --bastionMetadata ${directory}/metadata.json --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --dhcpSubnet ${dhcp_subnet} --dhcpNetmask ${dhcp_netmask} --dhcpRouter ${dhcp_router} --dhcpDnsServers "${dhcp_servers}" --shouldDebug true`
+```
+$ ocp-ipi-powervc-linux-amd64 watch-installation --cloud ${cloud_name} --domainName ${domain_name} --bastionMetadata ${directory}/metadata.json --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --dhcpSubnet ${dhcp_subnet} --dhcpNetmask ${dhcp_netmask} --dhcpRouter ${dhcp_router} --dhcpDnsServers "${dhcp_servers}" --shouldDebug true
+```
 
 args:
 - `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
