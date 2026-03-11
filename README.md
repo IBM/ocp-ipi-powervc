@@ -21,6 +21,11 @@ Example usage:
 $ ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip} -shouldDebug false
 ```
 
+args:
+- `serverIP` The IP address of the controller.
+
+- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+
 ## create-bastion
 
 This will create an HAProxy VM which will act as an OpenShift Load Balancer.  This VM will be managed by another instance of this program with the `watch-installation` parameter.
@@ -31,7 +36,7 @@ The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure 
 Example usage:
 
 ```
-$ ocp-ipi-powervc-linux-amd64 create-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshKeyName ${ssh_keyname} --domainName ${domain_name} --shouldDebug true
+$ ocp-ipi-powervc-linux-amd64 create-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshKeyName ${ssh_keyname} --domainName ${domain_name} --enableHAProxy true --serverIP ${controller_ip} --shouldDebug true
 ```
 
 args:
@@ -51,9 +56,13 @@ args:
 
 - `enableHAProxy` defaults to `true`.  If we should install HA Proxy on the bastion node.
 
+- `serverIP` The IP address of the controller.
+
 - `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
 
 ## create-cluster
+
+NOTE: DEPRECATED
 
 This was a development tool used during the initial investigation.  It takes a powervc `install-config.yaml`, converts it to a openstack configuration, calls the IPI installer, and then converts the generated files to work on a PowerVC setup.
 
@@ -70,7 +79,7 @@ args:
 
 ## create-rhcos
 
-This will create a test RHCOS VM.  This VM will be managed by another instance of this program with the `watch-installation` parameter.
+This will create a test RHCOS VM.  This VM will be managed by the controller.
 
 NOTE:
 The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure DNS is supported via CoreOS DNS or another method.
@@ -107,7 +116,7 @@ This will send a command to the server to either create or delete a local copy o
 Example usage:
 
 ```
-$ ocp-ipi-powervc-linux-amd64 send-metadata --createMetadata ${directory}/metadata.json --serverIP ${serverIP} --shouldDebug true
+$ ocp-ipi-powervc-linux-amd64 send-metadata --createMetadata ${directory}/metadata.json --serverIP ${controller_ip} --shouldDebug true
 ```
 
 args:
@@ -116,7 +125,7 @@ args:
 
 - `deleteMetadata` Tells the server to delete a local copy of this metadata.json file.
 
-- `serverIP` The IP address of the server.
+- `serverIP` The IP address of the controller.
 
 - `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
 
@@ -192,8 +201,6 @@ args:
 
 Required environment variables before running this script:
 
-- `IBMCLOUD_API_KEY` the IBM Cloud API key. @TODO-necessary?
-
 - `BASEDOMAIN` the domain name to use for the OpenShift cluster.
 
 - `BASTION_IMAGE_NAME` the OpenStack image name for the HAProxy VM.
@@ -205,6 +212,8 @@ Required environment variables before running this script:
 - `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
 
 - `CLUSTER_NAME` the name prefix to use for the OpenShift cluster which you are installing.
+
+- `CONTROLLER_IP` the IP address of the controller.
 
 - `FLAVOR_NAME` the OpenStack flavor name to use for OpenShift VMs.
 
