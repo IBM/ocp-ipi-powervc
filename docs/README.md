@@ -7,10 +7,11 @@ The OpenShift documentation is located [here](https://docs.redhat.com/en/documen
 To install a PowerVC cluster, you need to have many things configured:
 
 1) A PowerVC server
-2) A valid OpenStack environment for CLI administration (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/configure-openstack.md))
-3) A controller VM running code from this repo (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md))
-4) Environment variables defined (explained [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/environment-variables.md))
-5) The OpenShift IPI installer and RHCOS image (explained [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/IPI-installer.md))
+2) Tools
+3) A valid OpenStack environment for CLI administration (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/configure-openstack.md))
+4) A controller VM running code from this repo (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md))
+5) Environment variables defined (explained [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/environment-variables.md))
+6) The OpenShift IPI installer and RHCOS image (explained [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/IPI-installer.md))
 
 There is an easy installation script you can use described [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/easy-installation.md).
 
