@@ -7,7 +7,7 @@ The OpenShift documentation is located [here](https://docs.redhat.com/en/documen
 To install a PowerVC cluster, you need to have many things configured:
 
 1) A PowerVC server
-2) Tools
+2) Tools (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/tools.md))
 3) A valid OpenStack environment for CLI administration (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/configure-openstack.md))
 4) A controller VM running code from this repo (configured [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md))
 5) Environment variables defined (explained [here](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/environment-variables.md))
