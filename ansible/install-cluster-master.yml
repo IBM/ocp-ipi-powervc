@@ -155,7 +155,13 @@
     - name: Install Go
       shell: |
         (
-          curl --location --remote-name https://go.dev/dl/go1.26.0.linux-ppc64le.tar.gz && tar -C /usr/local -xzf go1.26.0.linux-ppc64le.tar.gz
+          VERSION="1.26.0"
+          if [ -d /usr/local/go/ ]
+          then
+            /bin/rm -rf /usr/local/go/
+          fi
+          curl --location --remote-name "https://go.dev/dl/go${VERSION}.linux-ppc64le.tar.gz"
+          tar -C /usr/local -xzf "go${VERSION}.linux-ppc64le.tar.gz"
         ) 
       become: yes
 
@@ -213,9 +219,10 @@
     - name: Install oc
       shell: |
         (
+          VERSION="4.21.5"
           cd ~/bin/
           /bin/rm oc kubectl
-          curl --silent --location --remote-name https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.5/openshift-client-linux-ppc64le-rhel9-4.21.5.tar.gz
-          tar xvf openshift-client-linux-ppc64le-rhel9-4.21.5.tar.gz oc kubectl
+          curl --silent --location --remote-name https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/${VERSION}/openshift-client-linux-ppc64le-rhel9-${VERSION}.tar.gz
+          tar xvf openshift-client-linux-ppc64le-rhel9-${VERSION}.tar.gz oc kubectl
         ) 
       when: not oc_stat.stat.exists
