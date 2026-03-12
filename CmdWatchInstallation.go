@@ -208,7 +208,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	go listenForCommands(*ptrCloud)
 
 	for true {
-		log.Debugf("Waking up")
+		fmt.Println("Waking up")
 
 		bastionInformations, err = gatherBastionInformations(*ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa)
 		if err != nil {
@@ -234,7 +234,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 
 		// If we haven't added new servers or deleted old servers, then try again
 		if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
-			log.Debugf("Sleeping")
+			fmt.Println("Sleeping")
 
 			time.Sleep(30 * time.Second)
 
@@ -242,8 +242,6 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		}
 
 		knownServers = newServerSet
-
-		// 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------
 
 		err = updateBastionInformations(ctx, *ptrCloud, bastionInformations)
 		if err != nil {
@@ -300,17 +298,19 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 
 		fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
-		err = dnsRecords(ctx,
-			*ptrCloud,
-			apiKey,
-			*ptrDomainName,
-			bastionInformations,
-			knownServers,
-			addedServersSet,
-			deletedServerSet,
-		)
-		if err != nil {
-			return err
+		if apiKey != "" {
+			err = dnsRecords(ctx,
+				*ptrCloud,
+				apiKey,
+				*ptrDomainName,
+				bastionInformations,
+				knownServers,
+				addedServersSet,
+				deletedServerSet,
+			)
+			if err != nil {
+				return err
+			}
 		}
 
 		fmt.Println("Sleeping")
@@ -853,11 +853,6 @@ func dnsRecords(ctx context.Context, cloud string, apiKey string, domainName str
 		clusterName  string
 		err          error
 	)
-
-	if apiKey == "" {
-		log.Debugf("dnsRecords: WARNING: apiKey not specified, aborting!")
-		return nil
-	}
 
 	cisServiceID, _, err = getServiceInfo(ctx, apiKey, "internet-svcs", "")
 	if err != nil {
