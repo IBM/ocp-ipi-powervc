@@ -136,7 +136,8 @@
           VERSION=$(git describe --always --long --dirty)
           ARCH=$(uname -m)
           if [ "${ARCH}" == "x86_64" ]; then ARCH="amd64"; fi
-          go build -ldflags="-X main.version=${VERSION} -X main.release=${TAG}" -o  ocp-ipi-powervc-linux-${ARCH}  *.go
+          curl --location --remote-name https://github.com/IBM/ocp-ipi-powervc/releases/download/${TAG}/ocp-ipi-powervc-linux-${ARCH}
+          chmod u+x ocp-ipi-powervc-linux-${ARCH}
         ) 
       when: not pvct_stat.stat.exists
 
@@ -154,7 +155,7 @@
     - name: Install Go
       shell: |
         (
-          curl --location --remote-name https://go.dev/dl/go1.25.4.linux-ppc64le.tar.gz && tar -C /usr/local -xzf go1.25.4.linux-ppc64le.tar.gz
+          curl --location --remote-name https://go.dev/dl/go1.26.0.linux-ppc64le.tar.gz && tar -C /usr/local -xzf go1.26.0.linux-ppc64le.tar.gz
         ) 
       become: yes
 
@@ -172,7 +173,7 @@
         dest: /home/cloud-user/.config/openstack/clouds.yaml
         content: |
           clouds:
-            ocp-ci:
+            powervc:
               auth:
                 auth_url: "https://{{ ip }}:5000"
                 username: "{{ username }}"
@@ -187,13 +188,13 @@
         owner: cloud-user
         group: cloud-user
 
-    - name: Copy ocp-ci-ca.pem over to /home/cloud-user/.config/openstack/ocp-ci-ca.pem
-      ansible.builtin.copy:
-        src: ocp-ci-ca.pem
-        dest: /home/cloud-user/.config/openstack/ocp-ci-ca.pem
-        owner: cloud-user
-        group: cloud-user
-        mode: '0644'
+    - name: Create ocp-ci-ca.pem
+      shell: |
+        (
+          echo "" | openssl s_client -showcerts -prexit -connect "{{ ip }}:443" 2> /dev/null | sed -n -e '/BEGIN CERTIFICATE/,/END CERTIFICATE/ p' > /home/cloud-user/.config/openstack/ocp-ci-ca.pem
+          chmod 0644 /home/cloud-user/.config/openstack/ocp-ci-ca.pem
+          chown cloud-user:cloud-user /home/cloud-user/.config/openstack/ocp-ci-ca.pem
+        )
 
     - name: Create bin directory
       ansible.builtin.file:
@@ -214,7 +215,7 @@
         (
           cd ~/bin/
           /bin/rm oc kubectl
-          curl --silent --location --remote-name https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.19.9/openshift-client-linux-ppc64le-rhel9-4.19.9.tar.gz
-          tar xvf openshift-client-linux-ppc64le-rhel9-4.19.9.tar.gz oc kubectl
+          curl --silent --location --remote-name https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.5/openshift-client-linux-ppc64le-rhel9-4.21.5.tar.gz
+          tar xvf openshift-client-linux-ppc64le-rhel9-4.21.5.tar.gz oc kubectl
         ) 
       when: not oc_stat.stat.exists
