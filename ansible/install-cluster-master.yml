@@ -15,6 +15,11 @@
         msg: "The variable 'password' is empty or not defined. Please provide a value."
       when: password | default('') | length == 0
 
+    - name: Check if ip is empty
+      ansible.builtin.fail:
+        msg: "The variable 'ip' is empty or not defined. Please provide a value."
+      when: ip | default('') | length == 0
+
     - name: Check if project_id is empty
       ansible.builtin.fail:
         msg: "The variable 'project_id' is empty or not defined. Please provide a value."
@@ -167,7 +172,7 @@
           clouds:
             ocp-ci:
               auth:
-                auth_url: https://10.130.38.240:5000
+                auth_url: "https://{{ ip }}:5000"
                 username: "{{ username }}"
                 password: "{{ password }}"
                 project_id: "{{ project_id }}"

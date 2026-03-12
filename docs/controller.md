@@ -10,7 +10,7 @@ Create a CentOS 9 VM.  Then run this ansible script: [ansible/install-cluster-ma
 
 ```
 $ cd ocp-ipi-powervc/ansible
-$ ansible-playbook -i inventory install-cluster-master.yml --extra-vars "username=${USERNAME} password=${PASSWORD} project_id=${PROJECT_ID}"
+$ ansible-playbook -i inventory install-cluster-master.yml --extra-vars "username=${USERNAME} password=${PASSWORD} ip=${IP} project_id=${PROJECT_ID}"
 ```
 
 It is recommended to use `tmux` to keep the session alive.
