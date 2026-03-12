@@ -119,7 +119,7 @@
 
     - name: Git checkout PowerVC-Tool
       ansible.builtin.git:
-        repo: 'https://github.com/hamzy/PowerVC-Tool.git'
+        repo: 'https://github.com/IBM/ocp-ipi-powervc.git'
         dest: /home/cloud-user/PowerVC-Tool
         version: main
 
@@ -133,8 +133,10 @@
         (
           cd ~/PowerVC-Tool/
           TAG=$(git describe --abbrev=0 --tags)
-          curl --silent --location --remote-name https://github.com/hamzy/PowerVC-Tool/releases/download/${TAG}/PowerVC-Tool-${TAG}-linux-ppc64le.tar.gz
-          tar xvf PowerVC-Tool-${TAG}-linux-ppc64le.tar.gz 
+          VERSION=$(git describe --always --long --dirty)
+          ARCH=$(uname -m)
+          if [ "${ARCH}" == "x86_64" ]; then ARCH="amd64"; fi
+          go build -ldflags="-X main.version=${VERSION} -X main.release=${TAG}" -o  ocp-ipi-powervc-linux-${ARCH}  *.go
         ) 
       when: not pvct_stat.stat.exists
 
