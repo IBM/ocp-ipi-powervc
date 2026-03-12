@@ -74,13 +74,7 @@
 
           subnet 10.130.32.0 netmask 255.255.240.0 {
              interface {{ ethernet_interfaces[0] }};
-             option routers 10.130.32.1;
-             option subnet-mask 10.130.32.0;
-             option domain-name-servers 10.2.70.215, 10.11.5.160, 8.8.8.8;
-             option domain-name "powervs-openshift-ipi.cis.ibm.net";
-             option dhcp-server-identifier 10.130.41.117;
              ignore unknown-clients;
-          #  update-static-leases true;
           }
         mode: '0644'
         owner: root
