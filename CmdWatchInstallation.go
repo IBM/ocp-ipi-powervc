@@ -248,7 +248,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 			return err
 		}
 
-		fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
+		fmt.Println("8<--------8<--------8<--------8<--DHCP--8<--------8<--------8<--------8<--------")
 
 		log.Debugf("enableDhcpd = %v", enableDhcpd)
 		if enableDhcpd {
@@ -289,14 +289,14 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 			}
 		}
 
-		fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
+		fmt.Println("8<--------8<--------8<--------8<HAPROXY-8<--------8<--------8<--------8<--------")
 
 		err = haproxyCfg(ctx, *ptrCloud, bastionInformations)
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
+		fmt.Println("8<--------8<--------8<--------8<--DNS---8<--------8<--------8<--------8<--------")
 
 		if apiKey != "" {
 			err = dnsRecords(ctx,
