@@ -1,5 +1,7 @@
 # controller VM
 
+## Setup
+
 There is expected to be a VM which contains the ocp-ipi-powervc helper utility.  This program is responsible for a number of tasks:
 
 1) Update dhcpd configuration
@@ -39,3 +41,9 @@ $ ocp-ipi-powervc-$(uname -m) \
 The `IBMCLOUD_API_KEY` environment variable is optional.  If set, then the program will update DNS entries based on the bastion metadata that it receives.
 
 `--enableDhcpd` is optional.  The other `--dhcpXXX` arguments are required if DHCP is enabled.
+
+## Debugging
+
+With `--shouldDebug true`, it helps to pipe the output into a file and edit the file to check for errors.
+
+There are three different functions you may need to debug (bastion, DHCP, and DNS).  Check the [debugging](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/debugging.md) page for more information.
