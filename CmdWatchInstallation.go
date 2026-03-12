@@ -313,7 +313,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 			return err
 		}
 
-		log.Debugf("Sleeping")
+		fmt.Println("Sleeping")
 
 		time.Sleep(30 * time.Second)
 	}
@@ -647,7 +647,7 @@ func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastion
 
 	log.Debugf("haproxyCfg: len(bastionInformations) = %d", len(bastionInformations))
 	if len(bastionInformations) == 0 {
-		fmt.Printf("Warning: no bastion servers found!")
+		fmt.Println("Warning: no bastion servers found!")
 		return nil
 	}
 
