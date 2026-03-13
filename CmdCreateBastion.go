@@ -15,29 +15,32 @@
 package main
 
 import (
+	// Standard library imports (alphabetically sorted)
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"math"
 	"net"
-	"strings"
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"time"
 
+	// Third-party imports - gophercloud (grouped by functionality)
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 
+	// Third-party imports - IBM SDK
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
 
+	// Third-party imports - Kubernetes
 	"k8s.io/apimachinery/pkg/util/wait"
-
 	"k8s.io/utils/ptr"
 )
 
@@ -49,84 +52,176 @@ const (
 	haproxyConfigPerms    = "646"
 	haproxyConfigPath     = "/etc/haproxy/haproxy.cfg"
 	haproxySelinuxSetting = "haproxy_connect_any"
+	filePermReadWrite     = 0644
+	sshUser               = "cloud-user"
+	haproxyPackageName    = "haproxy"
+	haproxyServiceName    = "haproxy.service"
 )
 
-var (
-	enableHAProxy     = true
-)
-
-// BastionConfig holds all configuration for bastion creation
+// BastionConfig holds all configuration for bastion creation.
+// It supports two modes of operation:
+//   1. Local setup: Requires BastionRsa for SSH access
+//   2. Remote setup: Requires ServerIP to delegate setup to another server
 type BastionConfig struct {
-	Cloud        string
-	BastionName  string
-	BastionRsa   string
-	FlavorName   string
-	ImageName    string
-	NetworkName  string
-	SshKeyName   string
-	DomainName   string
-	EnableHAP    bool
-	ServerIP     string
-	ShouldDebug  bool
+	// OpenStack Configuration
+	Cloud       string // OpenStack cloud name from clouds.yaml (required)
+	NetworkName string // OpenStack network name for bastion VM (required)
+
+	// Bastion VM Specification
+	BastionName string // Name of the bastion VM (required, alphanumeric/hyphens/underscores only)
+	FlavorName  string // OpenStack flavor for VM sizing (required)
+	ImageName   string // OpenStack image for VM OS (required)
+	SshKeyName  string // OpenStack SSH keypair name (required)
+
+	// Setup Mode (mutually exclusive)
+	BastionRsa string // Path to RSA private key for local SSH setup (mutually exclusive with ServerIP)
+	ServerIP   string // IP address for remote setup delegation (mutually exclusive with BastionRsa)
+
+	// Optional Configuration
+	DomainName    string // DNS domain for bastion records (optional, requires IBMCLOUD_API_KEY)
+	EnableHAProxy bool   // Enable HAProxy load balancer (default: true)
+	ShouldDebug   bool   // Enable debug logging (default: false)
+
+	// Internal state (not exposed via flags)
+	validated bool // Tracks if Validate() has been called successfully
 }
 
-// Validate checks if the configuration is valid
+// Validate checks if the configuration is valid and returns detailed errors.
+// It performs the following checks:
+//   - Required field presence
+//   - Field format validation (names, IPs, file paths)
+//   - Mutual exclusivity constraints
+//   - Resource accessibility (file existence)
 func (c *BastionConfig) Validate() error {
-	// Required fields
+	// Skip re-validation if already validated
+	if c.validated {
+		return nil
+	}
+
+	var validationErrors []error
+
+	// Required fields validation
 	if c.Cloud == "" {
-		return fmt.Errorf("cloud name is required")
+		validationErrors = append(validationErrors, fmt.Errorf("cloud: field is required"))
 	}
 	if c.BastionName == "" {
-		return fmt.Errorf("bastion name is required")
+		validationErrors = append(validationErrors, fmt.Errorf("bastionName: field is required"))
+	} else if !isValidResourceName(c.BastionName) {
+		validationErrors = append(validationErrors, 
+			fmt.Errorf("bastionName: contains invalid characters (use alphanumeric, hyphens, underscores): %q", c.BastionName))
 	}
 
-	// Validate bastion name format (alphanumeric, hyphens, underscores)
-	if !isValidResourceName(c.BastionName) {
-		return fmt.Errorf("bastion name contains invalid characters: %s", c.BastionName)
-	}
-
-	// Mutual exclusivity check
+	// Setup mode validation (mutually exclusive)
 	if c.BastionRsa == "" && c.ServerIP == "" {
-		return fmt.Errorf("either bastion RSA key or server IP must be specified")
+		validationErrors = append(validationErrors, 
+			fmt.Errorf("setup mode: either bastionRsa (local) or serverIP (remote) must be specified"))
 	}
 	if c.BastionRsa != "" && c.ServerIP != "" {
-		return fmt.Errorf("bastion RSA key and server IP are mutually exclusive")
+		validationErrors = append(validationErrors, 
+			fmt.Errorf("setup mode: bastionRsa and serverIP are mutually exclusive"))
 	}
 
-	// Validate file paths
+	// File path validation
 	if c.BastionRsa != "" {
 		if _, err := os.Stat(c.BastionRsa); err != nil {
-			return fmt.Errorf("bastion RSA key file not found: %w", err)
+			if os.IsNotExist(err) {
+				validationErrors = append(validationErrors, 
+					fmt.Errorf("bastionRsa: file not found: %q", c.BastionRsa))
+			} else {
+				validationErrors = append(validationErrors, 
+					fmt.Errorf("bastionRsa: cannot access file: %w", err))
+			}
 		}
 	}
 
-	// Validate IP address format
+	// IP address format validation
 	if c.ServerIP != "" {
 		if net.ParseIP(c.ServerIP) == nil {
-			return fmt.Errorf("invalid server IP address: %s", c.ServerIP)
+			validationErrors = append(validationErrors, 
+				fmt.Errorf("serverIP: invalid IP address format: %q", c.ServerIP))
 		}
 	}
 
-	// Required OpenStack resources
-	if c.FlavorName == "" {
-		return fmt.Errorf("flavor name is required")
+	// OpenStack resource validation
+	requiredFields := map[string]string{
+		"flavorName":  c.FlavorName,
+		"imageName":   c.ImageName,
+		"networkName": c.NetworkName,
+		"sshKeyName":  c.SshKeyName,
 	}
-	if c.ImageName == "" {
-		return fmt.Errorf("image name is required")
+
+	for fieldName, value := range requiredFields {
+		if value == "" {
+			validationErrors = append(validationErrors, 
+				fmt.Errorf("%s: field is required", fieldName))
+		}
 	}
-	if c.NetworkName == "" {
-		return fmt.Errorf("network name is required")
+
+	// Return aggregated errors
+	if len(validationErrors) > 0 {
+		return fmt.Errorf("configuration validation failed:\n  - %w", 
+			errors.Join(validationErrors...))
 	}
-	if c.SshKeyName == "" {
-		return fmt.Errorf("SSH key name is required")
-	}
+
+	// Mark as validated on success
+	c.validated = true
 
 	return nil
 }
 
+// IsLocalSetup returns true if the bastion is configured for local setup mode.
+func (c *BastionConfig) IsLocalSetup() bool {
+	return c.BastionRsa != ""
+}
+
+// IsRemoteSetup returns true if the bastion is configured for remote setup mode.
+func (c *BastionConfig) IsRemoteSetup() bool {
+	return c.ServerIP != ""
+}
+
+// HasDNSConfig returns true if DNS configuration is available.
+func (c *BastionConfig) HasDNSConfig() bool {
+	return c.DomainName != "" && os.Getenv("IBMCLOUD_API_KEY") != ""
+}
+
+// String returns a string representation of the config (safe for logging).
+// Sensitive fields like BastionRsa path are masked.
+func (c *BastionConfig) String() string {
+	rsaPath := "<not set>"
+	if c.BastionRsa != "" {
+		rsaPath = "<redacted>"
+	}
+
+	return fmt.Sprintf("BastionConfig{Cloud=%q, Name=%q, Flavor=%q, Image=%q, "+
+		"Network=%q, SSHKey=%q, Domain=%q, HAProxy=%v, ServerIP=%q, RSA=%s, Debug=%v}",
+		c.Cloud, c.BastionName, c.FlavorName, c.ImageName,
+		c.NetworkName, c.SshKeyName, c.DomainName, c.EnableHAProxy,
+		c.ServerIP, rsaPath, c.ShouldDebug)
+}
+
+// NewBastionConfig creates a BastionConfig with sensible defaults.
+// Default values:
+//   - EnableHAProxy: true (HAProxy is enabled)
+//   - ShouldDebug: false (debug logging disabled)
+func NewBastionConfig() *BastionConfig {
+	return &BastionConfig{
+		EnableHAProxy: true,
+		ShouldDebug:   false,
+	}
+}
+
+// NewBastionConfigWithDefaults creates a BastionConfig with custom defaults.
+// This is useful for testing or when different default values are needed.
+func NewBastionConfigWithDefaults(enableHAProxy, shouldDebug bool) *BastionConfig {
+	return &BastionConfig{
+		EnableHAProxy: enableHAProxy,
+		ShouldDebug:   shouldDebug,
+	}
+}
+
 // parseBastionFlags extracts and validates flags into a BastionConfig
 func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, error) {
-	config := &BastionConfig{}
+	config := NewBastionConfig()  // Use constructor with defaults
 
 	// Define flags
 	cloud := flags.String("cloud", "", "The cloud to use in clouds.yaml")
@@ -137,7 +232,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	networkName := flags.String("networkName", "", "The name of the network")
 	sshKeyName := flags.String("sshKeyName", "", "The name of the SSH keypair")
 	domainName := flags.String("domainName", "", "The DNS domain (optional)")
-	enableHAP := flags.String("enableHAProxy", "false", "Enable HA Proxy daemon")
+	enableHAProxy := flags.String("enableHAProxy", "true", "Enable HA Proxy daemon")
 	serverIP := flags.String("serverIP", "", "The IP address of the server")
 	shouldDebug := flags.String("shouldDebug", "false", "Enable debug output")
 
@@ -159,7 +254,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 
 	// Parse boolean flags
 	var err error
-	config.EnableHAP, err = parseBoolFlag(*enableHAP, "enableHAProxy")
+	config.EnableHAProxy, err = parseBoolFlag(*enableHAProxy, "enableHAProxy")
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +364,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 	}
 
 	fmt.Println("Setting up bastion locally...")
-	return setupBastionServer(ctx, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa)
+	return setupBastionServer(ctx, config.EnableHAProxy, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa)
 }
 
 func createServer(ctx context.Context, cloudName string, flavorName string, imageName string, networkName string, sshKeyName string, bastionName string, userData []byte) error {
@@ -425,9 +520,9 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 		return err
 	}
 
-	fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, 0644)
+	fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, filePermReadWrite)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open known_hosts file %q: %w", knownHosts, err)
 	}
 
 	defer fileKnownHosts.Close()
@@ -444,7 +539,7 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	return nil
 }
 
-func setupBastionServer(ctx context.Context, cloudName string, serverName string, domainName string, bastionRsa string) error {
+func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName string, serverName string, domainName string, bastionRsa string) error {
 	var (
 		server       servers.Server
 		ipAddress    string
@@ -509,7 +604,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			fmt.Sprintf("cloud-user@%s", ipAddress),
 			"rpm",
 			"-q",
-			"haproxy",
+			haproxyPackageName,
 		})
 		outs = strings.TrimSpace(string(outb))
 		log.Debugf("setupBastionServer: outs = \"%s\"", outs)
@@ -526,7 +621,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 					"dnf",
 					"install",
 					"-y",
-					"haproxy",
+					haproxyPackageName,
 				})
 				outs = strings.TrimSpace(string(outb))
 				log.Debugf("setupBastionServer: outs = %s", outs)
@@ -615,7 +710,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			"sudo",
 			"systemctl",
 			"enable",
-			"haproxy.service",
+			haproxyServiceName,
 		})
 		outs = strings.TrimSpace(string(outb))
 		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
@@ -632,7 +727,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			"sudo",
 			"systemctl",
 			"start",
-			"haproxy.service",
+			haproxyServiceName,
 		})
 		outs = strings.TrimSpace(string(outb))
 		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
@@ -680,51 +775,33 @@ func writeBastionIP(ctx context.Context, cloudName string, serverName string) er
 
 	log.Debugf("writeBastionIP: ipAddress = %s", ipAddress)
 
-	fileBastionIp, err := os.OpenFile(bastionIpFilename, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-
-	fileBastionIp.Write([]byte(ipAddress))
-
-	defer fileBastionIp.Close()
-
-	return nil
-}
-
-func writeBastionIPToFile(ipAddress string) error {
-	file, err := os.OpenFile(bastionIpFilename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	fileBastionIp, err := os.OpenFile(bastionIpFilename, os.O_CREATE|os.O_RDWR, filePermReadWrite)
 	if err != nil {
 		return fmt.Errorf("failed to open bastion IP file: %w", err)
 	}
-	defer file.Close()
+	defer fileBastionIp.Close()
 
-	if _, err := file.WriteString(ipAddress); err != nil {
-		return fmt.Errorf("failed to write bastion IP: %w", err)
+	if _, err := fileBastionIp.Write([]byte(ipAddress)); err != nil {
+		return fmt.Errorf("failed to write IP address to file: %w", err)
 	}
 
 	return nil
 }
 
 func removeCommentLines(input string) string {
-	var (
-		inputLines  []string
-		resultLines []string
-	)
+	var builder strings.Builder
+	builder.Grow(len(input)) // Pre-allocate capacity
 
-	log.Debugf("removeCommentLines: input = \"%s\"", input)
-
-	inputLines = strings.Split(input, "\n")
-
-	for _, line := range inputLines {
+	for _, line := range strings.Split(input, "\n") {
 		if !strings.HasPrefix(line, "#") {
-			resultLines = append(resultLines, line)
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(line)
 		}
 	}
 
-	log.Debugf("removeCommentLines: resultLines = \"%s\"", resultLines)
-
-	return strings.Join(resultLines, "\n")
+	return builder.String()
 }
 
 func keyscanServer(ctx context.Context, ipAddress string, silent bool) ([]byte, error) {

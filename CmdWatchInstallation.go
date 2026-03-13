@@ -1520,7 +1520,8 @@ func handleCreateBastion(data string, cloud string, errChan chan error) {
 	ctx, cancel = context.WithTimeout(context.TODO(), 10*time.Minute)
 	defer cancel()
 
-	err = setupBastionServer(ctx, cloud, cmd.ServerName, cmd.DomainName, bastionRsa)
+	// @HACK need to add enableHAProxy to the comand structure
+	err = setupBastionServer(ctx, true, cloud, cmd.ServerName, cmd.DomainName, bastionRsa)
 	log.Debugf("handleCreateBastion: setupBastionServer returns %v", err)
 	errChan <- err
 }
