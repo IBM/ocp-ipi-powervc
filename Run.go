@@ -21,11 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
-)
-
-const (
-	defaultTimeout = 5 * time.Minute
 )
 
 func runCommand(kubeconfig string, cmdline string) error {

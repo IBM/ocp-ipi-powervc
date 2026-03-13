@@ -19,8 +19,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"math"
+	"net"
 	"strings"
 	"os"
 	"os/exec"
@@ -36,172 +36,240 @@ import (
 
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
 
-	"github.com/sirupsen/logrus"
-
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/utils/ptr"
 )
 
 const (
-	bastionIpFilename = "/tmp/bastionIp"
+	bastionIpFilename     = "/tmp/bastionIp"
+	defaultAvailZone      = "s1022"
+	maxSSHRetries         = 10
+	sshRetryDelay         = 15 * time.Second
+	haproxyConfigPerms    = "646"
+	haproxyConfigPath     = "/etc/haproxy/haproxy.cfg"
+	haproxySelinuxSetting = "haproxy_connect_any"
 )
 
 var (
-	enableHAProxy  = true
+	enableHAProxy     = true
 )
 
-func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
-	var (
-		out            io.Writer
-		ptrCloud       *string
-		ptrBastionName *string
-		ptrBastionRsa  *string
-		ptrFlavorName  *string
-		ptrImageName   *string
-		ptrNetworkName *string
-		ptrSshKeyName  *string
-		ptrDomainName  *string
-		ptrEnableHAP   *string
-		ptrServerIP    *string
-		ptrShouldDebug *string
-		ctx            context.Context
-		cancel         context.CancelFunc
-		err            error
-	)
+// BastionConfig holds all configuration for bastion creation
+type BastionConfig struct {
+	Cloud        string
+	BastionName  string
+	BastionRsa   string
+	FlavorName   string
+	ImageName    string
+	NetworkName  string
+	SshKeyName   string
+	DomainName   string
+	EnableHAP    bool
+	ServerIP     string
+	ShouldDebug  bool
+}
 
-	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
-
-	ptrCloud = createBastionFlags.String("cloud", "", "The cloud to use in clouds.yaml")
-	ptrBastionName = createBastionFlags.String("bastionName", "", "The name of the bastion VM to use")
-	ptrBastionRsa = createBastionFlags.String("bastionRsa", "", "The RSA filename for the bastion VM to use")
-	ptrFlavorName = createBastionFlags.String("flavorName", "", "The name of the flavor to use")
-	ptrImageName = createBastionFlags.String("imageName", "", "The name of the image to use")
-	ptrNetworkName = createBastionFlags.String("networkName", "", "The name of the network to use")
-	ptrSshKeyName = createBastionFlags.String("sshKeyName", "", "The name of the ssh keypair to use")
-	// NOTE: This is optional
-	ptrDomainName = createBastionFlags.String("domainName", "", "The DNS domain to use")
-	ptrEnableHAP = createBastionFlags.String("enableHAProxy", "false", "Should install and enable HA Proxy demon")
-	ptrServerIP = createBastionFlags.String("serverIP", "", "The IP address of the server to send the command to")
-	ptrShouldDebug = createBastionFlags.String("shouldDebug", "false", "Should output debug output")
-
-	createBastionFlags.Parse(args)
-
-	if ptrCloud == nil || *ptrCloud == "" {
-		return fmt.Errorf("Error: --cloud not specified")
+// Validate checks if the configuration is valid
+func (c *BastionConfig) Validate() error {
+	// Required fields
+	if c.Cloud == "" {
+		return fmt.Errorf("cloud name is required")
 	}
-	if ptrBastionName == nil || *ptrBastionName == "" {
-		return fmt.Errorf("Error: --bastionName not specified")
-	}
-	if (ptrBastionRsa == nil || *ptrBastionRsa == "") && (ptrServerIP == nil || *ptrServerIP == "") {
-		return fmt.Errorf("Error: Either --bastionRsa or --serverIP should be specified")
-	}
-	if *ptrBastionRsa != "" && *ptrServerIP != "" {
-		return fmt.Errorf("Error: Both --bastionRsa and --serverIP cannot be specified")
-	}
-	if ptrFlavorName == nil || *ptrFlavorName == "" {
-		return fmt.Errorf("Error: --flavorName not specified")
-	}
-	if ptrImageName == nil || *ptrImageName == "" {
-		return fmt.Errorf("Error: --imageName not specified")
-	}
-	if ptrNetworkName == nil || *ptrNetworkName == "" {
-		return fmt.Errorf("Error: --networkName not specified")
-	}
-	if ptrSshKeyName == nil || *ptrSshKeyName == "" {
-		return fmt.Errorf("Error: --sshKeyName not specified")
+	if c.BastionName == "" {
+		return fmt.Errorf("bastion name is required")
 	}
 
-	switch strings.ToLower(*ptrEnableHAP) {
-	case "true":
-		enableHAProxy = true
-	case "false":
-		enableHAProxy = false
-	default:
-		return fmt.Errorf("Error: enableHAProxy is not true/false (%s)\n", *ptrEnableHAP)
+	// Validate bastion name format (alphanumeric, hyphens, underscores)
+	if !isValidResourceName(c.BastionName) {
+		return fmt.Errorf("bastion name contains invalid characters: %s", c.BastionName)
 	}
 
-	switch strings.ToLower(*ptrShouldDebug) {
-	case "true":
-		shouldDebug = true
-	case "false":
-		shouldDebug = false
-	default:
-		return fmt.Errorf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+	// Mutual exclusivity check
+	if c.BastionRsa == "" && c.ServerIP == "" {
+		return fmt.Errorf("either bastion RSA key or server IP must be specified")
+	}
+	if c.BastionRsa != "" && c.ServerIP != "" {
+		return fmt.Errorf("bastion RSA key and server IP are mutually exclusive")
 	}
 
-	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
-	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
-	}
-
-	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
-	defer cancel()
-
-	err = os.Remove(bastionIpFilename)
-	if err != nil {
-		errstr := strings.TrimSpace(err.Error())
-		if !strings.HasSuffix(errstr, "no such file or directory") {
-			return err
+	// Validate file paths
+	if c.BastionRsa != "" {
+		if _, err := os.Stat(c.BastionRsa); err != nil {
+			return fmt.Errorf("bastion RSA key file not found: %w", err)
 		}
 	}
 
-	_, err = findServer(ctx, *ptrCloud, *ptrBastionName)
+	// Validate IP address format
+	if c.ServerIP != "" {
+		if net.ParseIP(c.ServerIP) == nil {
+			return fmt.Errorf("invalid server IP address: %s", c.ServerIP)
+		}
+	}
+
+	// Required OpenStack resources
+	if c.FlavorName == "" {
+		return fmt.Errorf("flavor name is required")
+	}
+	if c.ImageName == "" {
+		return fmt.Errorf("image name is required")
+	}
+	if c.NetworkName == "" {
+		return fmt.Errorf("network name is required")
+	}
+	if c.SshKeyName == "" {
+		return fmt.Errorf("SSH key name is required")
+	}
+
+	return nil
+}
+
+// parseBastionFlags extracts and validates flags into a BastionConfig
+func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, error) {
+	config := &BastionConfig{}
+
+	// Define flags
+	cloud := flags.String("cloud", "", "The cloud to use in clouds.yaml")
+	bastionName := flags.String("bastionName", "", "The name of the bastion VM")
+	bastionRsa := flags.String("bastionRsa", "", "The RSA filename for the bastion VM")
+	flavorName := flags.String("flavorName", "", "The name of the flavor")
+	imageName := flags.String("imageName", "", "The name of the image")
+	networkName := flags.String("networkName", "", "The name of the network")
+	sshKeyName := flags.String("sshKeyName", "", "The name of the SSH keypair")
+	domainName := flags.String("domainName", "", "The DNS domain (optional)")
+	enableHAP := flags.String("enableHAProxy", "false", "Enable HA Proxy daemon")
+	serverIP := flags.String("serverIP", "", "The IP address of the server")
+	shouldDebug := flags.String("shouldDebug", "false", "Enable debug output")
+
+	// Parse flags
+	if err := flags.Parse(args); err != nil {
+		return nil, fmt.Errorf("failed to parse flags: %w", err)
+	}
+
+	// Populate config
+	config.Cloud = *cloud
+	config.BastionName = *bastionName
+	config.BastionRsa = *bastionRsa
+	config.FlavorName = *flavorName
+	config.ImageName = *imageName
+	config.NetworkName = *networkName
+	config.SshKeyName = *sshKeyName
+	config.DomainName = *domainName
+	config.ServerIP = *serverIP
+
+	// Parse boolean flags
+	var err error
+	config.EnableHAP, err = parseBoolFlag(*enableHAP, "enableHAProxy")
 	if err != nil {
-		log.Debugf("findServer(first) returns %+v", err)
-		if strings.HasPrefix(err.Error(), "Could not find server named") {
-			fmt.Printf("Could not find server %s, creating...\n", *ptrBastionName)
+		return nil, err
+	}
+
+	config.ShouldDebug, err = parseBoolFlag(*shouldDebug, "shouldDebug")
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
+	// Print version info
+	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
+
+	// Parse and validate configuration
+	config, err := parseBastionFlags(createBastionFlags, args)
+	if err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Initialize logger
+	log = initLogger(config.ShouldDebug)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	// Clean up previous bastion IP file
+	if err := cleanupBastionIPFile(); err != nil {
+		return fmt.Errorf("failed to cleanup bastion IP file: %w", err)
+	}
+
+	// Ensure server exists
+	if err := ensureServerExists(ctx, config); err != nil {
+		return fmt.Errorf("failed to ensure server exists: %w", err)
+	}
+
+	// Setup bastion server
+	if err := setupBastion(ctx, config); err != nil {
+		return fmt.Errorf("failed to setup bastion: %w", err)
+	}
+
+	// Write bastion IP to file
+	if err := writeBastionIP(ctx, config.Cloud, config.BastionName); err != nil {
+		return fmt.Errorf("failed to write bastion IP: %w", err)
+	}
+
+	return nil
+}
+
+// cleanupBastionIPFile removes the bastion IP file if it exists
+func cleanupBastionIPFile() error {
+	err := os.Remove(bastionIpFilename)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove bastion IP file: %w", err)
+	}
+	return nil
+}
+
+// ensureServerExists checks if server exists and creates it if needed
+func ensureServerExists(ctx context.Context, config *BastionConfig) error {
+	_, err := findServer(ctx, config.Cloud, config.BastionName)
+	if err != nil {
+		if errors.Is(err, ErrServerNotFound) {
+			fmt.Printf("Server %s not found, creating...\n", config.BastionName)
 
 			err = createServer(ctx,
-				*ptrCloud,
-				*ptrFlavorName,
-				*ptrImageName,
-				*ptrNetworkName,
-				*ptrSshKeyName,
-				*ptrBastionName,
+				config.Cloud,
+				config.FlavorName,
+				config.ImageName,
+				config.NetworkName,
+				config.SshKeyName,
+				config.BastionName,
 				nil,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create server: %w", err)
 			}
 
-			fmt.Println("Done!")
+			fmt.Println("Server created successfully!")
 		} else {
-			return err
+			return fmt.Errorf("failed to find server: %w", err)
 		}
 	}
 
-	// It should exist now
-	_, err = findServer(ctx, *ptrCloud, *ptrBastionName)
+	// Verify server exists
+	_, err = findServer(ctx, config.Cloud, config.BastionName)
 	if err != nil {
-		log.Debugf("findServer(second) returns %+v", err)
-		return err
+		return fmt.Errorf("server verification failed: %w", err)
 	}
 
-	if ptrServerIP != nil && *ptrServerIP != "" {
-		fmt.Println("Creating bastion remotely!")
-		// Ask to set it up remotely
-		err = sendCreateBastion(*ptrServerIP, *ptrCloud, *ptrBastionName, *ptrDomainName)
-		if err != nil {
-			return err
-		}
-	} else {
-		fmt.Println("Creating bastion locally!")
-		// Set it up locally
-		err = setupBastionServer(ctx, *ptrCloud, *ptrBastionName, *ptrDomainName, *ptrBastionRsa)
-		if err != nil {
-			log.Debugf("setupBastionServer returns %+v", err)
-			return err
-		}
+	return nil
+}
+
+// setupBastion configures the bastion server either remotely or locally
+func setupBastion(ctx context.Context, config *BastionConfig) error {
+	if config.ServerIP != "" {
+		fmt.Println("Setting up bastion remotely...")
+		return sendCreateBastion(config.ServerIP, config.Cloud, config.BastionName, config.DomainName)
 	}
 
-	return writeBastionIP(ctx, *ptrCloud, *ptrBastionName)
+	fmt.Println("Setting up bastion locally...")
+	return setupBastionServer(ctx, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa)
 }
 
 func createServer(ctx context.Context, cloudName string, flavorName string, imageName string, networkName string, sshKeyName string, bastionName string, userData []byte) error {
@@ -282,7 +350,7 @@ func createServer(ctx context.Context, cloudName string, flavorName string, imag
 	}
 
 	serverCreateOpts = servers.CreateOpts{
-		AvailabilityZone: "s1022",
+		AvailabilityZone: defaultAvailZone,
 		FlavorRef:        flavor.ID,
 		ImageRef:         image.ID,
 		Name:             bastionName,
@@ -412,7 +480,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			return err
 		}
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < maxSSHRetries; i++ {
 			outb, err = runSplitCommand2([]string{
 				"ssh",
 				"-i",
@@ -428,7 +496,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			} else if strings.Contains(outs, "Permission denied") {
 				return fmt.Errorf("Error: ssh publickey Permission denied")
 			}
-			time.Sleep(15 * time.Second)
+			time.Sleep(sshRetryDelay)
 		}
 		if outs != "ready" {
 			return fmt.Errorf("Error: HAProxy not ready in time")
@@ -478,7 +546,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			"stat",
 			"-c",
 			"%a",
-			"/etc/haproxy/haproxy.cfg",
+			haproxyConfigPath,
 		})
 		outs = strings.TrimSpace(string(outb))
 		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
@@ -486,7 +554,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			log.Debugf("setupBastionServer: err = %+v", err)
 			return err
 		}
-		if outs != "646" {
+		if outs != haproxyConfigPerms {
 			outb, err = runSplitCommand2([]string{
 				"ssh",
 				"-i",
@@ -494,8 +562,8 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 				fmt.Sprintf("cloud-user@%s", ipAddress),
 				"sudo",
 				"chmod",
-				"646",
-				"/etc/haproxy/haproxy.cfg",
+				haproxyConfigPerms,
+				haproxyConfigPath,
 			})
 			outs = strings.TrimSpace(string(outb))
 			log.Debugf("setupBastionServer: outb = \"%s\"", outs)
@@ -512,7 +580,7 @@ func setupBastionServer(ctx context.Context, cloudName string, serverName string
 			fmt.Sprintf("cloud-user@%s", ipAddress),
 			"sudo",
 			"getsebool",
-			"haproxy_connect_any",
+			haproxySelinuxSetting,
 		})
 		outs = strings.TrimSpace(string(outb))
 		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
@@ -620,6 +688,20 @@ func writeBastionIP(ctx context.Context, cloudName string, serverName string) er
 	fileBastionIp.Write([]byte(ipAddress))
 
 	defer fileBastionIp.Close()
+
+	return nil
+}
+
+func writeBastionIPToFile(ipAddress string) error {
+	file, err := os.OpenFile(bastionIpFilename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open bastion IP file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(ipAddress); err != nil {
+		return fmt.Errorf("failed to write bastion IP: %w", err)
+	}
 
 	return nil
 }
