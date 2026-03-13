@@ -58,6 +58,346 @@ const (
 	haproxyServiceName    = "haproxy.service"
 )
 
+// ============================================================================
+// SSH Connection Management
+// ============================================================================
+
+// sshConfig holds SSH connection parameters
+type sshConfig struct {
+	Host       string
+	User       string
+	KeyPath    string
+	MaxRetries int
+	RetryDelay time.Duration
+}
+
+// newSSHConfig creates SSH configuration with defaults
+func newSSHConfig(host, keyPath string) *sshConfig {
+	return &sshConfig{
+		Host:       host,
+		User:       sshUser,
+		KeyPath:    keyPath,
+		MaxRetries: maxSSHRetries,
+		RetryDelay: sshRetryDelay,
+	}
+}
+
+// waitForSSHReady waits for SSH to become available on the server
+func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
+	log.Debugf("Waiting for SSH to be ready on %s", cfg.Host)
+
+	for i := 0; i < cfg.MaxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		outb, _ := runSplitCommand2([]string{
+			"ssh",
+			"-i", cfg.KeyPath,
+			fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
+			"echo", "ready",
+		})
+
+		outs := strings.TrimSpace(string(outb))
+		log.Debugf("SSH check attempt %d/%d: %q", i+1, cfg.MaxRetries, outs)
+
+		if outs == "ready" {
+			log.Debugf("SSH is ready on %s", cfg.Host)
+			return nil
+		}
+
+		if strings.Contains(outs, "Permission denied") {
+			return fmt.Errorf("SSH publickey permission denied for %s", cfg.Host)
+		}
+
+		if i < cfg.MaxRetries-1 {
+			time.Sleep(cfg.RetryDelay)
+		}
+	}
+
+	return fmt.Errorf("SSH not ready after %d attempts on %s", cfg.MaxRetries, cfg.Host)
+}
+
+// execSSHCommand executes a command via SSH
+func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
+	args := []string{
+		"ssh",
+		"-i", cfg.KeyPath,
+		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
+	}
+	args = append(args, command...)
+
+	outb, err := runSplitCommand2(args)
+	return strings.TrimSpace(string(outb)), err
+}
+
+// execSSHSudoCommand executes a command with sudo via SSH
+func execSSHSudoCommand(cfg *sshConfig, command []string) (string, error) {
+	sudoCmd := append([]string{"sudo"}, command...)
+	return execSSHCommand(cfg, sudoCmd)
+}
+
+// ============================================================================
+// HAProxy Package Management
+// ============================================================================
+
+// isHAProxyInstalled checks if HAProxy is installed on the remote server
+func isHAProxyInstalled(cfg *sshConfig) (bool, error) {
+	log.Debugf("Checking if HAProxy is installed on %s", cfg.Host)
+
+	output, err := execSSHCommand(cfg, []string{"rpm", "-q", haproxyPackageName})
+
+	// rpm -q returns exit code 1 if package is not installed
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		if output == fmt.Sprintf("package %s is not installed", haproxyPackageName) {
+			log.Debugf("HAProxy is not installed")
+			return false, nil
+		}
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check HAProxy installation: %w", err)
+	}
+
+	log.Debugf("HAProxy is installed: %s", output)
+	return true, nil
+}
+
+// installHAProxy installs HAProxy package on the remote server
+func installHAProxy(cfg *sshConfig) error {
+	log.Debugf("Installing HAProxy on %s", cfg.Host)
+
+	output, err := execSSHSudoCommand(cfg, []string{
+		"dnf", "install", "-y", haproxyPackageName,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to install HAProxy: %w (output: %s)", err, output)
+	}
+
+	log.Debugf("HAProxy installed successfully")
+	return nil
+}
+
+// ensureHAProxyInstalled ensures HAProxy is installed, installing if necessary
+func ensureHAProxyInstalled(cfg *sshConfig) error {
+	installed, err := isHAProxyInstalled(cfg)
+	if err != nil {
+		return err
+	}
+
+	if !installed {
+		return installHAProxy(cfg)
+	}
+
+	return nil
+}
+
+// ============================================================================
+// HAProxy Configuration Management
+// ============================================================================
+
+// getFilePermissions retrieves file permissions in octal format
+func getFilePermissions(cfg *sshConfig, filePath string) (string, error) {
+	output, err := execSSHSudoCommand(cfg, []string{
+		"stat", "-c", "%a", filePath,
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get permissions for %s: %w", filePath, err)
+	}
+
+	return output, nil
+}
+
+// setFilePermissions sets file permissions
+func setFilePermissions(cfg *sshConfig, filePath, perms string) error {
+	log.Debugf("Setting permissions %s on %s", perms, filePath)
+
+	_, err := execSSHSudoCommand(cfg, []string{
+		"chmod", perms, filePath,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to set permissions on %s: %w", filePath, err)
+	}
+
+	return nil
+}
+
+// ensureHAProxyConfigPermissions ensures HAProxy config has correct permissions
+func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
+	currentPerms, err := getFilePermissions(cfg, haproxyConfigPath)
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("Current HAProxy config permissions: %s", currentPerms)
+
+	if currentPerms != haproxyConfigPerms {
+		log.Debugf("Updating HAProxy config permissions from %s to %s", 
+			currentPerms, haproxyConfigPerms)
+		return setFilePermissions(cfg, haproxyConfigPath, haproxyConfigPerms)
+	}
+
+	log.Debugf("HAProxy config permissions are correct")
+	return nil
+}
+
+// ============================================================================
+// SELinux Configuration
+// ============================================================================
+
+// getSELinuxBool retrieves the value of an SELinux boolean
+func getSELinuxBool(cfg *sshConfig, boolName string) (bool, error) {
+	output, err := execSSHSudoCommand(cfg, []string{
+		"getsebool", boolName,
+	})
+
+	if err != nil {
+		return false, fmt.Errorf("failed to get SELinux boolean %s: %w", boolName, err)
+	}
+
+	// Output format: "haproxy_connect_any --> on" or "haproxy_connect_any --> off"
+	isOn := strings.HasSuffix(output, "--> on")
+	log.Debugf("SELinux boolean %s is %s", boolName, output)
+
+	return isOn, nil
+}
+
+// setSELinuxBool sets an SELinux boolean persistently
+func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
+	valueStr := "0"
+	if value {
+		valueStr = "1"
+	}
+
+	log.Debugf("Setting SELinux boolean %s to %s", boolName, valueStr)
+
+	_, err := execSSHSudoCommand(cfg, []string{
+		"setsebool", "-P", fmt.Sprintf("%s=%s", boolName, valueStr),
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to set SELinux boolean %s: %w", boolName, err)
+	}
+
+	return nil
+}
+
+// ensureHAProxySELinux ensures HAProxy SELinux settings are correct
+func ensureHAProxySELinux(cfg *sshConfig) error {
+	isEnabled, err := getSELinuxBool(cfg, haproxySelinuxSetting)
+	if err != nil {
+		return err
+	}
+
+	if !isEnabled {
+		log.Debugf("Enabling SELinux boolean %s", haproxySelinuxSetting)
+		return setSELinuxBool(cfg, haproxySelinuxSetting, true)
+	}
+
+	log.Debugf("SELinux boolean %s is already enabled", haproxySelinuxSetting)
+	return nil
+}
+
+// ============================================================================
+// Systemd Service Management
+// ============================================================================
+
+// systemctlCommand executes a systemctl command
+func systemctlCommand(cfg *sshConfig, action, service string) error {
+	log.Debugf("Executing systemctl %s %s", action, service)
+
+	_, err := execSSHSudoCommand(cfg, []string{
+		"systemctl", action, service,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to %s %s: %w", action, service, err)
+	}
+
+	return nil
+}
+
+// enableService enables a systemd service
+func enableService(cfg *sshConfig, service string) error {
+	return systemctlCommand(cfg, "enable", service)
+}
+
+// startService starts a systemd service
+func startService(cfg *sshConfig, service string) error {
+	return systemctlCommand(cfg, "start", service)
+}
+
+// enableAndStartHAProxy enables and starts the HAProxy service
+func enableAndStartHAProxy(cfg *sshConfig) error {
+	if err := enableService(cfg, haproxyServiceName); err != nil {
+		return err
+	}
+
+	return startService(cfg, haproxyServiceName)
+}
+
+// ============================================================================
+// HAProxy Setup Orchestration
+// ============================================================================
+
+// setupHAProxyOnServer performs complete HAProxy setup on the bastion server
+func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) error {
+	cfg := newSSHConfig(ipAddress, bastionRsa)
+
+	// Step 1: Add server to known_hosts
+	if err := addServerKnownHosts(ctx, ipAddress); err != nil {
+		return fmt.Errorf("failed to add server to known_hosts: %w", err)
+	}
+
+	// Step 2: Wait for SSH to be ready
+	if err := waitForSSHReady(ctx, cfg); err != nil {
+		return fmt.Errorf("SSH not ready: %w", err)
+	}
+
+	// Step 3: Ensure HAProxy is installed
+	if err := ensureHAProxyInstalled(cfg); err != nil {
+		return fmt.Errorf("failed to ensure HAProxy installation: %w", err)
+	}
+
+	// Step 4: Configure HAProxy file permissions
+	if err := ensureHAProxyConfigPermissions(cfg); err != nil {
+		return fmt.Errorf("failed to configure HAProxy permissions: %w", err)
+	}
+
+	// Step 5: Configure SELinux for HAProxy
+	if err := ensureHAProxySELinux(cfg); err != nil {
+		return fmt.Errorf("failed to configure HAProxy SELinux: %w", err)
+	}
+
+	// Step 6: Enable and start HAProxy service
+	if err := enableAndStartHAProxy(cfg); err != nil {
+		return fmt.Errorf("failed to start HAProxy service: %w", err)
+	}
+
+	log.Debugf("HAProxy setup completed successfully on %s", ipAddress)
+	return nil
+}
+
+// getServerIPAddress extracts and validates the IP address from a server
+func getServerIPAddress(server servers.Server) (string, error) {
+	_, ipAddress, err := findIpAddress(server)
+	if err != nil {
+		return "", fmt.Errorf("failed to get IP address: %w", err)
+	}
+
+	if ipAddress == "" {
+		return "", fmt.Errorf("IP address is empty for server %s", server.Name)
+	}
+
+	return ipAddress, nil
+}
+
 // BastionConfig holds all configuration for bastion creation.
 // It supports two modes of operation:
 //   1. Local setup: Requires BastionRsa for SSH access
@@ -497,7 +837,7 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get user home directory: %w", err)
 	}
 	log.Debugf("addServerKnownHosts: homeDir = %s", homeDir)
 
@@ -513,243 +853,69 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 		ipAddress,
 	})
 	outs = strings.TrimSpace(string(outb))
-	log.Debugf("addServerKnownHosts: outs = \"%s\"", outs)
+	log.Debugf("addServerKnownHosts: removed old key, output = %q", outs)
 
 	outb, err = keyscanServer(ctx, ipAddress, false)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to scan SSH keys from %s: %w", ipAddress, err)
 	}
 
 	fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, filePermReadWrite)
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file %q: %w", knownHosts, err)
 	}
-
 	defer fileKnownHosts.Close()
 
 	n, err := fileKnownHosts.Write(outb)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write to known_hosts: %w", err)
 	}
 
 	if n != len(outb) {
-		return fmt.Errorf("Could not write entire data to known_hosts")
+		return fmt.Errorf("incomplete write to known_hosts: wrote %d of %d bytes", n, len(outb))
 	}
 
 	return nil
 }
 
-func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName string, serverName string, domainName string, bastionRsa string) error {
-	var (
-		server       servers.Server
-		ipAddress    string
-		outb         []byte
-		outs         string
-		exitError    *exec.ExitError
-		apiKey       string
-		err          error
-	)
+// setupBastionServer orchestrates bastion server configuration
+// This is the refactored main function - much cleaner and easier to understand
+func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serverName, domainName, bastionRsa string) error {
+	// Step 1: Find the server
+	server, err := findServer(ctx, cloudName, serverName)
+	if err != nil {
+		return fmt.Errorf("failed to find server: %w", err)
+	}
+	log.Debugf("Found server: %+v", server)
 
-	server, err = findServer(ctx, cloudName, serverName)
-	log.Debugf("setupBastionServer: server = %+v", server)
+	// Step 2: Get server IP address
+	ipAddress, err := getServerIPAddress(server)
 	if err != nil {
 		return err
 	}
-
-	_, ipAddress, err = findIpAddress(server)
-	if err != nil {
-		return err
-	}
-	if ipAddress == "" {
-		return fmt.Errorf("ip address is empty for server %s", server.Name)
-	}
-
-	log.Debugf("setupBastionServer: ipAddress = %s", ipAddress)
-	log.Debugf("setupBastionServer: bastionRsa = %s", bastionRsa)
+	log.Debugf("Server IP address: %s", ipAddress)
+	log.Debugf("Bastion RSA key: %s", bastionRsa)
 
 	fmt.Printf("Setting up server %s...\n", server.Name)
 
+	// Step 3: Setup HAProxy if enabled
 	if enableHAProxy {
-		err = addServerKnownHosts(ctx, ipAddress)
-		if err != nil {
-			return err
-		}
-
-		for i := 0; i < maxSSHRetries; i++ {
-			outb, err = runSplitCommand2([]string{
-				"ssh",
-				"-i",
-				bastionRsa,
-				fmt.Sprintf("cloud-user@%s", ipAddress),
-				"echo",
-				"ready",
-			})
-			outs = strings.TrimSpace(string(outb))
-			log.Debugf("setupBastionServer: outs = \"%s\"", outs)
-			if outs == "ready" {
-				break
-			} else if strings.Contains(outs, "Permission denied") {
-				return fmt.Errorf("Error: ssh publickey Permission denied")
-			}
-			time.Sleep(sshRetryDelay)
-		}
-		if outs != "ready" {
-			return fmt.Errorf("Error: HAProxy not ready in time")
-		}
-
-		outb, err = runSplitCommand2([]string{
-			"ssh",
-			"-i",
-			bastionRsa,
-			fmt.Sprintf("cloud-user@%s", ipAddress),
-			"rpm",
-			"-q",
-			haproxyPackageName,
-		})
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("setupBastionServer: outs = \"%s\"", outs)
-		if errors.As(err, &exitError) {
-			log.Debugf("setupBastionServer: exitError.ExitCode() = %+v\n", exitError.ExitCode())
-
-			if exitError.ExitCode() == 1 && outs == "package haproxy is not installed" {
-				outb, err = runSplitCommand2([]string{
-					"ssh",
-					"-i",
-					bastionRsa,
-					fmt.Sprintf("cloud-user@%s", ipAddress),
-					"sudo",
-					"dnf",
-					"install",
-					"-y",
-					haproxyPackageName,
-				})
-				outs = strings.TrimSpace(string(outb))
-				log.Debugf("setupBastionServer: outs = %s", outs)
-				log.Debugf("setupBastionServer: err = %+v", err)
-			}
-		} else if err != nil {
-			log.Debugf("setupBastionServer: err = %+v", err)
-			return err
-		}
-
-		outb, err = runSplitCommand2([]string{
-			"ssh",
-			"-i",
-			bastionRsa,
-			fmt.Sprintf("cloud-user@%s", ipAddress),
-			"sudo",
-			"stat",
-			"-c",
-			"%a",
-			haproxyConfigPath,
-		})
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-		if err != nil {
-			log.Debugf("setupBastionServer: err = %+v", err)
-			return err
-		}
-		if outs != haproxyConfigPerms {
-			outb, err = runSplitCommand2([]string{
-				"ssh",
-				"-i",
-				bastionRsa,
-				fmt.Sprintf("cloud-user@%s", ipAddress),
-				"sudo",
-				"chmod",
-				haproxyConfigPerms,
-				haproxyConfigPath,
-			})
-			outs = strings.TrimSpace(string(outb))
-			log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-			if err != nil {
-				log.Debugf("setupBastionServer: err = %+v", err)
-				return err
-			}
-		}
-
-		outb, err = runSplitCommand2([]string{
-			"ssh",
-			"-i",
-			bastionRsa,
-			fmt.Sprintf("cloud-user@%s", ipAddress),
-			"sudo",
-			"getsebool",
-			haproxySelinuxSetting,
-		})
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-		if err != nil {
-			log.Debugf("setupBastionServer: err = %+v", err)
-			return err
-		}
-		if outs != "haproxy_connect_any --> on" {
-			outb, err = runSplitCommand2([]string{
-				"ssh",
-				"-i",
-				bastionRsa,
-				fmt.Sprintf("cloud-user@%s", ipAddress),
-				"sudo",
-				"setsebool",
-				"-P",
-				"haproxy_connect_any=1",
-			})
-			outs = strings.TrimSpace(string(outb))
-			log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-			if err != nil {
-				log.Debugf("setupBastionServer: err = %+v", err)
-				return err
-			}
-		}
-
-		outb, err = runSplitCommand2([]string{
-			"ssh",
-			"-i",
-			bastionRsa,
-			fmt.Sprintf("cloud-user@%s", ipAddress),
-			"sudo",
-			"systemctl",
-			"enable",
-			haproxyServiceName,
-		})
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-		if err != nil {
-			log.Debugf("setupBastionServer: err = %+v", err)
-			return err
-		}
-
-		outb, err = runSplitCommand2([]string{
-			"ssh",
-			"-i",
-			bastionRsa,
-			fmt.Sprintf("cloud-user@%s", ipAddress),
-			"sudo",
-			"systemctl",
-			"start",
-			haproxyServiceName,
-		})
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("setupBastionServer: outb = \"%s\"", outs)
-		if err != nil {
-			log.Debugf("setupBastionServer: err = %+v", err)
-			return err
+		if err := setupHAProxyOnServer(ctx, ipAddress, bastionRsa); err != nil {
+			return fmt.Errorf("failed to setup HAProxy: %w", err)
 		}
 	}
 
-	// NOTE: This is optional
-	apiKey = os.Getenv("IBMCLOUD_API_KEY")
-
+	// Step 4: Setup DNS if API key is available
+	apiKey := os.Getenv("IBMCLOUD_API_KEY")
 	if apiKey != "" {
-		err = dnsForServer(ctx, cloudName, apiKey, serverName, domainName)
-		if err != nil {
-			return err
+		if err := dnsForServer(ctx, cloudName, apiKey, serverName, domainName); err != nil {
+			return fmt.Errorf("failed to setup DNS: %w", err)
 		}
 	} else {
-		fmt.Println("Warning: IBMCLOUD_API_KEY not set.  Make sure DNS is supported via another way.")
+		fmt.Println("Warning: IBMCLOUD_API_KEY not set. Ensure DNS is supported via another method.")
 	}
 
-	return err
+	return nil
 }
 
 func writeBastionIP(ctx context.Context, cloudName string, serverName string) error {
