@@ -148,3 +148,33 @@ $ ocp-ipi-powervc-linux-$(uname -m) \
 	--baseDomain ${BASEDOMAIN} \
 	--shouldDebug false
 ```
+
+## General OpenShift debugging commands:
+
+```
+$ oc --request-timeout=5s get clusterversion
+$ oc --request-timeout=5s get co
+$ oc --request-timeout=5s get nodes -o=wide
+$ oc --request-timeout=5s get pods -n openshift-machine-api
+$ oc --request-timeout=5s get machines.machine.openshift.io -n openshift-machine-api
+$ oc --request-timeout=5s get machineset.machine.openshift.io -n openshift-machine-api
+$ oc --request-timeout=5s logs -l k8s-app=controller -c machine-controller -n openshift-machine-api
+$ oc --request-timeout=5s describe co/cloud-controller-manager
+$ oc --request-timeout=5s describe cm/cloud-provider-config -n openshift-config
+$ oc --request-timeout=5s get pod -l k8s-app=cloud-manager-operator -n openshift-cloud-controller-manager-operator
+$ oc --request-timeout=5s get pods -n openshift-cloud-controller-manager-operator
+$ oc --request-timeout=5s describe pod -l k8s-app=openstack-cloud-controller-manager -n openshift-cloud-controller-manager
+$ oc --request-timeout=5s get events -n openshift-cloud-controller-manager
+$ oc --request-timeout=5s -n openshift-cloud-controller-manager-operator logs deployment/cluster-cloud-controller-manager-operator -c cluster-cloud-controller-manager
+$ oc --request-timeout=5s get co/network
+$ oc --request-timeout=5s get co/kube-controller-manager
+$ oc --request-timeout=5s get co/etcd
+$ oc --request-timeout=5s get machines.machine.openshift.io -n openshift-machine-api
+$ oc --request-timeout=5s get machineset.m -n openshift-machine-api
+$ oc --request-timeout=5s get pods -n openshift-machine-api
+$ oc --request-timeout=5s get pods -n openshift-kube-controller-manager
+$ oc --request-timeout=5s get pods -n openshift-ovn-kubernetes
+$ oc --request-timeout=5s describe co/machine-config
+$ oc --request-timeout=5s get pods -A -o=wide | sed -e "/\(Running\|Completed\)/d"
+$ oc --request-timeout=5s get csr | grep Pending
+```
