@@ -41,7 +41,6 @@ import (
 
 	// Third-party imports - Kubernetes
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -664,33 +663,35 @@ func cleanupBastionIPFile() error {
 // ensureServerExists checks if server exists and creates it if needed
 func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	_, err := findServer(ctx, config.Cloud, config.BastionName)
-	if err != nil {
-		if errors.Is(err, ErrServerNotFound) {
-			fmt.Printf("Server %s not found, creating...\n", config.BastionName)
-
-			err = createServer(ctx,
-				config.Cloud,
-				config.FlavorName,
-				config.ImageName,
-				config.NetworkName,
-				config.SshKeyName,
-				config.BastionName,
-				nil,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to create server: %w", err)
-			}
-
-			fmt.Println("Server created successfully!")
-		} else {
-			return fmt.Errorf("failed to find server: %w", err)
-		}
+	if err == nil {
+		log.Debugf("Server %s already exists", config.BastionName)
+		return nil
 	}
 
-	// Verify server exists
-	_, err = findServer(ctx, config.Cloud, config.BastionName)
-	if err != nil {
-		return fmt.Errorf("server verification failed: %w", err)
+	if !errors.Is(err, ErrServerNotFound) {
+		return fmt.Errorf("failed to find server: %w", err)
+	}
+
+	// Server doesn't exist, create it
+	fmt.Printf("Server %s not found, creating...\n", config.BastionName)
+
+	if err := createServer(ctx,
+		config.Cloud,
+		config.FlavorName,
+		config.ImageName,
+		config.NetworkName,
+		config.SshKeyName,
+		config.BastionName,
+		nil,
+	); err != nil {
+		return fmt.Errorf("failed to create server: %w", err)
+	}
+
+	fmt.Println("Server created successfully!")
+
+	// Verify server was created
+	if _, err := findServer(ctx, config.Cloud, config.BastionName); err != nil {
+		return fmt.Errorf("server verification failed after creation: %w", err)
 	}
 
 	return nil
@@ -698,181 +699,195 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 
 // setupBastion configures the bastion server either remotely or locally
 func setupBastion(ctx context.Context, config *BastionConfig) error {
-	if config.ServerIP != "" {
+	if config.IsRemoteSetup() {
 		fmt.Println("Setting up bastion remotely...")
-		return sendCreateBastion(config.ServerIP, config.Cloud, config.BastionName, config.DomainName)
+		if err := sendCreateBastion(config.ServerIP, config.Cloud, config.BastionName, config.DomainName); err != nil {
+			return fmt.Errorf("remote setup failed: %w", err)
+		}
+		return nil
 	}
 
 	fmt.Println("Setting up bastion locally...")
-	return setupBastionServer(ctx, config.EnableHAProxy, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa)
+	if err := setupBastionServer(ctx, config.EnableHAProxy, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa); err != nil {
+		return fmt.Errorf("local setup failed: %w", err)
+	}
+	return nil
 }
 
-func createServer(ctx context.Context, cloudName string, flavorName string, imageName string, networkName string, sshKeyName string, bastionName string, userData []byte) error {
+// createServer creates a new OpenStack server with the specified configuration.
+// It handles resource lookup, port creation, and server provisioning.
+func createServer(ctx context.Context, cloudName, flavorName, imageName, networkName, sshKeyName, bastionName string, userData []byte) error {
 	var (
 		flavor           flavors.Flavor
 		image            images.Image
 		network          networks.Network
 		sshKeyPair       keypairs.KeyPair
-		builder          ports.CreateOptsBuilder
-		portCreateOpts   ports.CreateOpts
-		portList         []servers.Network
-		serverCreateOpts servers.CreateOptsBuilder
 		newServer        *servers.Server
 		err              error
 	)
 
+	// Step 1: Lookup OpenStack resources
 	flavor, err = findFlavor(ctx, cloudName, flavorName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find flavor %q: %w", flavorName, err)
 	}
 	log.Debugf("createServer: flavor = %+v", flavor)
 
 	image, err = findImage(ctx, cloudName, imageName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find image %q: %w", imageName, err)
 	}
 	log.Debugf("createServer: image = %+v", image)
 
 	network, err = findNetwork(ctx, cloudName, networkName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find network %q: %w", networkName, err)
 	}
 	log.Debugf("createServer: network = %+v", network)
 
 	if sshKeyName != "" {
 		sshKeyPair, err = findKeyPair(ctx, cloudName, sshKeyName)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to find SSH keypair %q: %w", sshKeyName, err)
 		}
 		log.Debugf("createServer: sshKeyPair = %+v", sshKeyPair)
 	}
 
+	// Step 2: Create network port
+	port, err := createNetworkPort(ctx, cloudName, bastionName, network.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create network port: %w", err)
+	}
+	log.Debugf("createServer: port.ID = %v", port.ID)
+
+	// Step 3: Create server
+	newServer, err = createServerInstance(ctx, cloudName, bastionName, flavor.ID, image.ID, port.ID, sshKeyName, sshKeyPair.Name, userData)
+	if err != nil {
+		return fmt.Errorf("failed to create server instance: %w", err)
+	}
+	log.Debugf("createServer: newServer = %+v", newServer)
+
+	// Step 4: Wait for server to be ready
+	if err := waitForServer(ctx, cloudName, bastionName); err != nil {
+		return fmt.Errorf("server creation timeout: %w", err)
+	}
+
+	return nil
+}
+
+// createNetworkPort creates a network port for the server
+func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID string) (*ports.Port, error) {
 	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
 	if err != nil {
-		return err
-	}
-	fmt.Printf("createServer: connNetwork = %+v\n", connNetwork)
-
-	portCreateOpts = ports.CreateOpts{
-		Name:                  fmt.Sprintf("%s-port", bastionName),
-		NetworkID:		network.ID,
-		Description:           "hamzy test",
-		AdminStateUp:          nil,
-		MACAddress:            ptr.Deref(nil, ""),
-		AllowedAddressPairs:   nil,
-		ValueSpecs:            nil,
-		PropagateUplinkStatus: nil,
+		return nil, fmt.Errorf("failed to create network client: %w", err)
 	}
 
-	builder = portCreateOpts
-	log.Debugf("createServer: builder = %+v\n", builder)
+	portCreateOpts := ports.CreateOpts{
+		Name:        fmt.Sprintf("%s-port", bastionName),
+		NetworkID:   networkID,
+		Description: "Bastion server network port",
+	}
 
-	port, err := ports.Create(ctx, connNetwork, builder).Extract()
+	port, err := ports.Create(ctx, connNetwork, portCreateOpts).Extract()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create port: %w", err)
 	}
-	log.Debugf("createServer: port = %+v\n", port)
-	log.Debugf("createServer: port.ID = %v\n", port.ID)
 
+	return port, nil
+}
+
+// createServerInstance creates the actual server instance
+func createServerInstance(ctx context.Context, cloudName, bastionName, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
 	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
 	if err != nil {
-		return err
-	}
-	fmt.Printf("createServer: connCompute = %+v\n", connCompute)
-
-	portList = []servers.Network{
-		{ Port: port.ID, },
+		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
 
-	serverCreateOpts = servers.CreateOpts{
+	serverCreateOpts := servers.CreateOpts{
 		AvailabilityZone: defaultAvailZone,
-		FlavorRef:        flavor.ID,
-		ImageRef:         image.ID,
+		FlavorRef:        flavorID,
+		ImageRef:         imageID,
 		Name:             bastionName,
-		Networks:         portList,
+		Networks:         []servers.Network{{Port: portID}},
 		UserData:         userData,
-		// Additional properties are not allowed ('tags' was unexpected)
-//		Tags:             tags[:],
-//              KeyName:          "",
-//
-//		Metadata:         instanceSpec.Metadata,
-//		ConfigDrive:      &instanceSpec.ConfigDrive,
-//		BlockDevice:      blockDevices,
 	}
-	log.Debugf("createServer: serverCreateOpts = %+v\n", serverCreateOpts)
 
+	var newServer *servers.Server
 	if sshKeyName != "" {
 		newServer, err = servers.Create(ctx,
 			connCompute,
 			keypairs.CreateOptsExt{
 				CreateOptsBuilder: serverCreateOpts,
-				KeyName:           sshKeyPair.Name,
+				KeyName:           sshKeyPairName,
 			},
 			nil).Extract()
 	} else {
 		newServer, err = servers.Create(ctx, connCompute, serverCreateOpts, nil).Extract()
 	}
-	if err != nil {
-		return err
-	}
-	log.Debugf("createServer: newServer = %+v\n", newServer)
 
-	err = waitForServer(ctx, cloudName, bastionName)
-	log.Debugf("createServer: waitForServer = %v\n", err)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
 
-	return err
+	return newServer, nil
 }
 
+// addServerKnownHosts adds the server's SSH host keys to known_hosts file
 func addServerKnownHosts(ctx context.Context, ipAddress string) error {
-	var (
-		homeDir    string
-		knownHosts string
-		outb       []byte
-		outs       string
-		err        error
-	)
-
-	homeDir, err = os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get user home directory: %w", err)
 	}
-	log.Debugf("addServerKnownHosts: homeDir = %s", homeDir)
 
-	knownHosts = path.Join(homeDir, ".ssh/known_hosts")
-	log.Debugf("addServerKnownHosts: knownHosts = %s", knownHosts)
+	knownHostsPath := path.Join(homeDir, ".ssh/known_hosts")
+	log.Debugf("addServerKnownHosts: known_hosts path = %s", knownHostsPath)
 
-	// Remove ipAddress from known_hosts
-	outb, err = runSplitCommand2([]string{
-		"ssh-keygen",
-		"-f",
-		knownHosts,
-		"-R",
-		ipAddress,
-	})
-	outs = strings.TrimSpace(string(outb))
-	log.Debugf("addServerKnownHosts: removed old key, output = %q", outs)
+	// Remove old host key if it exists
+	if err := removeHostKey(knownHostsPath, ipAddress); err != nil {
+		log.Debugf("Warning: failed to remove old host key: %v", err)
+	}
 
-	outb, err = keyscanServer(ctx, ipAddress, false)
+	// Scan new host keys
+	hostKeys, err := keyscanServer(ctx, ipAddress, false)
 	if err != nil {
 		return fmt.Errorf("failed to scan SSH keys from %s: %w", ipAddress, err)
 	}
 
-	fileKnownHosts, err := os.OpenFile(knownHosts, os.O_APPEND|os.O_RDWR, filePermReadWrite)
-	if err != nil {
-		return fmt.Errorf("failed to open known_hosts file %q: %w", knownHosts, err)
-	}
-	defer fileKnownHosts.Close()
-
-	n, err := fileKnownHosts.Write(outb)
-	if err != nil {
-		return fmt.Errorf("failed to write to known_hosts: %w", err)
+	// Append new host keys to known_hosts
+	if err := appendToFile(knownHostsPath, hostKeys); err != nil {
+		return fmt.Errorf("failed to update known_hosts: %w", err)
 	}
 
-	if n != len(outb) {
-		return fmt.Errorf("incomplete write to known_hosts: wrote %d of %d bytes", n, len(outb))
+	log.Debugf("Successfully added host keys for %s", ipAddress)
+	return nil
+}
+
+// removeHostKey removes a host's key from known_hosts file
+func removeHostKey(knownHostsPath, ipAddress string) error {
+	outb, _ := runSplitCommand2([]string{
+		"ssh-keygen",
+		"-f", knownHostsPath,
+		"-R", ipAddress,
+	})
+	log.Debugf("removeHostKey: output = %q", strings.TrimSpace(string(outb)))
+	return nil
+}
+
+// appendToFile appends data to a file
+func appendToFile(filePath string, data []byte) error {
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_RDWR, filePermReadWrite)
+	if err != nil {
+		return fmt.Errorf("failed to open file %q: %w", filePath, err)
+	}
+	defer file.Close()
+
+	n, err := file.Write(data)
+	if err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
+	}
+
+	if n != len(data) {
+		return fmt.Errorf("incomplete write: wrote %d of %d bytes", n, len(data))
 	}
 
 	return nil
@@ -918,49 +933,36 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serv
 	return nil
 }
 
-func writeBastionIP(ctx context.Context, cloudName string, serverName string) error {
-	var (
-		server       servers.Server
-		ipAddress    string
-		err          error
-	)
-
-	server, err = findServer(ctx, cloudName, serverName)
+// writeBastionIP writes the bastion server's IP address to a file
+func writeBastionIP(ctx context.Context, cloudName, serverName string) error {
+	server, err := findServer(ctx, cloudName, serverName)
+	if err != nil {
+		return fmt.Errorf("failed to find server %q: %w", serverName, err)
+	}
 	log.Debugf("writeBastionIP: server = %+v", server)
-	if err != nil {
-		return err
-	}
 
-	_, ipAddress, err = findIpAddress(server)
+	ipAddress, err := getServerIPAddress(server)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IP address: %w", err)
 	}
-	if ipAddress == "" {
-		return fmt.Errorf("ip address is empty for server %s", server.Name)
-	}
-
 	log.Debugf("writeBastionIP: ipAddress = %s", ipAddress)
 
-	fileBastionIp, err := os.OpenFile(bastionIpFilename, os.O_CREATE|os.O_RDWR, filePermReadWrite)
-	if err != nil {
-		return fmt.Errorf("failed to open bastion IP file: %w", err)
-	}
-	defer fileBastionIp.Close()
-
-	if _, err := fileBastionIp.Write([]byte(ipAddress)); err != nil {
-		return fmt.Errorf("failed to write IP address to file: %w", err)
+	if err := os.WriteFile(bastionIpFilename, []byte(ipAddress), filePermReadWrite); err != nil {
+		return fmt.Errorf("failed to write bastion IP to %q: %w", bastionIpFilename, err)
 	}
 
 	return nil
 }
 
+// removeCommentLines filters out lines starting with '#' from input text
 func removeCommentLines(input string) string {
 	var builder strings.Builder
 	builder.Grow(len(input)) // Pre-allocate capacity
 
-	for _, line := range strings.Split(input, "\n") {
-		if !strings.HasPrefix(line, "#") {
-			if builder.Len() > 0 {
+	lines := strings.Split(input, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && line != "" {
+			if i > 0 && builder.Len() > 0 {
 				builder.WriteByte('\n')
 			}
 			builder.WriteString(line)
@@ -970,13 +972,8 @@ func removeCommentLines(input string) string {
 	return builder.String()
 }
 
+// keyscanServer scans SSH host keys from a server with retry logic
 func keyscanServer(ctx context.Context, ipAddress string, silent bool) ([]byte, error) {
-	var (
-		outb []byte
-		outs string
-		err  error
-	)
-
 	backoff := wait.Backoff{
 		Duration: 1 * time.Second,
 		Factor:   1.1,
@@ -984,123 +981,102 @@ func keyscanServer(ctx context.Context, ipAddress string, silent bool) ([]byte, 
 		Steps:    math.MaxInt32,
 	}
 
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		outb, err2 = runSplitCommandNoErr([]string{
-			"ssh-keyscan",
-			ipAddress,
-		},
-			silent)
-		outs = strings.TrimSpace(string(outb))
-		log.Debugf("keyscanServer: outs = %s", outs)
-		if err2 != nil {
-			return false, nil
+	var result []byte
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		outb, err := runSplitCommandNoErr([]string{"ssh-keyscan", ipAddress}, silent)
+		if err != nil {
+			log.Debugf("keyscanServer: retry needed, error: %v", err)
+			return false, nil // Retry
 		}
 
-		return true, nil
+		outs := strings.TrimSpace(string(outb))
+		log.Debugf("keyscanServer: received keys from %s", ipAddress)
+
+		// Remove comment lines generated by ssh-keyscan
+		result = []byte(removeCommentLines(outs))
+		return true, nil // Success
 	})
 
-	if err == nil {
-		// Get rid of the comment lines generated by ssh-keyscan
-		outLines := removeCommentLines(outs)
-		outb = []byte(outLines)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan SSH keys after retries: %w", err)
 	}
 
-	return outb, err
+	return result, nil
 }
 
-func dnsForServer(ctx context.Context, cloudName string, apiKey string, bastionName string, domainName string) error {
-	var (
-		server       servers.Server
-		ipAddress    string
-		cisServiceID string
-		crnstr       string
-		zoneID       string
-		dnsService   *dnsrecordsv1.DnsRecordsV1
-		err          error
-	)
+// dnsRecord represents a DNS record to be created
+type dnsRecord struct {
+	recordType string
+	name       string
+	content    string
+}
 
-	server, err = findServer(ctx, cloudName, bastionName)
+// dnsForServer configures DNS records for the bastion server
+func dnsForServer(ctx context.Context, cloudName, apiKey, bastionName, domainName string) error {
+	// Step 1: Get server IP address
+	server, err := findServer(ctx, cloudName, bastionName)
 	if err != nil {
-		return err
-	}
-//	log.Debugf("server = %+v", server)
-
-	_, ipAddress, err = findIpAddress(server)
-	if err != nil {
-		return err
-	}
-	if ipAddress == "" {
-		return fmt.Errorf("ip address is empty for server %s", server.Name)
+		return fmt.Errorf("failed to find server %q: %w", bastionName, err)
 	}
 
-	cisServiceID, _, err = getServiceInfo(ctx, apiKey, "internet-svcs", "")
+	ipAddress, err := getServerIPAddress(server)
 	if err != nil {
-		log.Errorf("getServiceInfo returns %v", err)
-		return err
+		return fmt.Errorf("failed to get IP address: %w", err)
+	}
+
+	// Step 2: Get IBM Cloud DNS service information
+	cisServiceID, _, err := getServiceInfo(ctx, apiKey, "internet-svcs", "")
+	if err != nil {
+		return fmt.Errorf("failed to get CIS service info: %w", err)
 	}
 	log.Debugf("dnsForServer: cisServiceID = %s", cisServiceID)
 
-	crnstr, zoneID, err = getDomainCrn(ctx, apiKey, cisServiceID, domainName)
-	log.Debugf("dnsForServer: crnstr = %s, zoneID = %s, err = %+v", crnstr, zoneID, err)
+	crnstr, zoneID, err := getDomainCrn(ctx, apiKey, cisServiceID, domainName)
 	if err != nil {
-		log.Errorf("getDomainCrn returns %v", err)
-		return err
+		return fmt.Errorf("failed to get domain CRN for %q: %w", domainName, err)
+	}
+	log.Debugf("dnsForServer: crnstr = %s, zoneID = %s", crnstr, zoneID)
+
+	dnsService, err := loadDnsServiceAPI(apiKey, crnstr, zoneID)
+	if err != nil {
+		return fmt.Errorf("failed to load DNS service API: %w", err)
+	}
+	log.Debugf("dnsForServer: dnsService initialized")
+
+	// Step 3: Create DNS records
+	records := []dnsRecord{
+		{
+			recordType: dnsrecordsv1.CreateDnsRecordOptions_Type_A,
+			name:       fmt.Sprintf("api.%s.%s", bastionName, domainName),
+			content:    ipAddress,
+		},
+		{
+			recordType: dnsrecordsv1.CreateDnsRecordOptions_Type_A,
+			name:       fmt.Sprintf("api-int.%s.%s", bastionName, domainName),
+			content:    ipAddress,
+		},
+		{
+			recordType: dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
+			name:       fmt.Sprintf("*.apps.%s.%s", bastionName, domainName),
+			content:    fmt.Sprintf("api.%s.%s", bastionName, domainName),
+		},
 	}
 
-	dnsService, err = loadDnsServiceAPI(apiKey, crnstr, zoneID)
-	if err != nil {
-		log.Errorf("dnsForServer: loadDnsServiceAPI returns %v", err)
-		return err
-	}
-	log.Debugf("dnsForServer: dnsService = %+v", dnsService)
-
-	err = createOrDeletePublicDNSRecord(ctx,
-		dnsrecordsv1.CreateDnsRecordOptions_Type_A,
-		fmt.Sprintf("api.%s.%s", bastionName, domainName),
-		ipAddress,
-		true,
-		dnsService)
-	if err != nil {
-		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(1) returns %v", err)
-		return err
-	}
-
-	err = createOrDeletePublicDNSRecord(ctx,
-		dnsrecordsv1.CreateDnsRecordOptions_Type_A,
-		fmt.Sprintf("api-int.%s.%s", bastionName, domainName),
-		ipAddress,
-		true,
-		dnsService)
-	if err != nil {
-		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(2) returns %v", err)
-		return err
-	}
-
-	err = createOrDeletePublicDNSRecord(ctx,
-		dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
-		fmt.Sprintf("*.apps.%s.%s", bastionName, domainName),
-		fmt.Sprintf("api.%s.%s", bastionName, domainName),
-		true,
-		dnsService)
-	if err != nil {
-		log.Errorf("dnsForServer: createOrDeletePublicDNSRecord(3) returns %v", err)
-		return err
+	for i, record := range records {
+		if err := createOrDeletePublicDNSRecord(ctx, record.recordType, record.name, record.content, true, dnsService); err != nil {
+			return fmt.Errorf("failed to create DNS record %d (%s): %w", i+1, record.name, err)
+		}
+		log.Debugf("Created DNS record: %s -> %s", record.name, record.content)
 	}
 
 	return nil
 }
 
+// leftInContext returns the remaining time in the context
 func leftInContext(ctx context.Context) time.Duration {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return math.MaxInt64
 	}
-
-	duration := time.Until(deadline)
-
-	return duration
+	return time.Until(deadline)
 }
