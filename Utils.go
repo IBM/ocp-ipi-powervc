@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -68,4 +69,18 @@ func isValidResourceName(name string) bool {
 	// Allow alphanumeric, hyphens, underscores
 	matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, name)
 	return matched
+}
+
+// validateServerIP validates that the provided IP address is in a valid format.
+// Supports both IPv4 and IPv6 addresses.
+func validateServerIP(ip string) error {
+	// Try to parse as IP address
+	if net.ParseIP(ip) == nil {
+		// If not a valid IP, check if it's a valid hostname
+		if _, err := net.LookupHost(ip); err != nil {
+			return fmt.Errorf("invalid IP address or hostname: %s", ip)
+		}
+	}
+
+	return nil
 }

@@ -17,16 +17,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	var (
-		out            io.Writer
 		ptrServerIP    *string
 		ptrShouldDebug *string
 		err            error
@@ -34,36 +30,40 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
+	// Define command-line flags
 	ptrServerIP = checkAliveFlags.String("serverIP", "", "The IP address of the server to send the command to")
-	ptrShouldDebug = checkAliveFlags.String("shouldDebug", "false", "Should output debug output")
+	ptrShouldDebug = checkAliveFlags.String("shouldDebug", "false", "Enable debug output (true/false)")
 
-	checkAliveFlags.Parse(args)
-
-	if ptrServerIP == nil || *ptrServerIP == "" {
-		return fmt.Errorf("Error: --serverIP not specified")
+	// Parse flags
+	if err = checkAliveFlags.Parse(args); err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
 	}
 
-	switch strings.ToLower(*ptrShouldDebug) {
-	case "true":
-		shouldDebug = true
-	case "false":
-		shouldDebug = false
-	default:
-		return fmt.Errorf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+	// Validate required flags
+	if ptrServerIP == nil || strings.TrimSpace(*ptrServerIP) == "" {
+		return fmt.Errorf("required flag --serverIP not specified")
 	}
 
-	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
-	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+	// Validate server IP format
+	if err = validateServerIP(*ptrServerIP); err != nil {
+		return fmt.Errorf("invalid server IP: %w", err)
 	}
 
-	err = sendCheckAlive(*ptrServerIP)
+	// Parse debug flag
+	shouldDebug, err = parseBoolFlag(*ptrShouldDebug, "shouldDebug")
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Initialize logger (using utility function to avoid duplication)
+	log = initLogger(shouldDebug)
+
+	// Send check-alive command to server
+	if err = sendCheckAlive(*ptrServerIP); err != nil {
+		return fmt.Errorf("check-alive command failed: %w", err)
+	}
+
+	fmt.Printf("Server %s is alive and responding\n", *ptrServerIP)
+
+	return nil
 }
