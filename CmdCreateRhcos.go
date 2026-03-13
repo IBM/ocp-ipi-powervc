@@ -34,11 +34,19 @@ import (
 
 const (
 	// RHCOS server configuration constants
-	rhcosDefaultTimeout      = 15 * time.Minute
-	novaUserDataMaxSize      = 65535 // 64KB limit for nova user data
-	ignitionHTTPTimeout      = 120
+	rhcosDefaultTimeout       = 15 * time.Minute
+	novaUserDataMaxSize       = 65535 // 64KB limit for nova user data
+	ignitionHTTPTimeout       = 120
 	sshKeygenExitCodeNotFound = 1
-	knownHostsFilePerms      = 0644
+	knownHostsFilePerms       = 0644
+	sshDirPerms               = 0700
+	
+	// Error message patterns
+	serverNotFoundPrefix = "Could not find server named"
+	
+	// SSH key validation
+	minSSHKeyLength = 100  // Minimum reasonable SSH public key length
+	minPasswordHashLength = 13 // Minimum crypt hash length
 )
 
 // rhcosConfig holds all configuration for RHCOS server creation
@@ -55,13 +63,16 @@ type rhcosConfig struct {
 	APIKey       string
 }
 
-// validateRhcosConfig validates the RHCOS configuration
+// validate validates the RHCOS configuration
 func (c *rhcosConfig) validate() error {
 	if c.Cloud == "" {
 		return fmt.Errorf("cloud name is required")
 	}
 	if c.RhcosName == "" {
 		return fmt.Errorf("RHCOS name is required")
+	}
+	if !isValidResourceName(c.RhcosName) {
+		return fmt.Errorf("RHCOS name contains invalid characters: %s", c.RhcosName)
 	}
 	if c.FlavorName == "" {
 		return fmt.Errorf("flavor name is required")
@@ -72,12 +83,29 @@ func (c *rhcosConfig) validate() error {
 	if c.NetworkName == "" {
 		return fmt.Errorf("network name is required")
 	}
+	
+	// Validate SSH public key
 	if c.SshPublicKey == "" {
 		return fmt.Errorf("SSH public key is required")
 	}
+	if len(c.SshPublicKey) < minSSHKeyLength {
+		return fmt.Errorf("SSH public key appears invalid (too short)")
+	}
+	if !strings.HasPrefix(c.SshPublicKey, "ssh-") && !strings.HasPrefix(c.SshPublicKey, "ecdsa-") {
+		return fmt.Errorf("SSH public key must start with 'ssh-' or 'ecdsa-'")
+	}
+	
+	// Validate password hash
 	if c.PasswdHash == "" {
 		return fmt.Errorf("password hash is required")
 	}
+	if len(c.PasswdHash) < minPasswordHashLength {
+		return fmt.Errorf("password hash appears invalid (too short)")
+	}
+	if !strings.HasPrefix(c.PasswdHash, "$") {
+		return fmt.Errorf("password hash must be in crypt format (starting with $)")
+	}
+	
 	return nil
 }
 
@@ -170,15 +198,18 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 
 // findOrCreateRhcosServer finds an existing server or creates a new one
 func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
+	log.Debugf("Looking for existing server: %s", config.RhcosName)
+	
 	foundServer, err := findServer(ctx, config.Cloud, config.RhcosName)
 	if err != nil {
-		if !strings.HasPrefix(err.Error(), "Could not find server named") {
-			return servers.Server{}, err
+		// Check if error is due to server not found
+		if !isServerNotFoundError(err) {
+			return servers.Server{}, fmt.Errorf("error searching for server: %w", err)
 		}
 
 		// Server not found, create it
 		log.Debugf("Server %s not found, creating new server", config.RhcosName)
-		fmt.Printf("Could not find server %s, creating...\n", config.RhcosName)
+		fmt.Printf("Server %s not found, creating...\n", config.RhcosName)
 
 		if err := createServer(ctx,
 			config.Cloud,
@@ -194,15 +225,27 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 
 		fmt.Println("Server created successfully!")
 
-		// Retrieve the newly created server
+		// Retrieve the newly created server with retry
+		log.Debugf("Retrieving newly created server: %s", config.RhcosName)
 		foundServer, err = findServer(ctx, config.Cloud, config.RhcosName)
 		if err != nil {
 			return servers.Server{}, fmt.Errorf("failed to find newly created server: %w", err)
 		}
+	} else {
+		log.Debugf("Found existing server: %s (ID: %s, Status: %s)",
+			foundServer.Name, foundServer.ID, foundServer.Status)
+		fmt.Printf("Using existing server: %s\n", config.RhcosName)
 	}
 
-	log.Debugf("Found server: %s (ID: %s)", foundServer.Name, foundServer.ID)
 	return foundServer, nil
+}
+
+// isServerNotFoundError checks if an error indicates a server was not found
+func isServerNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasPrefix(err.Error(), serverNotFoundPrefix)
 }
 
 // configureDNS sets up DNS for the RHCOS server if API key is available
@@ -253,11 +296,18 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	knownHostsPath := path.Join(homeDir, ".ssh/known_hosts")
+	sshDir := path.Join(homeDir, ".ssh")
+	knownHostsPath := path.Join(sshDir, "known_hosts")
+	
+	// Ensure .ssh directory exists
+	if err := ensureSSHDirectory(sshDir); err != nil {
+		return fmt.Errorf("failed to ensure SSH directory: %w", err)
+	}
+	
 	log.Debugf("Known hosts file: %s", knownHostsPath)
 
 	// Check if host key already exists
-	outb, err := runSplitCommand2([]string{
+	_, err = runSplitCommand2([]string{
 		"ssh-keygen",
 		"-H",
 		"-F",
@@ -274,6 +324,10 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 			return fmt.Errorf("failed to scan SSH host key: %w", err)
 		}
 
+		if len(hostKey) == 0 {
+			return fmt.Errorf("received empty host key from server %s", ipAddress)
+		}
+
 		// Append to known_hosts file
 		file, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_RDWR|os.O_CREATE, knownHostsFilePerms)
 		if err != nil {
@@ -285,19 +339,49 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 			return fmt.Errorf("failed to write to known_hosts: %w", err)
 		}
 
-		log.Debugf("SSH host key added for %s", ipAddress)
+		log.Debugf("SSH host key added for %s (%d bytes)", ipAddress, len(hostKey))
 	} else if err != nil {
+		log.Debugf("Error checking SSH host key: %v", err)
 		return fmt.Errorf("failed to check SSH host key: %w", err)
 	} else {
-		log.Debugf("SSH host key already exists for %s: %s", ipAddress, strings.TrimSpace(string(outb)))
+		log.Debugf("SSH host key already exists for %s", ipAddress)
 	}
 
+	return nil
+}
+
+// ensureSSHDirectory creates the .ssh directory if it doesn't exist
+func ensureSSHDirectory(sshDir string) error {
+	info, err := os.Stat(sshDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Debugf("Creating SSH directory: %s", sshDir)
+			if err := os.MkdirAll(sshDir, sshDirPerms); err != nil {
+				return fmt.Errorf("failed to create SSH directory: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to stat SSH directory: %w", err)
+	}
+	
+	if !info.IsDir() {
+		return fmt.Errorf("SSH path exists but is not a directory: %s", sshDir)
+	}
+	
 	return nil
 }
 
 // createBootstrapIgnition generates an Ignition configuration for RHCOS bootstrap
 func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
+
+	// Validate inputs
+	if passwdHash == "" {
+		return nil, fmt.Errorf("password hash cannot be empty")
+	}
+	if sshKey == "" {
+		return nil, fmt.Errorf("SSH key cannot be empty")
+	}
 
 	// Build ignition configuration
 	config := igntypes.Config{
@@ -326,19 +410,22 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal ignition config: %w", err)
 	}
 
-	log.Debugf("Ignition config size: %d bytes", len(byteData))
+	log.Debugf("Ignition config JSON size: %d bytes", len(byteData))
 
 	// Encode to base64 for nova user data
 	strData := base64.StdEncoding.EncodeToString(byteData)
+	encodedSize := len(strData)
 
 	// Validate size constraint for OpenStack nova user data
 	// Reference: https://docs.openstack.org/nova/latest/user/metadata.html#user-data
-	if len(strData) > novaUserDataMaxSize {
-		return nil, fmt.Errorf("ignition config exceeds nova user data limit: %d > %d bytes",
-			len(strData), novaUserDataMaxSize)
+	if encodedSize > novaUserDataMaxSize {
+		return nil, fmt.Errorf("ignition config exceeds nova user data limit: %d > %d bytes (%.1f%% over)",
+			encodedSize, novaUserDataMaxSize, float64(encodedSize-novaUserDataMaxSize)/float64(novaUserDataMaxSize)*100)
 	}
 
-	log.Debugf("Base64 encoded ignition size: %d bytes (limit: %d)", len(strData), novaUserDataMaxSize)
+	utilizationPercent := float64(encodedSize) / float64(novaUserDataMaxSize) * 100
+	log.Debugf("Base64 encoded ignition size: %d bytes (%.1f%% of %d byte limit)",
+		encodedSize, utilizationPercent, novaUserDataMaxSize)
 
 	return byteData, nil
 }
