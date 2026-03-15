@@ -117,6 +117,16 @@ $ ./scripts/ssh.sh bootstrap
 
 ## The console for the master-0, master-1, and master-2 VMs should have a login prompt
 
+First, make sure that the master ndoes have received their ignition files from the bootstrap node.  ssh into the bootstrap node and make sure the ignition server is running.
+
+```
+[core@rdr-qe2-openstack-sdf5fbootstrap ~]$  ss -l | grep 22623
+tcp   LISTEN 0      4096                                              *:22623                          *:*   
+
+$ curl --insecure https://${lb_int_ip_address}:22623/config/master | wc -c
+397581
+```
+
 Use the same process as the console bootstrap for the master-0, master-1, and master-2 VMs.
 
 ## Ssh in master-0, master-1, and master-2 nodes and see crictl processes running
