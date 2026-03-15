@@ -12,6 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package main provides functionality for creating and managing RHCOS (Red Hat CoreOS) servers
+// on OpenStack/PowerVC infrastructure. This file specifically handles the creation of RHCOS
+// virtual machines with Ignition-based configuration.
+//
+// Key Features:
+//   - Automated RHCOS server provisioning
+//   - Ignition configuration generation for bootstrap
+//   - SSH host key management
+//   - Optional DNS configuration via IBM Cloud
+//   - Comprehensive input validation
+//
+// Usage Example:
+//   ./ocp-ipi-powervc create-rhcos \
+//     --cloud mycloud \
+//     --rhcosName my-rhcos-server \
+//     --flavorName medium \
+//     --imageName rhcos-4.12 \
+//     --networkName private-net \
+//     --passwdHash '$6$rounds=4096$...' \
+//     --sshPublicKey 'ssh-rsa AAAA...' \
+//     --domainName example.com \
+//     --shouldDebug true
 package main
 
 import (
@@ -49,21 +71,48 @@ const (
 	minPasswordHashLength = 13 // Minimum crypt hash length
 )
 
-// rhcosConfig holds all configuration for RHCOS server creation
+// rhcosConfig holds all configuration parameters required for RHCOS server creation.
+// This struct encapsulates both required and optional settings for provisioning
+// a Red Hat CoreOS virtual machine on OpenStack/PowerVC.
 type rhcosConfig struct {
-	Cloud        string
-	RhcosName    string
-	FlavorName   string
-	ImageName    string
-	NetworkName  string
-	PasswdHash   string
+	// Cloud specifies the cloud name from clouds.yaml to use for OpenStack authentication
+	Cloud string
+	
+	// RhcosName is the name to assign to the RHCOS virtual machine
+	RhcosName string
+	
+	// FlavorName specifies the OpenStack flavor (instance type) to use
+	FlavorName string
+	
+	// ImageName is the name of the RHCOS image in OpenStack/PowerVC
+	ImageName string
+	
+	// NetworkName specifies the network to attach the VM to
+	NetworkName string
+	
+	// PasswdHash is the crypt-formatted password hash for the 'core' user
+	// Must be in format: $<algorithm>$<salt>$<hash>
+	PasswdHash string
+	
+	// SshPublicKey contains the SSH public key for the 'core' user
+	// Must start with 'ssh-' or 'ecdsa-'
 	SshPublicKey string
-	DomainName   string
-	ShouldDebug  bool
-	APIKey       string
+	
+	// DomainName is the optional DNS domain for the server (requires IBMCLOUD_API_KEY)
+	DomainName string
+	
+	// ShouldDebug enables verbose debug logging when true
+	ShouldDebug bool
+	
+	// APIKey is the IBM Cloud API key for DNS configuration (from IBMCLOUD_API_KEY env var)
+	APIKey string
 }
 
-// validate validates the RHCOS configuration
+// validate performs comprehensive validation of the RHCOS configuration.
+// It checks for required fields, validates formats, and ensures security requirements.
+//
+// Returns an error if any validation check fails, with a descriptive message
+// indicating which field failed validation and why.
 func (c *rhcosConfig) validate() error {
 	if c.Cloud == "" {
 		return fmt.Errorf("cloud name is required")
@@ -109,7 +158,16 @@ func (c *rhcosConfig) validate() error {
 	return nil
 }
 
-// parseRhcosFlags parses and validates command-line flags for RHCOS creation
+// parseRhcosFlags parses command-line flags and constructs a validated rhcosConfig.
+// It handles flag parsing, environment variable loading, and comprehensive validation.
+//
+// Parameters:
+//   - createRhcosFlags: The FlagSet containing flag definitions
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - *rhcosConfig: Populated and validated configuration
+//   - error: Any error encountered during parsing or validation
 func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfig, error) {
 	config := &rhcosConfig{}
 
@@ -128,7 +186,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 		return nil, fmt.Errorf("failed to parse flags: %w", err)
 	}
 
-	// Populate config
+	// Populate config from parsed flags
 	config.Cloud = *ptrCloud
 	config.RhcosName = *ptrRhcosName
 	config.FlavorName = *ptrFlavorName
@@ -154,7 +212,24 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	return config, nil
 }
 
-// createRhcosCommand is the main entry point for creating an RHCOS server
+// createRhcosCommand is the main entry point for the RHCOS server creation workflow.
+// It orchestrates the entire process: configuration parsing, ignition generation,
+// server provisioning, SSH setup, and DNS configuration.
+//
+// Workflow:
+//  1. Parse and validate command-line flags
+//  2. Initialize logging based on debug flag
+//  3. Generate Ignition configuration for bootstrap
+//  4. Find existing server or create new one
+//  5. Configure SSH known_hosts
+//  6. Set up DNS records (if IBM Cloud API key provided)
+//
+// Parameters:
+//   - createRhcosFlags: FlagSet for parsing command-line arguments
+//   - args: Command-line arguments
+//
+// Returns:
+//   - error: Any error encountered during the workflow, nil on success
 func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
@@ -196,7 +271,18 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// findOrCreateRhcosServer finds an existing server or creates a new one
+// findOrCreateRhcosServer attempts to find an existing RHCOS server by name,
+// or creates a new one if not found. This function implements idempotent
+// server provisioning.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - config: RHCOS configuration containing server details
+//   - userData: Ignition configuration data for server bootstrap
+//
+// Returns:
+//   - servers.Server: The found or newly created server
+//   - error: Any error encountered during search or creation
 func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
 	log.Debugf("Looking for existing server: %s", config.RhcosName)
 	
@@ -240,7 +326,14 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 	return foundServer, nil
 }
 
-// isServerNotFoundError checks if an error indicates a server was not found
+// isServerNotFoundError determines if an error indicates a server was not found.
+// This helper function provides consistent error detection across the codebase.
+//
+// Parameters:
+//   - err: The error to check
+//
+// Returns:
+//   - bool: true if the error indicates server not found, false otherwise
 func isServerNotFoundError(err error) bool {
 	if err == nil {
 		return false
@@ -248,7 +341,16 @@ func isServerNotFoundError(err error) bool {
 	return strings.HasPrefix(err.Error(), serverNotFoundPrefix)
 }
 
-// configureDNS sets up DNS for the RHCOS server if API key is available
+// configureDNS sets up DNS records for the RHCOS server using IBM Cloud DNS.
+// This function is optional and only executes if IBMCLOUD_API_KEY is set.
+// If no API key is available, it logs a warning and returns successfully.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - config: RHCOS configuration containing DNS and API key details
+//
+// Returns:
+//   - error: Any error encountered during DNS configuration, nil on success or skip
 func configureDNS(ctx context.Context, config *rhcosConfig) error {
 	if config.APIKey == "" {
 		fmt.Println("Warning: IBMCLOUD_API_KEY not set. DNS configuration skipped.")
@@ -265,7 +367,17 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 	return nil
 }
 
-// setupRhcosServer configures SSH known_hosts for the RHCOS server
+// setupRhcosServer performs post-creation setup for the RHCOS server.
+// Currently, this includes adding the server's SSH host key to known_hosts
+// to enable passwordless SSH access.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - cloudName: Name of the cloud configuration to use
+//   - server: The server object to set up
+//
+// Returns:
+//   - error: Any error encountered during setup, nil on success
 func setupRhcosServer(ctx context.Context, cloudName string, server servers.Server) error {
 	log.Debugf("Setting up RHCOS server: %s (ID: %s)", server.Name, server.ID)
 
@@ -289,7 +401,22 @@ func setupRhcosServer(ctx context.Context, cloudName string, server servers.Serv
 	return nil
 }
 
-// ensureSSHHostKey ensures the server's SSH host key is in known_hosts
+// ensureSSHHostKey ensures the server's SSH host key is present in the user's
+// known_hosts file. If the key is not found, it scans the server and adds it.
+// This prevents SSH from prompting for host key verification on first connection.
+//
+// The function:
+//  1. Ensures the .ssh directory exists with proper permissions
+//  2. Checks if the host key already exists using ssh-keygen
+//  3. If not found, scans the server using ssh-keyscan
+//  4. Appends the scanned key to known_hosts
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - ipAddress: IP address of the server to scan
+//
+// Returns:
+//   - error: Any error encountered during the process, nil on success
 func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -306,7 +433,8 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 	
 	log.Debugf("Known hosts file: %s", knownHostsPath)
 
-	// Check if host key already exists
+	// Check if host key already exists using ssh-keygen
+	// Exit code 0: key found, Exit code 1: key not found
 	_, err = runSplitCommand2([]string{
 		"ssh-keygen",
 		"-H",
@@ -350,7 +478,15 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 	return nil
 }
 
-// ensureSSHDirectory creates the .ssh directory if it doesn't exist
+// ensureSSHDirectory creates the .ssh directory if it doesn't exist,
+// with proper permissions (0700) for security. It also validates that
+// if the path exists, it is actually a directory.
+//
+// Parameters:
+//   - sshDir: Path to the .ssh directory to ensure exists
+//
+// Returns:
+//   - error: Any error encountered, nil if directory exists or was created successfully
 func ensureSSHDirectory(sshDir string) error {
 	info, err := os.Stat(sshDir)
 	if err != nil {
@@ -371,7 +507,22 @@ func ensureSSHDirectory(sshDir string) error {
 	return nil
 }
 
-// createBootstrapIgnition generates an Ignition configuration for RHCOS bootstrap
+// createBootstrapIgnition generates an Ignition v3.2 configuration for RHCOS bootstrap.
+// The configuration includes user credentials (password hash and SSH key) for the 'core' user.
+//
+// The generated configuration:
+//  - Uses Ignition v3.2 format (latest stable)
+//  - Sets HTTP response timeout to 120 seconds
+//  - Configures the 'core' user with provided credentials
+//  - Is validated against OpenStack nova user data size limits (64KB)
+//
+// Parameters:
+//   - passwdHash: Crypt-formatted password hash for the core user
+//   - sshKey: SSH public key for the core user
+//
+// Returns:
+//   - []byte: JSON-encoded Ignition configuration
+//   - error: Any error encountered during generation or validation
 func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
 
@@ -383,7 +534,7 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 		return nil, fmt.Errorf("SSH key cannot be empty")
 	}
 
-	// Build ignition configuration
+	// Build Ignition v3.2 configuration with user credentials
 	config := igntypes.Config{
 		Ignition: igntypes.Ignition{
 			Version: igntypes.MaxVersion.String(),
@@ -404,7 +555,7 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 		},
 	}
 
-	// Marshal to JSON
+	// Marshal configuration to JSON format
 	byteData, err := json.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal ignition config: %w", err)
@@ -412,7 +563,7 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 
 	log.Debugf("Ignition config JSON size: %d bytes", len(byteData))
 
-	// Encode to base64 for nova user data
+	// Encode to base64 for OpenStack nova user data format
 	strData := base64.StdEncoding.EncodeToString(byteData)
 	encodedSize := len(strData)
 
