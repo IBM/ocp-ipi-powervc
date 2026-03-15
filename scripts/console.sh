@@ -28,11 +28,15 @@ then
 fi
 
 ARG=$1
+IS_INFRA=true
 if [ "${ARG}" != "bootstrap" ] && [ "${ARG}" != "master-0" ] && [ "${ARG}" != "master-1" ] && [ "${ARG}" != "master-2" ]
 then
-	echo "${ARG} is unrecognized"
+	echo "${ARG} is not an infra server? Trying ${ARG} instead..."
 	echo "Usage [ bootstrap | master-0 | master-1 | master-2 ]"
-	exit 1
+
+	# Maybe the server's name is something different?
+	SERVER=${ARG}
+	IS_INFRA=false
 fi
 
 if [[ ! -v CLOUD ]]
@@ -184,7 +188,10 @@ then
 fi
 ${DEBUG} && echo "INFRA_ID=${INFRA_ID}"
 
-SERVER="${INFRA_ID}-${ARG}"
+if ${IS_INFRA}
+then
+	SERVER="${INFRA_ID}-${ARG}"
+fi
 if [ -z "${SERVER}" ]
 then
 	echo "Error: server is empty?"
