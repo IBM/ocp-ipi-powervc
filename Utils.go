@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -28,87 +29,174 @@ import (
 )
 
 const (
-	defaultTimeout        = 15 * time.Minute
+	// defaultTimeout is the default timeout for operations
+	defaultTimeout = 15 * time.Minute
+	
+	// maxFileSize is the maximum file size allowed for validation (100MB)
+	maxFileSize = 100 * 1024 * 1024
 )
 
 var (
+	// ErrServerNotFound indicates the server could not be found
 	ErrServerNotFound = errors.New("server not found")
-	ErrInvalidConfig  = errors.New("invalid configuration")
+	
+	// ErrInvalidConfig indicates invalid configuration
+	ErrInvalidConfig = errors.New("invalid configuration")
+	
+	// ErrFileTooBig indicates the file exceeds maximum size
+	ErrFileTooBig = errors.New("file size exceeds maximum allowed")
+	
+	// validResourceNameRegex matches valid resource names
+	validResourceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
-// initLogger creates a configured logger based on debug flag
+// initLogger creates a configured logger based on debug flag.
+// When debug is true, logs are written to stderr; otherwise, they are discarded.
 func initLogger(debug bool) *logrus.Logger {
-	var out io.Writer
+	out := io.Discard
 	if debug {
 		out = os.Stderr
-	} else {
-		out = io.Discard
 	}
 	
 	return &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+		Out:   out,
+		Formatter: &logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+		},
+		Level: logrus.DebugLevel,
 	}
 }
 
-// parseBoolFlag converts a string flag value to boolean
-// Returns an error if the value is not "true" or "false"
+// parseBoolFlag converts a string flag value to boolean.
+// Returns an error if the value is not "true" or "false" (case-insensitive).
 func parseBoolFlag(value, flagName string) (bool, error) {
-	switch strings.ToLower(value) {
-	case "true":
+	trimmedValue := strings.TrimSpace(strings.ToLower(value))
+	
+	switch trimmedValue {
+	case "true", "1", "yes", "y":
 		return true, nil
-	case "false":
+	case "false", "0", "no", "n":
 		return false, nil
 	default:
-		return false, fmt.Errorf("%s must be 'true' or 'false', got: %s", flagName, value)
+		return false, fmt.Errorf("%s must be 'true' or 'false', got: %q", flagName, value)
 	}
 }
 
+// isValidResourceName checks if a resource name contains only valid characters.
+// Valid characters are alphanumeric, hyphens, and underscores.
+// Returns false for empty strings.
 func isValidResourceName(name string) bool {
-	// Allow alphanumeric, hyphens, underscores
-	matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, name)
-	return matched
+	if name == "" {
+		return false
+	}
+	return validResourceNameRegex.MatchString(name)
 }
 
-// validateServerIP validates that the provided IP address is in a valid format.
-// Supports both IPv4 and IPv6 addresses.
+// validateServerIP validates that the provided IP address or hostname is valid.
+// Supports IPv4, IPv6 addresses, and hostnames.
+// Returns an error if the input is empty or invalid.
 func validateServerIP(ip string) error {
-	// Try to parse as IP address
-	if net.ParseIP(ip) == nil {
-		// If not a valid IP, check if it's a valid hostname
-		if _, err := net.LookupHost(ip); err != nil {
-			return fmt.Errorf("invalid IP address or hostname: %s", ip)
-		}
+	if ip == "" {
+		return fmt.Errorf("IP address or hostname cannot be empty")
+	}
+
+	// Try to parse as IP address first
+	if net.ParseIP(ip) != nil {
+		return nil
+	}
+
+	// If not a valid IP, check if it's a valid hostname
+	if _, err := net.LookupHost(ip); err != nil {
+		return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
 	}
 
 	return nil
 }
 
-// validateFileExists checks if a file exists and is readable
+// validateFileExists checks if a file exists, is readable, and meets size constraints.
+// Returns an error if the file doesn't exist, is a directory, is not readable,
+// or exceeds the maximum allowed size.
 func validateFileExists(filePath string) error {
 	if filePath == "" {
 		return fmt.Errorf("file path cannot be empty")
 	}
 
-	info, err := os.Stat(filePath)
+	// Clean the file path
+	cleanPath := filepath.Clean(filePath)
+
+	// Get file info
+	info, err := os.Stat(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("file does not exist: %s", filePath)
+			return fmt.Errorf("file does not exist: %q", cleanPath)
 		}
-		return fmt.Errorf("cannot access file %s: %w", filePath, err)
+		if os.IsPermission(err) {
+			return fmt.Errorf("permission denied accessing file: %q", cleanPath)
+		}
+		return fmt.Errorf("cannot access file %q: %w", cleanPath, err)
 	}
 
+	// Check if it's a directory
 	if info.IsDir() {
-		return fmt.Errorf("path is a directory, not a file: %s", filePath)
+		return fmt.Errorf("path is a directory, not a file: %q", cleanPath)
 	}
 
-	// Check if file is readable
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("file is not readable: %s", filePath)
+	// Check file size
+	if info.Size() > maxFileSize {
+		return fmt.Errorf("file size (%d bytes) exceeds maximum allowed (%d bytes): %q",
+			info.Size(), maxFileSize, cleanPath)
 	}
-	file.Close()
+
+	// Verify file is readable by attempting to open it
+	file, err := os.Open(cleanPath)
+	if err != nil {
+		if os.IsPermission(err) {
+			return fmt.Errorf("file is not readable (permission denied): %q", cleanPath)
+		}
+		return fmt.Errorf("file is not readable: %q: %w", cleanPath, err)
+	}
+	defer file.Close()
 
 	return nil
+}
+
+// validateDirectoryExists checks if a directory exists and is accessible.
+// Returns an error if the path doesn't exist, is not a directory, or is not accessible.
+func validateDirectoryExists(dirPath string) error {
+	if dirPath == "" {
+		return fmt.Errorf("directory path cannot be empty")
+	}
+
+	// Clean the directory path
+	cleanPath := filepath.Clean(dirPath)
+
+	// Get directory info
+	info, err := os.Stat(cleanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("directory does not exist: %q", cleanPath)
+		}
+		if os.IsPermission(err) {
+			return fmt.Errorf("permission denied accessing directory: %q", cleanPath)
+		}
+		return fmt.Errorf("cannot access directory %q: %w", cleanPath, err)
+	}
+
+	// Check if it's actually a directory
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory: %q", cleanPath)
+	}
+
+	return nil
+}
+
+// sanitizeInput removes leading/trailing whitespace and validates the input is not empty.
+// Returns an error if the sanitized input is empty.
+func sanitizeInput(input, fieldName string) (string, error) {
+	sanitized := strings.TrimSpace(input)
+	if sanitized == "" {
+		return "", fmt.Errorf("%s cannot be empty or whitespace only", fieldName)
+	}
+	return sanitized, nil
 }
