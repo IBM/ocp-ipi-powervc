@@ -19,24 +19,40 @@ Deploying an OpenShift cluster on the PowerVC platform is comprised of a number 
 
 ## The PowerVC server has an RHCOS image for the current release
 
-```
-$ openshift-install coreos print-stream-json | jq -r '.architectures.ppc64le.artifacts.openstack' | jq -r '.formats."qcow2.gz".disk.location'
-```
+Find out the version of the RHCOS image used.
 
 ```
-$ openstack --os-cloud=${CLOUD} image list --format csv
+$ (URL=$(openshift-install coreos print-stream-json | jq -r '.architectures.ppc64le.artifacts.openstack' | jq -r '.formats."qcow2.gz".disk.location'); echo "URL=${URL}"; FILENAME="${URL##*/}"; FILENAME=${FILENAME//.qcow2.gz/}; echo "FILENAME=${FILENAME}")
+URL=https://rhcos.mirror.openshift.com/art/storage/prod/streams/rhel-9.6/builds/9.6.20251023-0/ppc64le/rhcos-9.6.20251023-0-openstack.ppc64le.qcow2.gz
+FILENAME=rhcos-9.6.20251023-0-openstack.ppc64le
+```
+
+See if that image exists in OpenStack.
+
+```
+$ openstack --os-cloud=${CLOUD} image show rhcos-9.6.20251023-0-openstack.ppc64le --format shell
+```
+
+Test an RHCOS VM deploy.
+
+```
+$ ocp-ipi-powervc-linux-${ARCH} create-rhcos --cloud "${CLOUD}" --rhcosName test-rhcos --imageName rhcos-9.6.20251023-0-openstack.ppc64le --flavorName "${FLAVOR_NAME}" --networkName "${NETWORK_NAME}" --sshPublicKey "$(cat ~/.ssh/id_installer_rsa.pub)" --passwdHash '...' --domainName "${BASEDOMAIN}" --shouldDebug true)
 ```
 
 ## The controller VM should be up and running with one window running the ocp-ipi-powervc program.
 
 There should be an PowerVC VM where the ocp-ipi-powervc program runs.  I suggest using tmux to host the windows.
 
+```
+$ ocp-ipi-powervc-linux-${ARCH} check-alive --serverIP "${CONTROLLER_IP}"
+```
+
 ## The bastion node should be up and running with haproxy process running.
 
 Check on the status of the haproxy daemon with ssh.
 
 ```
-$ ssh -i /home/cloud-user/.ssh/id_bastion cloud-user@${BASTION_IP} sudo systemctl status haproxy.service --no-pager -l
+$ ssh -i ${HOME}/.ssh/id_bastion cloud-user@${BASTION_IP} sudo systemctl status haproxy.service --no-pager -l
 ```
 
 ## DNS entries have been created
@@ -138,7 +154,7 @@ $ KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig oc get nodes -o wide
 ## Run the ocp-ipi-powervc helper program to display the status of the cluster
 
 ```
-$ ocp-ipi-powervc-linux-$(uname -m) \
+$ ocp-ipi-powervc-linux-${ARCH} \
 	watch-create \
 	--cloud ${CLOUD} \
 	--metadata ${CLUSTER_DIR}/metadata.json \
@@ -152,6 +168,7 @@ $ ocp-ipi-powervc-linux-$(uname -m) \
 ## General OpenShift debugging commands:
 
 ```
+$ export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 $ oc --request-timeout=5s get clusterversion
 $ oc --request-timeout=5s get co
 $ oc --request-timeout=5s get nodes -o=wide
