@@ -84,3 +84,31 @@ func validateServerIP(ip string) error {
 
 	return nil
 }
+
+// validateFileExists checks if a file exists and is readable
+func validateFileExists(filePath string) error {
+	if filePath == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist: %s", filePath)
+		}
+		return fmt.Errorf("cannot access file %s: %w", filePath, err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory, not a file: %s", filePath)
+	}
+
+	// Check if file is readable
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("file is not readable: %s", filePath)
+	}
+	file.Close()
+
+	return nil
+}

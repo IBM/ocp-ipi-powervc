@@ -22,39 +22,25 @@ import (
 )
 
 func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
-	var (
-		ptrCreateMetadata    *string
-		ptrDeleteMetadata    *string
-		ptrServerIP          *string
-		ptrShouldDebug       *string
-		shouldCreateMetadata bool
-		shouldDeleteMetadata bool
-		metadataFile         string
-		err                  error
-	)
-
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	// Define command-line flags
-	ptrCreateMetadata = sendMetadataFlags.String("createMetadata", "", "Create the metadata from this file")
-	ptrDeleteMetadata = sendMetadataFlags.String("deleteMetadata", "", "Delete the metadata from this file")
-	ptrServerIP = sendMetadataFlags.String("serverIP", "", "The IP address of the server to send the command to")
-	ptrShouldDebug = sendMetadataFlags.String("shouldDebug", "false", "Enable debug output (true/false)")
+	ptrCreateMetadata := sendMetadataFlags.String("createMetadata", "", "Create the metadata from this file")
+	ptrDeleteMetadata := sendMetadataFlags.String("deleteMetadata", "", "Delete the metadata from this file")
+	ptrServerIP := sendMetadataFlags.String("serverIP", "", "The IP address of the server to send the command to")
+	ptrShouldDebug := sendMetadataFlags.String("shouldDebug", "false", "Enable debug output (true/false)")
 
 	// Parse flags
-	if err = sendMetadataFlags.Parse(args); err != nil {
+	if err := sendMetadataFlags.Parse(args); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
 	}
 
-	// Validate mutually exclusive flags
-	if ptrCreateMetadata != nil && *ptrCreateMetadata != "" {
-		shouldCreateMetadata = true
-		metadataFile = strings.TrimSpace(*ptrCreateMetadata)
-	}
-	if ptrDeleteMetadata != nil && *ptrDeleteMetadata != "" {
-		shouldDeleteMetadata = true
-		metadataFile = strings.TrimSpace(*ptrDeleteMetadata)
-	}
+	// Parse and validate operation flags
+	createFile := strings.TrimSpace(*ptrCreateMetadata)
+	deleteFile := strings.TrimSpace(*ptrDeleteMetadata)
+	
+	shouldCreateMetadata := createFile != ""
+	shouldDeleteMetadata := deleteFile != ""
 
 	// Ensure exactly one operation is specified
 	if shouldCreateMetadata && shouldDeleteMetadata {
@@ -64,32 +50,44 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		return fmt.Errorf("required flag --createMetadata or --deleteMetadata must be specified")
 	}
 
-	// Validate required flags
-	if ptrServerIP == nil || strings.TrimSpace(*ptrServerIP) == "" {
+	// Determine which file to use
+	metadataFile := createFile
+	if shouldDeleteMetadata {
+		metadataFile = deleteFile
+	}
+
+	// Validate metadata file exists and is readable
+	if err := validateFileExists(metadataFile); err != nil {
+		return fmt.Errorf("metadata file validation failed: %w", err)
+	}
+
+	// Validate required server IP flag
+	serverIP := strings.TrimSpace(*ptrServerIP)
+	if serverIP == "" {
 		return fmt.Errorf("required flag --serverIP not specified")
 	}
 
 	// Validate server IP format
-	if err = validateServerIP(strings.TrimSpace(*ptrServerIP)); err != nil {
+	if err := validateServerIP(serverIP); err != nil {
 		return fmt.Errorf("invalid server IP: %w", err)
 	}
 
-	// Validate metadata file path
-	if metadataFile == "" {
-		return fmt.Errorf("metadata file path cannot be empty")
-	}
-
 	// Parse debug flag
-	shouldDebug, err = parseBoolFlag(*ptrShouldDebug, "shouldDebug")
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, "shouldDebug")
 	if err != nil {
 		return err
 	}
 
-	// Initialize logger (using utility function to avoid duplication)
+	// Initialize logger
 	log = initLogger(shouldDebug)
 
+	log.Debugf("sendMetadataCommand: operation=%s, file=%s, server=%s",
+		map[bool]string{true: "create", false: "delete"}[shouldCreateMetadata],
+		metadataFile,
+		serverIP)
+
 	// Send metadata command to server
-	if err = sendMetadata(metadataFile, strings.TrimSpace(*ptrServerIP), shouldCreateMetadata); err != nil {
+	if err := sendMetadata(metadataFile, serverIP, shouldCreateMetadata); err != nil {
 		return fmt.Errorf("send metadata command failed: %w", err)
 	}
 
