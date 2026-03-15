@@ -17,16 +17,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
-	"strings"
 	"os"
-
-	"github.com/sirupsen/logrus"
+	"strings"
 )
 
 func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	var (
-		out                  io.Writer
 		ptrCreateMetadata    *string
 		ptrDeleteMetadata    *string
 		ptrServerIP          *string
@@ -39,50 +35,70 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
-	ptrCreateMetadata = sendMetadataFlags.String("createMetadata", "", "Create the metadata of this file")
-	ptrDeleteMetadata = sendMetadataFlags.String("deleteMetadata", "", "Delete the metadata of this file")
+	// Define command-line flags
+	ptrCreateMetadata = sendMetadataFlags.String("createMetadata", "", "Create the metadata from this file")
+	ptrDeleteMetadata = sendMetadataFlags.String("deleteMetadata", "", "Delete the metadata from this file")
 	ptrServerIP = sendMetadataFlags.String("serverIP", "", "The IP address of the server to send the command to")
-	ptrShouldDebug = sendMetadataFlags.String("shouldDebug", "false", "Should output debug output")
+	ptrShouldDebug = sendMetadataFlags.String("shouldDebug", "false", "Enable debug output (true/false)")
 
-	sendMetadataFlags.Parse(args)
+	// Parse flags
+	if err = sendMetadataFlags.Parse(args); err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
 
+	// Validate mutually exclusive flags
 	if ptrCreateMetadata != nil && *ptrCreateMetadata != "" {
 		shouldCreateMetadata = true
-		metadataFile = *ptrCreateMetadata
+		metadataFile = strings.TrimSpace(*ptrCreateMetadata)
 	}
 	if ptrDeleteMetadata != nil && *ptrDeleteMetadata != "" {
 		shouldDeleteMetadata = true
-		metadataFile = *ptrDeleteMetadata
+		metadataFile = strings.TrimSpace(*ptrDeleteMetadata)
 	}
 
+	// Ensure exactly one operation is specified
+	if shouldCreateMetadata && shouldDeleteMetadata {
+		return fmt.Errorf("cannot specify both --createMetadata and --deleteMetadata")
+	}
 	if !shouldCreateMetadata && !shouldDeleteMetadata {
-		return fmt.Errorf("Error: Either --createMetadata or --deleteMetadata should be specified")
-	}
-	if ptrServerIP == nil || *ptrServerIP == "" {
-		return fmt.Errorf("Error: --serverIP not specified")
+		return fmt.Errorf("required flag --createMetadata or --deleteMetadata must be specified")
 	}
 
-	switch strings.ToLower(*ptrShouldDebug) {
-	case "true":
-		shouldDebug = true
-	case "false":
-		shouldDebug = false
-	default:
-		return fmt.Errorf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+	// Validate required flags
+	if ptrServerIP == nil || strings.TrimSpace(*ptrServerIP) == "" {
+		return fmt.Errorf("required flag --serverIP not specified")
 	}
 
-	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
-	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+	// Validate server IP format
+	if err = validateServerIP(strings.TrimSpace(*ptrServerIP)); err != nil {
+		return fmt.Errorf("invalid server IP: %w", err)
 	}
 
-	err = sendMetadata(metadataFile, *ptrServerIP, shouldCreateMetadata)
+	// Validate metadata file path
+	if metadataFile == "" {
+		return fmt.Errorf("metadata file path cannot be empty")
+	}
 
-	return err
+	// Parse debug flag
+	shouldDebug, err = parseBoolFlag(*ptrShouldDebug, "shouldDebug")
+	if err != nil {
+		return err
+	}
+
+	// Initialize logger (using utility function to avoid duplication)
+	log = initLogger(shouldDebug)
+
+	// Send metadata command to server
+	if err = sendMetadata(metadataFile, strings.TrimSpace(*ptrServerIP), shouldCreateMetadata); err != nil {
+		return fmt.Errorf("send metadata command failed: %w", err)
+	}
+
+	// Provide user feedback
+	operation := "created"
+	if !shouldCreateMetadata {
+		operation = "deleted"
+	}
+	fmt.Printf("Metadata successfully %s from file: %s\n", operation, metadataFile)
+
+	return nil
 }
