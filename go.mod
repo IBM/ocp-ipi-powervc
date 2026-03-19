@@ -14,7 +14,7 @@ require (
 	github.com/openshift/api v0.0.0-20260310193758-1f950f74aded
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.35.2
-	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
+	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
 	sigs.k8s.io/yaml v1.6.0
 )
 
