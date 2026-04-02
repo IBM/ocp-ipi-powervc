@@ -15,9 +15,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,7 +27,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IBM/go-sdk-core/v5/core"
+
 	"github.com/sirupsen/logrus"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
@@ -199,4 +205,73 @@ func sanitizeInput(input, fieldName string) (string, error) {
 		return "", fmt.Errorf("%s cannot be empty or whitespace only", fieldName)
 	}
 	return sanitized, nil
+}
+
+// retryConfig holds configuration for retry operations with exponential backoff.
+type retryConfig struct {
+	Duration time.Duration
+	Factor   float64
+	Cap      time.Duration
+	Steps    int
+}
+
+// defaultRetryConfig returns the default retry configuration for IBM Cloud operations.
+// The configuration uses exponential backoff with a 15-second initial duration,
+// 1.1x factor, and respects the context timeout.
+func defaultRetryConfig(ctx context.Context) retryConfig {
+	return retryConfig{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(ctx),
+		Steps:    math.MaxInt32,
+	}
+}
+
+// retryWithBackoff executes an operation with exponential backoff retry logic.
+// It automatically retries on transient failures and logs retry attempts.
+//
+// Type parameter T represents the result type of the operation.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - operation: Function to execute with retry logic
+//   - operationName: Name of the operation for logging and error messages
+//
+// Returns:
+//   - T: Result of the successful operation
+//   - *core.DetailedResponse: HTTP response details from IBM Cloud SDK
+//   - error: Any error encountered during the operation
+func retryWithBackoff[T any](
+	ctx context.Context,
+	operation func(context.Context) (T, *core.DetailedResponse, error),
+	operationName string,
+) (T, *core.DetailedResponse, error) {
+	var result T
+	var response *core.DetailedResponse
+
+	config := defaultRetryConfig(ctx)
+	backoff := wait.Backoff{
+		Duration: config.Duration,
+		Factor:   config.Factor,
+		Cap:      config.Cap,
+		Steps:    config.Steps,
+	}
+
+	log.Debugf("Starting %s operation", operationName)
+
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+		var err error
+		result, response, err = operation(ctx)
+		if err != nil {
+			log.Debugf("%s attempt failed: %v", operationName, err)
+			return false, fmt.Errorf("%s failed: %w", operationName, err)
+		}
+		return true, nil
+	})
+
+	if err == nil {
+		log.Debugf("%s operation completed successfully", operationName)
+	}
+
+	return result, response, err
 }

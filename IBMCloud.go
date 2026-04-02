@@ -17,199 +17,211 @@ package main
 import (
 	"context"
 	"fmt"
-	"math"
-	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
-
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
 	"github.com/IBM/networking-go-sdk/zonesv1"
-
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
-
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-func listResourceInstances(ctx context.Context, controllerSvc *resourcecontrollerv2.ResourceControllerV2, listResourceOptions *resourcecontrollerv2.ListResourceInstancesOptions) (resources *resourcecontrollerv2.ResourceInstancesList, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+// and the 'leftInContext' function defined in CmdCreateBastion.go
+// and the 'retryWithBackoff' function defined in Utils.go
+
+// listResourceInstances retrieves a list of resource instances from IBM Cloud.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - controllerSvc: IBM Cloud Resource Controller service client
+//   - listResourceOptions: Options for filtering and pagination
+//
+// Returns:
+//   - *resourcecontrollerv2.ResourceInstancesList: List of resource instances
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/resource-controller/resource-controller#list-resource-instances
+// SDK Reference: https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L5008
+func listResourceInstances(
+	ctx context.Context,
+	controllerSvc *resourcecontrollerv2.ResourceControllerV2,
+	listResourceOptions *resourcecontrollerv2.ListResourceInstancesOptions,
+) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
+	if controllerSvc == nil {
+		return nil, nil, fmt.Errorf("ListResourceInstances failed: controllerSvc cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L5008
-		resources, response, err2 = controllerSvc.ListResourceInstancesWithContext(ctx, listResourceOptions)
-		if err2 != nil {
-			err2 = fmt.Errorf("ListResourceInstancesWithContext failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
+		return controllerSvc.ListResourceInstancesWithContext(ctx, listResourceOptions)
+	}, "ListResourceInstances")
 }
 
-func listCatalogEntries(ctx context.Context, gcv1 *globalcatalogv1.GlobalCatalogV1, listCatalogEntriesOpt *globalcatalogv1.ListCatalogEntriesOptions) (result *globalcatalogv1.EntrySearchResult, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// listCatalogEntries retrieves catalog entries from IBM Cloud Global Catalog.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - gcv1: IBM Cloud Global Catalog service client
+//   - listCatalogEntriesOpt: Options for filtering catalog entries
+//
+// Returns:
+//   - *globalcatalogv1.EntrySearchResult: Search results containing catalog entries
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/resource-catalog/global-catalog#list-catalog-entries
+// SDK Reference: https://github.com/IBM/platform-services-go-sdk/blob/main/globalcatalogv1/global_catalog_v1.go
+func listCatalogEntries(
+	ctx context.Context,
+	gcv1 *globalcatalogv1.GlobalCatalogV1,
+	listCatalogEntriesOpt *globalcatalogv1.ListCatalogEntriesOptions,
+) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if gcv1 == nil {
+		return nil, nil, fmt.Errorf("ListCatalogEntries failed: gcv1 cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		result, response, err2 = gcv1.ListCatalogEntriesWithContext(ctx, listCatalogEntriesOpt)
-		if err2 != nil {
-			err2 = fmt.Errorf("ListCatalogEntriesWithContex failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+		return gcv1.ListCatalogEntriesWithContext(ctx, listCatalogEntriesOpt)
+	}, "ListCatalogEntries")
 }
 
-func GetChildObjects(ctx context.Context, gcv1 *globalcatalogv1.GlobalCatalogV1, getChildOpt *globalcatalogv1.GetChildObjectsOptions) (result *globalcatalogv1.EntrySearchResult, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// GetChildObjects retrieves child objects from IBM Cloud Global Catalog.
+// It automatically retries on transient failures using exponential backoff.
+// This function is exported for use by other packages.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - gcv1: IBM Cloud Global Catalog service client
+//   - getChildOpt: Options for retrieving child objects
+//
+// Returns:
+//   - *globalcatalogv1.EntrySearchResult: Search results containing child objects
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/resource-catalog/global-catalog#get-child-catalog-entries
+// SDK Reference: https://github.com/IBM/platform-services-go-sdk/blob/main/globalcatalogv1/global_catalog_v1.go
+func GetChildObjects(
+	ctx context.Context,
+	gcv1 *globalcatalogv1.GlobalCatalogV1,
+	getChildOpt *globalcatalogv1.GetChildObjectsOptions,
+) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if gcv1 == nil {
+		return nil, nil, fmt.Errorf("GetChildObjects failed: gcv1 cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		result, response, err2 = gcv1.GetChildObjectsWithContext(ctx, getChildOpt)
-		if err2 != nil {
-			err2 = fmt.Errorf("GetChildObjects failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+		return gcv1.GetChildObjectsWithContext(ctx, getChildOpt)
+	}, "GetChildObjects")
 }
 
-func listZones(ctx context.Context, zv1 *zonesv1.ZonesV1, listOpts *zonesv1.ListZonesOptions) (zoneList *zonesv1.ListZonesResp, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// listZones retrieves DNS zones from IBM Cloud Internet Services.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - zv1: IBM Cloud Zones service client
+//   - listOpts: Options for listing zones
+//
+// Returns:
+//   - *zonesv1.ListZonesResp: List of DNS zones
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/cis#list-all-zones
+// SDK Reference: https://github.com/IBM/networking-go-sdk/blob/master/zonesv1/zones_v1.go
+func listZones(
+	ctx context.Context,
+	zv1 *zonesv1.ZonesV1,
+	listOpts *zonesv1.ListZonesOptions,
+) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
+	if zv1 == nil {
+		return nil, nil, fmt.Errorf("ListZones failed: zv1 cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		zoneList, response, err2 = zv1.ListZonesWithContext(ctx, listOpts)
-		if err2 != nil {
-			err2 = fmt.Errorf("ListZonesWithContext failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
+		return zv1.ListZonesWithContext(ctx, listOpts)
+	}, "ListZones")
 }
 
-func listAllDnsRecords(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, listOpts *dnsrecordsv1.ListAllDnsRecordsOptions) (result *dnsrecordsv1.ListDnsrecordsResp, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// listAllDnsRecords retrieves all DNS records from IBM Cloud Internet Services.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - dnsService: IBM Cloud DNS Records service client
+//   - listOpts: Options for listing DNS records
+//
+// Returns:
+//   - *dnsrecordsv1.ListDnsrecordsResp: List of DNS records
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/cis#list-all-dns-records
+// SDK Reference: https://github.com/IBM/networking-go-sdk/blob/master/dnsrecordsv1/dns_records_v1.go
+func listAllDnsRecords(
+	ctx context.Context,
+	dnsService *dnsrecordsv1.DnsRecordsV1,
+	listOpts *dnsrecordsv1.ListAllDnsRecordsOptions,
+) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
+	if dnsService == nil {
+		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: dnsService cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		result, response, err2 = dnsService.ListAllDnsRecordsWithContext(ctx, listOpts)
-		if err2 != nil {
-			err2 = fmt.Errorf("ListAllDnsRecordsWithContext failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
+		return dnsService.ListAllDnsRecordsWithContext(ctx, listOpts)
+	}, "ListAllDnsRecords")
 }
 
-func deleteDnsRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, deleteOpts *dnsrecordsv1.DeleteDnsRecordOptions) (result *dnsrecordsv1.DeleteDnsrecordResp, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// deleteDnsRecord deletes a DNS record from IBM Cloud Internet Services.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - dnsService: IBM Cloud DNS Records service client
+//   - deleteOpts: Options specifying which DNS record to delete
+//
+// Returns:
+//   - *dnsrecordsv1.DeleteDnsrecordResp: Deletion response
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/cis#delete-dns-record
+// SDK Reference: https://github.com/IBM/networking-go-sdk/blob/master/dnsrecordsv1/dns_records_v1.go
+func deleteDnsRecord(
+	ctx context.Context,
+	dnsService *dnsrecordsv1.DnsRecordsV1,
+	deleteOpts *dnsrecordsv1.DeleteDnsRecordOptions,
+) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
+	if dnsService == nil {
+		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: dnsService cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		result, response, err2 = dnsService.DeleteDnsRecordWithContext(ctx, deleteOpts)
-		if err2 != nil {
-			err2 = fmt.Errorf("DeleteDnsRecordWithContext failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
+		return dnsService.DeleteDnsRecordWithContext(ctx, deleteOpts)
+	}, "DeleteDnsRecord")
 }
 
-func createDnsRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, createOpts *dnsrecordsv1.CreateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error) {
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+// createDnsRecord creates a new DNS record in IBM Cloud Internet Services.
+// It automatically retries on transient failures using exponential backoff.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - dnsService: IBM Cloud DNS Records service client
+//   - createOpts: Options specifying the DNS record to create
+//
+// Returns:
+//   - *dnsrecordsv1.DnsrecordResp: Created DNS record details
+//   - *core.DetailedResponse: HTTP response details
+//   - error: Any error encountered during the operation
+//
+// Reference: https://cloud.ibm.com/apidocs/cis#create-dns-record
+// SDK Reference: https://github.com/IBM/networking-go-sdk/blob/master/dnsrecordsv1/dns_records_v1.go
+func createDnsRecord(
+	ctx context.Context,
+	dnsService *dnsrecordsv1.DnsRecordsV1,
+	createOpts *dnsrecordsv1.CreateDnsRecordOptions,
+) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
+	if dnsService == nil {
+		return nil, nil, fmt.Errorf("CreateDnsRecord failed: dnsService cannot be nil")
 	}
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		result, response, err2 = dnsService.CreateDnsRecordWithContext(ctx, createOpts)
-		if err2 != nil {
-			err2 = fmt.Errorf("CreateDnsRecordWithContext failed with: %v", err2)
-
-			return false, err2
-		}
-
-		return true, nil
-	})
-
-	return
+	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
+		return dnsService.CreateDnsRecordWithContext(ctx, createOpts)
+	}, "CreateDnsRecord")
 }
