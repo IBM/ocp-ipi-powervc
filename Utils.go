@@ -40,6 +40,9 @@ const (
 	
 	// maxFileSize is the maximum file size allowed for validation (100MB)
 	maxFileSize = 100 * 1024 * 1024
+
+	// separatorLine is the visual separator used in command output
+	separatorLine = "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
 )
 
 var (
