@@ -36,7 +36,8 @@ import (
 )
 
 const (
-	// cisServiceID is the Cloud Internet Services' catalog service ID.
+	// cisServiceID is the IBM Cloud Internet Services (CIS) service ID
+	// Reference: https://cloud.ibm.com/apidocs/cis
 	cisServiceID = "75874a60-cb12-11e7-948e-37ac098eb1b9"
 )
 

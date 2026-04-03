@@ -27,24 +27,36 @@ import (
 	"github.com/IBM/networking-go-sdk/dnssvcsv1"
 	// https://raw.githubusercontent.com/IBM/networking-go-sdk/refs/heads/master/zonesv1/zones_v1.go
 	"github.com/IBM/networking-go-sdk/zonesv1"
-
-	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 )
 
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+
 const (
+	// IBMDNSName is the display name for IBM Domain Name Service
 	IBMDNSName = "IBM Domain Name Service"
 )
 
+// IBMDNS manages IBM Cloud DNS services for OpenShift cluster deployment.
+// It handles both DNS Services (dnssvcsv1) and DNS Records (dnsrecordsv1) operations.
 type IBMDNS struct {
 	services *Services
 
-	//
+	// dnsSvc provides access to IBM Cloud DNS Services API
 	dnsSvc *dnssvcsv1.DnsSvcsV1
 
-	//
+	// dnsRecordsSvc provides access to IBM Cloud Internet Services DNS Records API
 	dnsRecordsSvc *dnsrecordsv1.DnsRecordsV1
 }
 
+// NewIBMDNS creates a new IBMDNS instance and returns it as a RunnableObject.
+// This is the primary constructor used by the framework.
+//
+// Parameters:
+//   - services: Services instance containing configuration and API clients
+//
+// Returns:
+//   - []RunnableObject: Array containing the IBMDNS instance as a RunnableObject
+//   - []error: Array of errors encountered during initialization
 func NewIBMDNS(services *Services) ([]RunnableObject, []error) {
 	var (
 		dns  []*IBMDNS
@@ -64,10 +76,28 @@ func NewIBMDNS(services *Services) ([]RunnableObject, []error) {
 	return ros, errs
 }
 
+// NewIBMDNSAlt creates a new IBMDNS instance and returns it directly.
+// This is an alternative constructor that returns the concrete type.
+//
+// Parameters:
+//   - services: Services instance containing configuration and API clients
+//
+// Returns:
+//   - []*IBMDNS: Array containing the IBMDNS instance
+//   - []error: Array of errors encountered during initialization
 func NewIBMDNSAlt(services *Services) ([]*IBMDNS, []error) {
 	return innerNewIBMDNS(services)
 }
 
+// innerNewIBMDNS is the internal constructor that initializes IBMDNS services.
+// It creates and configures both DNS Services and DNS Records service clients.
+//
+// Parameters:
+//   - services: Services instance containing configuration and API clients
+//
+// Returns:
+//   - []*IBMDNS: Array containing the initialized IBMDNS instance
+//   - []error: Array of errors encountered during initialization
 func innerNewIBMDNS(services *Services) ([]*IBMDNS, []error) {
 	var (
 		dns           []*IBMDNS
@@ -95,283 +125,489 @@ func innerNewIBMDNS(services *Services) ([]*IBMDNS, []error) {
 	return dns, errs
 }
 
-func initIBMDNSService(services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.DnsRecordsV1, error) {
-	var (
-		authenticator       core.Authenticator
-		dnsService          *dnssvcsv1.DnsSvcsV1
-		globalOptions       *dnsrecordsv1.DnsRecordsV1Options
-		controllerSvc       *resourcecontrollerv2.ResourceControllerV2
-		listResourceOptions *resourcecontrollerv2.ListResourceInstancesOptions
-		dnsRecordService    *dnsrecordsv1.DnsRecordsV1
-		zonesService        *zonesv1.ZonesV1
-		listZonesOptions    *zonesv1.ListZonesOptions
-		listZonesResponse   *zonesv1.ListZonesResp
-		zoneID              string
-		err                 error
-	)
+// createAuthenticator creates and validates an IAM authenticator for IBM Cloud services.
+// This helper function eliminates code duplication across service initialization.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//
+// Returns:
+//   - core.Authenticator: Validated IAM authenticator
+//   - error: Any error encountered during creation or validation
+func createAuthenticator(apiKey string) (core.Authenticator, error) {
+	authenticator := &core.IamAuthenticator{
+		ApiKey: apiKey,
+	}
+	if err := authenticator.Validate(); err != nil {
+		return nil, fmt.Errorf("failed to validate authenticator: %w", err)
+	}
+	return authenticator, nil
+}
 
+// initIBMDNSService initializes IBM Cloud DNS services for the cluster.
+// It sets up both DNS Services (dnssvcsv1) and DNS Records (dnsrecordsv1) clients,
+// and discovers the appropriate DNS zone for the cluster's base domain.
+//
+// The function performs the following steps:
+//  1. Creates DNS Services client
+//  2. Lists CIS (Cloud Internet Services) instances
+//  3. For each CIS instance, lists DNS zones
+//  4. Finds the zone matching the cluster's base domain
+//  5. Creates DNS Records client for the discovered zone
+//
+// Parameters:
+//   - services: Services instance containing configuration and API clients
+//
+// Returns:
+//   - *dnssvcsv1.DnsSvcsV1: DNS Services client
+//   - *dnsrecordsv1.DnsRecordsV1: DNS Records client
+//   - error: Any error encountered during initialization
+//
+// Reference: https://cloud.ibm.com/apidocs/dns-svcs
+// Reference: https://cloud.ibm.com/apidocs/cis
+func initIBMDNSService(services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.DnsRecordsV1, error) {
 	if services == nil {
 		return nil, nil, nil
 	}
 
-	authenticator = &core.IamAuthenticator{
-		ApiKey: services.GetApiKey(),
-	}
-	err = authenticator.Validate()
-	if err != nil {
-		return nil, nil, err
+	apiKey := services.GetApiKey()
+	if apiKey == "" {
+		return nil, nil, fmt.Errorf("API key is required for DNS service initialization")
 	}
 
-	dnsService, err = dnssvcsv1.NewDnsSvcsV1(&dnssvcsv1.DnsSvcsV1Options{
+	// Initialize DNS Services client
+	dnsService, err := initDNSServicesClient(apiKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize DNS Services client: %w", err)
+	}
+
+	// Find the DNS zone for the cluster's base domain
+	zoneID, err := findDNSZoneID(services)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to find DNS zone: %w", err)
+	}
+
+	if zoneID == "" {
+		return nil, nil, fmt.Errorf("no DNS zone found for base domain: %s", services.GetBaseDomain())
+	}
+
+	log.Debugf("initIBMDNSService: found zoneID = %s", zoneID)
+
+	// Initialize DNS Records client
+	dnsRecordService, err := initDNSRecordsClient(apiKey, services.GetCISInstanceCRN(), zoneID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize DNS Records client: %w", err)
+	}
+
+	log.Debugf("initIBMDNSService: dnsRecordService = %+v", dnsRecordService)
+
+	return dnsService, dnsRecordService, nil
+}
+
+// initDNSServicesClient creates and initializes an IBM Cloud DNS Services client.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//
+// Returns:
+//   - *dnssvcsv1.DnsSvcsV1: Initialized DNS Services client
+//   - error: Any error encountered during initialization
+func initDNSServicesClient(apiKey string) (*dnssvcsv1.DnsSvcsV1, error) {
+	authenticator, err := createAuthenticator(apiKey)
+	if err != nil {
+		return nil, err
+	}
+
+	dnsService, err := dnssvcsv1.NewDnsSvcsV1(&dnssvcsv1.DnsSvcsV1Options{
 		Authenticator: authenticator,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("failed to create DNS Services client: %w", err)
 	}
 
-	authenticator = &core.IamAuthenticator{
-		ApiKey: services.GetApiKey(),
-	}
-	err = authenticator.Validate()
+	return dnsService, nil
+}
+
+// initDNSRecordsClient creates and initializes an IBM Cloud DNS Records client.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//   - crn: Cloud Resource Name of the CIS instance
+//   - zoneID: DNS zone identifier
+//
+// Returns:
+//   - *dnsrecordsv1.DnsRecordsV1: Initialized DNS Records client
+//   - error: Any error encountered during initialization
+func initDNSRecordsClient(apiKey, crn, zoneID string) (*dnsrecordsv1.DnsRecordsV1, error) {
+	authenticator, err := createAuthenticator(apiKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	controllerSvc = services.GetControllerSvc()
+	globalOptions := &dnsrecordsv1.DnsRecordsV1Options{
+		Authenticator:  authenticator,
+		Crn:            &crn,
+		ZoneIdentifier: &zoneID,
+	}
 
-	listResourceOptions = controllerSvc.NewListResourceInstancesOptions()
-	listResourceOptions.SetResourceID("75874a60-cb12-11e7-948e-37ac098eb1b9") // CIS service ID
+	dnsRecordService, err := dnsrecordsv1.NewDnsRecordsV1(globalOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DNS Records client: %w", err)
+	}
+
+	return dnsRecordService, nil
+}
+
+// findDNSZoneID discovers the DNS zone ID for the cluster's base domain.
+// It searches through all CIS instances and their zones to find a match.
+//
+// Parameters:
+//   - services: Services instance containing configuration and API clients
+//
+// Returns:
+//   - string: DNS zone ID if found, empty string otherwise
+//   - error: Any error encountered during the search
+func findDNSZoneID(services *Services) (string, error) {
+	controllerSvc := services.GetControllerSvc()
+	if controllerSvc == nil {
+		return "", fmt.Errorf("resource controller service is not initialized")
+	}
+
+	// List CIS instances
+	listResourceOptions := controllerSvc.NewListResourceInstancesOptions()
+	listResourceOptions.SetResourceID(cisServiceID)
 
 	listResourceInstancesResponse, _, err := controllerSvc.ListResourceInstances(listResourceOptions)
 	if err != nil {
-		return nil, nil, err
+		return "", fmt.Errorf("failed to list CIS instances: %w", err)
 	}
 
+	baseDomain := services.GetBaseDomain()
+	apiKey := services.GetApiKey()
+
+	// Search through CIS instances for the matching zone
 	for _, instance := range listResourceInstancesResponse.Resources {
-		log.Debugf("initIBMDNSService: instance.CRN = %s", *instance.CRN)
+		log.Debugf("findDNSZoneID: checking instance.CRN = %s", *instance.CRN)
 
-		authenticator = &core.IamAuthenticator{
-			ApiKey: services.GetApiKey(),
-		}
-		err = authenticator.Validate()
+		zoneID, err := searchZonesInInstance(apiKey, instance.CRN, baseDomain)
 		if err != nil {
-			return nil, nil, err
+			log.Debugf("findDNSZoneID: error searching zones in instance: %v", err)
+			continue
 		}
 
-		zonesService, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
-			Authenticator: authenticator,
-			Crn:           instance.CRN,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		log.Debugf("initIBMDNSService: zonesService = %+v", zonesService)
-
-		listZonesOptions = zonesService.NewListZonesOptions()
-
-		listZonesResponse, _, err = zonesService.ListZones(listZonesOptions)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		for _, zone := range listZonesResponse.Result {
-			log.Debugf("initIBMDNSService: zone.Name = %s", *zone.Name)
-			log.Debugf("initIBMDNSService: zone.ID   = %s", *zone.ID)
-
-			if *zone.Name == services.GetBaseDomain() {
-				zoneID = *zone.ID
-			}
+		if zoneID != "" {
+			return zoneID, nil
 		}
 	}
-	log.Debugf("initIBMDNSService: zoneID = %s", zoneID)
 
-	authenticator = &core.IamAuthenticator{
-		ApiKey: services.GetApiKey(),
-	}
-	err = authenticator.Validate()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	CRN := services.GetCISInstanceCRN()
-
-	globalOptions = &dnsrecordsv1.DnsRecordsV1Options{
-		Authenticator:  authenticator,
-		Crn:            &CRN,
-		ZoneIdentifier: &zoneID,
-	}
-	dnsRecordService, err = dnsrecordsv1.NewDnsRecordsV1(globalOptions)
-	log.Debugf("initIBMDNSService: dnsRecordService = %+v", dnsRecordService)
-
-	return dnsService, dnsRecordService, err
+	return "", nil
 }
 
-// listDNSRecords lists IBMDNS records for the cluster.
-func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
-	var (
-		metadata *Metadata
-		ctx      context.Context
-		cancel   context.CancelFunc
-		result   []string
-	)
-
-	log.Debugf("listIBMDNSRecords: Listing IBMDNS records (%v)", dns.services)
-
-	result = make([]string, 0, 3)
-
-	if dns.services == nil {
-		return result, nil
+// searchZonesInInstance searches for a DNS zone matching the base domain in a CIS instance.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//   - crn: Cloud Resource Name of the CIS instance
+//   - baseDomain: Base domain to search for
+//
+// Returns:
+//   - string: DNS zone ID if found, empty string otherwise
+//   - error: Any error encountered during the search
+func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (string, error) {
+	authenticator, err := createAuthenticator(apiKey)
+	if err != nil {
+		return "", err
 	}
 
-	metadata = dns.services.GetMetadata()
+	zonesService, err := zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
+		Authenticator: authenticator,
+		Crn:           crn,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create zones service: %w", err)
+	}
 
-	ctx, cancel = dns.services.GetContextWithTimeout()
+	log.Debugf("searchZonesInInstance: zonesService = %+v", zonesService)
+
+	listZonesOptions := zonesService.NewListZonesOptions()
+	listZonesResponse, _, err := zonesService.ListZones(listZonesOptions)
+	if err != nil {
+		return "", fmt.Errorf("failed to list zones: %w", err)
+	}
+
+	for _, zone := range listZonesResponse.Result {
+		log.Debugf("searchZonesInInstance: zone.Name = %s, zone.ID = %s", *zone.Name, *zone.ID)
+
+		if *zone.Name == baseDomain {
+			return *zone.ID, nil
+		}
+	}
+
+	return "", nil
+}
+
+// listIBMDNSRecords lists DNS records for the cluster from IBM Cloud Internet Services.
+// It searches for DNS records matching the cluster's domain pattern and returns their names.
+//
+// The function performs paginated queries to retrieve all DNS records and filters them
+// based on the cluster name and base domain. It matches records where either the name
+// or content matches the cluster's domain pattern.
+//
+// Returns:
+//   - []string: List of DNS record names matching the cluster
+//   - error: Any error encountered during the operation
+func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
+	if dns == nil || dns.services == nil {
+		return []string{}, nil
+	}
+
+	if dns.dnsRecordsSvc == nil {
+		return nil, fmt.Errorf("DNS records service is not initialized")
+	}
+
+	metadata := dns.services.GetMetadata()
+	if metadata == nil {
+		return nil, fmt.Errorf("metadata is not available")
+	}
+
+	ctx, cancel := dns.services.GetContextWithTimeout()
 	defer cancel()
 
-	select {
-	case <-ctx.Done():
-		log.Debugf("listIBMDNSRecords: case <-ctx.Done()")
-		return nil, ctx.Err() // we're cancelled, abort
-	default:
-	}
+	log.Debugf("listIBMDNSRecords: Listing DNS records for cluster %s", metadata.GetClusterName())
 
-	var (
-		foundOne       = false
-		perPage  int64 = 20
-		page     int64 = 1
-		moreData       = true
-	)
-
-	dnsRecordsOptions := dns.dnsRecordsSvc.NewListAllDnsRecordsOptions()
-	dnsRecordsOptions.PerPage = &perPage
-	dnsRecordsOptions.Page = &page
-
+	// Build regex matcher for cluster DNS records
 	dnsMatcher, err := regexp.Compile(fmt.Sprintf(`.*\Q%s.%s\E$`, metadata.GetClusterName(), dns.services.GetBaseDomain()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to build IBMDNS records matcher: %w", err)
+		return nil, fmt.Errorf("failed to build DNS records matcher: %w", err)
 	}
 
-	for moreData {
-		select {
-		case <-ctx.Done():
-			log.Debugf("listIBMDNSRecords: case <-ctx.Done()")
-			return nil, ctx.Err() // we're cancelled, abort
-		default:
-		}
-
-		dnsResources, detailedResponse, err := dns.dnsRecordsSvc.ListAllDnsRecordsWithContext(ctx, dnsRecordsOptions)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list IBMDNS records: %w and the response is: %s", err, detailedResponse)
-		}
-
-		for _, record := range dnsResources.Result {
-			// Match all of the cluster's IBMDNS records
-			nameMatches := dnsMatcher.Match([]byte(*record.Name))
-			contentMatches := dnsMatcher.Match([]byte(*record.Content))
-			if nameMatches || contentMatches {
-				foundOne = true
-				log.Debugf("listIBMDNSRecords: FOUND: %v, %v", *record.ID, *record.Name)
-				result = append(result, *record.Name)
-			}
-		}
-
-		log.Debugf("listIBMDNSRecords: PerPage = %v, Page = %v, Count = %v", *dnsResources.ResultInfo.PerPage, *dnsResources.ResultInfo.Page, *dnsResources.ResultInfo.Count)
-
-		moreData = *dnsResources.ResultInfo.PerPage == *dnsResources.ResultInfo.Count
-		log.Debugf("listIBMDNSRecords: moreData = %v", moreData)
-
-		page++
+	result, err := dns.fetchMatchingDNSRecords(ctx, dnsMatcher)
+	if err != nil {
+		return nil, err
 	}
-	if !foundOne {
-		log.Debugf("listIBMDNSRecords: NO matching IBMDNS against: %s", metadata.GetInfraID())
-		for moreData {
-			select {
-			case <-ctx.Done():
-				log.Debugf("listIBMDNSRecords: case <-ctx.Done()")
-				return nil, ctx.Err() // we're cancelled, abort
-			default:
-			}
 
-			dnsResources, detailedResponse, err := dns.dnsRecordsSvc.ListAllDnsRecordsWithContext(ctx, dnsRecordsOptions)
-			if err != nil {
-				return nil, fmt.Errorf("failed to list IBMDNS records: %w and the response is: %s", err, detailedResponse)
-			}
-			for _, record := range dnsResources.Result {
-				log.Debugf("listIBMDNSRecords: FOUND: IBMDNS: %v, %v", *record.ID, *record.Name)
-			}
-			moreData = *dnsResources.ResultInfo.PerPage == *dnsResources.ResultInfo.Count
-			page++
+	if len(result) == 0 {
+		log.Debugf("listIBMDNSRecords: No matching DNS records found for cluster %s", metadata.GetClusterName())
+		// Log all available records for debugging
+		if err := dns.logAllDNSRecords(ctx); err != nil {
+			log.Debugf("listIBMDNSRecords: Failed to log all DNS records: %v", err)
 		}
 	}
 
 	return result, nil
 }
 
+// fetchMatchingDNSRecords retrieves DNS records matching the provided pattern.
+// It handles pagination automatically and uses retry logic from IBMCloud.go.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - matcher: Compiled regex pattern to match DNS records
+//
+// Returns:
+//   - []string: List of matching DNS record names
+//   - error: Any error encountered during the operation
+func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.Regexp) ([]string, error) {
+	var (
+		result  = make([]string, 0, 3)
+		perPage int64 = 20
+		page    int64 = 1
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled while fetching DNS records: %w", ctx.Err())
+		default:
+		}
+
+		dnsRecordsOptions := dns.dnsRecordsSvc.NewListAllDnsRecordsOptions()
+		dnsRecordsOptions.PerPage = &perPage
+		dnsRecordsOptions.Page = &page
+
+		// Use retry logic from IBMCloud.go
+		dnsResources, detailedResponse, err := listAllDnsRecords(ctx, dns.dnsRecordsSvc, dnsRecordsOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list DNS records (page %d): %w, response: %v", page, err, detailedResponse)
+		}
+
+		// Process records on this page
+		for _, record := range dnsResources.Result {
+			if record.Name == nil || record.Content == nil {
+				continue
+			}
+
+			nameMatches := matcher.Match([]byte(*record.Name))
+			contentMatches := matcher.Match([]byte(*record.Content))
+
+			if nameMatches || contentMatches {
+				log.Debugf("listIBMDNSRecords: Found matching record: ID=%v, Name=%v", *record.ID, *record.Name)
+				result = append(result, *record.Name)
+			}
+		}
+
+		log.Debugf("listIBMDNSRecords: Page %d: PerPage=%v, Count=%v",
+			page, *dnsResources.ResultInfo.PerPage, *dnsResources.ResultInfo.Count)
+
+		// Check if there are more pages
+		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {
+			break
+		}
+
+		page++
+	}
+
+	return result, nil
+}
+
+// logAllDNSRecords logs all available DNS records for debugging purposes.
+// This is called when no matching records are found to help troubleshoot issues.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//
+// Returns:
+//   - error: Any error encountered during the operation
+func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
+	var (
+		perPage int64 = 20
+		page    int64 = 1
+	)
+
+	log.Debugf("logAllDNSRecords: Listing all DNS records for debugging")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		dnsRecordsOptions := dns.dnsRecordsSvc.NewListAllDnsRecordsOptions()
+		dnsRecordsOptions.PerPage = &perPage
+		dnsRecordsOptions.Page = &page
+
+		dnsResources, _, err := listAllDnsRecords(ctx, dns.dnsRecordsSvc, dnsRecordsOptions)
+		if err != nil {
+			return fmt.Errorf("failed to list DNS records for debugging: %w", err)
+		}
+
+		for _, record := range dnsResources.Result {
+			if record.ID != nil && record.Name != nil {
+				log.Debugf("logAllDNSRecords: Record: ID=%v, Name=%v", *record.ID, *record.Name)
+			}
+		}
+
+		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {
+			break
+		}
+
+		page++
+	}
+
+	return nil
+}
+
+// Name returns the display name of the DNS service.
+// This implements the RunnableObject interface.
+//
+// Returns:
+//   - string: The service name (IBMDNSName)
+//   - error: Always nil for this implementation
 func (dns *IBMDNS) Name() (string, error) {
 	return IBMDNSName, nil
 }
 
+// ObjectName returns the object name of the DNS service.
+// This implements the RunnableObject interface.
+//
+// Returns:
+//   - string: The service name (IBMDNSName)
+//   - error: Always nil for this implementation
 func (dns *IBMDNS) ObjectName() (string, error) {
 	return IBMDNSName, nil
 }
 
+// Run executes the DNS service operations.
+// This implements the RunnableObject interface.
+// Currently, no operations are performed during the run phase.
+//
+// Returns:
+//   - error: Always nil for this implementation
 func (dns *IBMDNS) Run() error {
 	// Nothing needs to be done here.
 	return nil
 }
 
+// ClusterStatus validates the DNS configuration for the OpenShift cluster.
+// It checks that all required DNS records exist for the cluster:
+//   - api-int.<cluster>.<domain> - Internal API endpoint
+//   - api.<cluster>.<domain> - External API endpoint
+//   - *.apps.<cluster>.<domain> - Wildcard for application routes
+//
+// The function prints the validation status to stdout and logs details to the debug log.
+// This implements the RunnableObject interface.
 func (dns *IBMDNS) ClusterStatus() {
-	var (
-		metadata *Metadata
-		records  []string
-		patterns = []string{"api-int", "api", "*.apps"}
-		name     string
-		found    bool
-		err      error
-	)
-
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
-	if dns.services == nil {
+	if dns == nil || dns.services == nil {
 		fmt.Printf("%s is NOTOK. It has not been initialized.\n", IBMDNSName)
 		return
 	}
 
-	metadata = dns.services.GetMetadata()
+	metadata := dns.services.GetMetadata()
+	if metadata == nil {
+		fmt.Printf("%s is NOTOK. Metadata is not available.\n", IBMDNSName)
+		return
+	}
 
-	records, err = dns.listIBMDNSRecords()
+	records, err := dns.listIBMDNSRecords()
 	if err != nil {
-		fmt.Printf("%s is NOTOK. Could not list IBMDNS records: %v\n", IBMDNSName, err)
+		fmt.Printf("%s is NOTOK. Could not list DNS records: %v\n", IBMDNSName, err)
 		return
 	}
-	log.Debugf("Valid: records = %+v", records)
+	log.Debugf("ClusterStatus: records = %+v", records)
 
-	if len(records) != 3 {
-		fmt.Printf("%s is NOTOK. Expecting 3 IBMDNS records, found %d (%+v)\n", IBMDNSName, len(records), records)
+	// Validate that exactly 3 DNS records exist
+	const expectedRecordCount = 3
+	if len(records) != expectedRecordCount {
+		fmt.Printf("%s is NOTOK. Expecting %d DNS records, found %d (%+v)\n",
+			IBMDNSName, expectedRecordCount, len(records), records)
 		return
 	}
 
+	// Validate each required DNS record pattern
+	patterns := []string{"api-int", "api", "*.apps"}
 	for _, pattern := range patterns {
-		name = fmt.Sprintf("%s.%s.%s", pattern, metadata.GetClusterName(), dns.services.GetBaseDomain())
-		log.Debugf("Valid: name = %s", name)
+		name := fmt.Sprintf("%s.%s.%s", pattern, metadata.GetClusterName(), dns.services.GetBaseDomain())
+		log.Debugf("ClusterStatus: checking for record: %s", name)
 
-		found = false
+		found := false
 		for _, record := range records {
 			if record == name {
 				found = true
+				break
 			}
 		}
+
 		if !found {
-			fmt.Printf("%s is NOTOK. Expecting IBMDNS record %s to exist\n", IBMDNSName, name)
+			fmt.Printf("%s is NOTOK. Expected DNS record %s does not exist\n", IBMDNSName, name)
 			return
 		}
 
-		// @TODO maybe do a IBMDNS lookup on the name?
+		// TODO: Consider adding DNS lookup validation to verify record resolution
 	}
 
 	fmt.Printf("%s is OK.\n", IBMDNSName)
 }
 
+// Priority returns the execution priority for this service.
+// This implements the RunnableObject interface.
+// A priority of -1 indicates this service has no specific ordering requirement.
+//
+// Returns:
+//   - int: Priority value (-1 for no specific priority)
+//   - error: Always nil for this implementation
 func (dns *IBMDNS) Priority() (int, error) {
 	return -1, nil
 }
