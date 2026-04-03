@@ -41,7 +41,24 @@ const (
 	// - api.<cluster>.<domain> - External API endpoint
 	// - *.apps.<cluster>.<domain> - Wildcard for application routes
 	expectedDNSRecordCount = 3
+
+	// Pagination constants for DNS record queries
+	defaultPerPage int64 = 20
+	defaultPage    int64 = 1
 )
+
+// dnsRecordPattern represents a required DNS record pattern for cluster validation
+type dnsRecordPattern struct {
+	pattern     string
+	description string
+}
+
+// requiredDNSPatterns defines the DNS records required for a valid OpenShift cluster
+var requiredDNSPatterns = []dnsRecordPattern{
+	{"api-int", "Internal API endpoint"},
+	{"api", "External API endpoint"},
+	{"*.apps", "Application routes wildcard"},
+}
 
 // IBMDNS manages IBM Cloud DNS services for OpenShift cluster deployment.
 // It handles both DNS Services (dnssvcsv1) and DNS Records (dnsrecordsv1) operations.
@@ -246,9 +263,19 @@ func initDNSServicesClient(apiKey string) (*dnssvcsv1.DnsSvcsV1, error) {
 //   - *dnsrecordsv1.DnsRecordsV1: Initialized DNS Records client
 //   - error: Any error encountered during initialization
 func initDNSRecordsClient(apiKey, crn, zoneID string) (*dnsrecordsv1.DnsRecordsV1, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("API key cannot be empty")
+	}
+	if crn == "" {
+		return nil, fmt.Errorf("CRN cannot be empty")
+	}
+	if zoneID == "" {
+		return nil, fmt.Errorf("zone ID cannot be empty")
+	}
+
 	authenticator, err := createAuthenticator(apiKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create authenticator for DNS Records client: %w", err)
 	}
 
 	globalOptions := &dnsrecordsv1.DnsRecordsV1Options{
@@ -259,9 +286,10 @@ func initDNSRecordsClient(apiKey, crn, zoneID string) (*dnsrecordsv1.DnsRecordsV
 
 	dnsRecordService, err := dnsrecordsv1.NewDnsRecordsV1(globalOptions)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create DNS Records client: %w", err)
+		return nil, fmt.Errorf("failed to create DNS Records client for zone %s: %w", zoneID, err)
 	}
 
+	log.Debugf("initDNSRecordsClient: Successfully initialized DNS Records client for zone %s", zoneID)
 	return dnsRecordService, nil
 }
 
@@ -280,6 +308,18 @@ func findDNSZoneID(services *Services) (string, error) {
 		return "", fmt.Errorf("resource controller service is not initialized")
 	}
 
+	baseDomain := services.GetBaseDomain()
+	if baseDomain == "" {
+		return "", fmt.Errorf("base domain is empty, cannot search for DNS zone")
+	}
+
+	apiKey := services.GetApiKey()
+	if apiKey == "" {
+		return "", fmt.Errorf("API key is empty, cannot search for DNS zone")
+	}
+
+	log.Debugf("findDNSZoneID: Searching for DNS zone matching base domain: %s", baseDomain)
+
 	// List CIS instances
 	listResourceOptions := controllerSvc.NewListResourceInstancesOptions()
 	listResourceOptions.SetResourceID(cisServiceID)
@@ -289,24 +329,36 @@ func findDNSZoneID(services *Services) (string, error) {
 		return "", fmt.Errorf("failed to list CIS instances: %w", err)
 	}
 
-	baseDomain := services.GetBaseDomain()
-	apiKey := services.GetApiKey()
+	if listResourceInstancesResponse == nil || len(listResourceInstancesResponse.Resources) == 0 {
+		log.Debugf("findDNSZoneID: No CIS instances found")
+		return "", nil
+	}
+
+	log.Debugf("findDNSZoneID: Found %d CIS instance(s) to search", len(listResourceInstancesResponse.Resources))
 
 	// Search through CIS instances for the matching zone
-	for _, instance := range listResourceInstancesResponse.Resources {
-		log.Debugf("findDNSZoneID: checking instance.CRN = %s", *instance.CRN)
+	for i, instance := range listResourceInstancesResponse.Resources {
+		if instance.CRN == nil {
+			log.Debugf("findDNSZoneID: Skipping instance %d with nil CRN", i)
+			continue
+		}
+
+		log.Debugf("findDNSZoneID: Checking instance %d/%d, CRN = %s",
+			i+1, len(listResourceInstancesResponse.Resources), *instance.CRN)
 
 		zoneID, err := searchZonesInInstance(apiKey, instance.CRN, baseDomain)
 		if err != nil {
-			log.Debugf("findDNSZoneID: error searching zones in instance: %v", err)
+			log.Debugf("findDNSZoneID: Error searching zones in instance %s: %v", *instance.CRN, err)
 			continue
 		}
 
 		if zoneID != "" {
+			log.Debugf("findDNSZoneID: Found matching zone ID: %s in instance: %s", zoneID, *instance.CRN)
 			return zoneID, nil
 		}
 	}
 
+	log.Debugf("findDNSZoneID: No matching zone found for base domain: %s", baseDomain)
 	return "", nil
 }
 
@@ -321,9 +373,16 @@ func findDNSZoneID(services *Services) (string, error) {
 //   - string: DNS zone ID if found, empty string otherwise
 //   - error: Any error encountered during the search
 func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (string, error) {
+	if crn == nil {
+		return "", fmt.Errorf("CRN cannot be nil")
+	}
+	if baseDomain == "" {
+		return "", fmt.Errorf("base domain cannot be empty")
+	}
+
 	authenticator, err := createAuthenticator(apiKey)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create authenticator for zones service: %w", err)
 	}
 
 	zonesService, err := zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
@@ -331,25 +390,40 @@ func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (strin
 		Crn:           crn,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create zones service: %w", err)
+		return "", fmt.Errorf("failed to create zones service for CRN %s: %w", *crn, err)
 	}
 
-	log.Debugf("searchZonesInInstance: zonesService = %+v", zonesService)
+	log.Debugf("searchZonesInInstance: Searching zones in CRN: %s for domain: %s", *crn, baseDomain)
 
 	listZonesOptions := zonesService.NewListZonesOptions()
 	listZonesResponse, _, err := zonesService.ListZones(listZonesOptions)
 	if err != nil {
-		return "", fmt.Errorf("failed to list zones: %w", err)
+		return "", fmt.Errorf("failed to list zones in CRN %s: %w", *crn, err)
 	}
 
-	for _, zone := range listZonesResponse.Result {
-		log.Debugf("searchZonesInInstance: zone.Name = %s, zone.ID = %s", *zone.Name, *zone.ID)
+	if listZonesResponse == nil || len(listZonesResponse.Result) == 0 {
+		log.Debugf("searchZonesInInstance: No zones found in CRN: %s", *crn)
+		return "", nil
+	}
+
+	log.Debugf("searchZonesInInstance: Found %d zone(s) in CRN: %s", len(listZonesResponse.Result), *crn)
+
+	for i, zone := range listZonesResponse.Result {
+		if zone.Name == nil || zone.ID == nil {
+			log.Debugf("searchZonesInInstance: Skipping zone %d with nil Name or ID", i)
+			continue
+		}
+
+		log.Debugf("searchZonesInInstance: Checking zone %d/%d: Name=%s, ID=%s",
+			i+1, len(listZonesResponse.Result), *zone.Name, *zone.ID)
 
 		if *zone.Name == baseDomain {
+			log.Debugf("searchZonesInInstance: Found matching zone: %s (ID: %s)", *zone.Name, *zone.ID)
 			return *zone.ID, nil
 		}
 	}
 
+	log.Debugf("searchZonesInInstance: No matching zone found for domain: %s in CRN: %s", baseDomain, *crn)
 	return "", nil
 }
 
@@ -442,8 +516,8 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 
 	var (
 		result  = make([]string, 0, expectedDNSRecordCount)
-		perPage int64 = 20
-		page    int64 = 1
+		perPage = defaultPerPage
+		page    = defaultPage
 	)
 
 	for {
@@ -510,9 +584,9 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 //   - error: Any error encountered during the operation
 func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 	var (
-		perPage      int64 = 20
-		page         int64 = 1
-		totalRecords int   = 0
+		perPage      = defaultPerPage
+		page         = defaultPage
+		totalRecords int = 0
 	)
 
 	log.Debugf("logAllDNSRecords: Listing all DNS records for debugging")
@@ -656,16 +730,7 @@ func (dns *IBMDNS) ClusterStatus() {
 	}
 
 	// Validate each required DNS record pattern
-	requiredPatterns := []struct {
-		pattern     string
-		description string
-	}{
-		{"api-int", "Internal API endpoint"},
-		{"api", "External API endpoint"},
-		{"*.apps", "Application routes wildcard"},
-	}
-
-	for _, req := range requiredPatterns {
+	for _, req := range requiredDNSPatterns {
 		recordName := fmt.Sprintf("%s.%s.%s", req.pattern, clusterName, baseDomain)
 		log.Debugf("ClusterStatus: Checking for %s record: %s", req.description, recordName)
 
