@@ -30,10 +30,17 @@ import (
 )
 
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+// and the 'cisServiceID' constant defined in Services.go
 
 const (
 	// IBMDNSName is the display name for IBM Domain Name Service
 	IBMDNSName = "IBM Domain Name Service"
+
+	// expectedDNSRecordCount is the number of DNS records expected for a valid cluster
+	// - api-int.<cluster>.<domain> - Internal API endpoint
+	// - api.<cluster>.<domain> - External API endpoint
+	// - *.apps.<cluster>.<domain> - Wildcard for application routes
+	expectedDNSRecordCount = 3
 )
 
 // IBMDNS manages IBM Cloud DNS services for OpenShift cluster deployment.
@@ -356,6 +363,13 @@ func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (strin
 // Returns:
 //   - []string: List of DNS record names matching the cluster
 //   - error: Any error encountered during the operation
+//
+// Example:
+//   records, err := dns.listIBMDNSRecords()
+//   if err != nil {
+//       return fmt.Errorf("failed to list DNS records: %w", err)
+//   }
+//   // records contains: ["api.cluster.domain.com", "api-int.cluster.domain.com", "*.apps.cluster.domain.com"]
 func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 	if dns == nil || dns.services == nil {
 		return []string{}, nil
@@ -370,28 +384,42 @@ func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 		return nil, fmt.Errorf("metadata is not available")
 	}
 
+	clusterName := metadata.GetClusterName()
+	if clusterName == "" {
+		return nil, fmt.Errorf("cluster name is empty in metadata")
+	}
+
+	baseDomain := dns.services.GetBaseDomain()
+	if baseDomain == "" {
+		return nil, fmt.Errorf("base domain is empty in services configuration")
+	}
+
 	ctx, cancel := dns.services.GetContextWithTimeout()
 	defer cancel()
 
-	log.Debugf("listIBMDNSRecords: Listing DNS records for cluster %s", metadata.GetClusterName())
+	log.Debugf("listIBMDNSRecords: Listing DNS records for cluster %s.%s", clusterName, baseDomain)
 
 	// Build regex matcher for cluster DNS records
-	dnsMatcher, err := regexp.Compile(fmt.Sprintf(`.*\Q%s.%s\E$`, metadata.GetClusterName(), dns.services.GetBaseDomain()))
+	// Pattern matches: *.cluster.domain.com
+	pattern := fmt.Sprintf(`.*\Q%s.%s\E$`, clusterName, baseDomain)
+	dnsMatcher, err := regexp.Compile(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build DNS records matcher: %w", err)
+		return nil, fmt.Errorf("failed to compile DNS records matcher pattern %q: %w", pattern, err)
 	}
 
 	result, err := dns.fetchMatchingDNSRecords(ctx, dnsMatcher)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch matching DNS records for cluster %s: %w", clusterName, err)
 	}
 
 	if len(result) == 0 {
-		log.Debugf("listIBMDNSRecords: No matching DNS records found for cluster %s", metadata.GetClusterName())
+		log.Debugf("listIBMDNSRecords: No matching DNS records found for cluster %s.%s", clusterName, baseDomain)
 		// Log all available records for debugging
-		if err := dns.logAllDNSRecords(ctx); err != nil {
-			log.Debugf("listIBMDNSRecords: Failed to log all DNS records: %v", err)
+		if debugErr := dns.logAllDNSRecords(ctx); debugErr != nil {
+			log.Debugf("listIBMDNSRecords: Failed to log all DNS records: %v", debugErr)
 		}
+	} else {
+		log.Debugf("listIBMDNSRecords: Found %d matching DNS records", len(result))
 	}
 
 	return result, nil
@@ -408,8 +436,12 @@ func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 //   - []string: List of matching DNS record names
 //   - error: Any error encountered during the operation
 func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.Regexp) ([]string, error) {
+	if matcher == nil {
+		return nil, fmt.Errorf("matcher cannot be nil")
+	}
+
 	var (
-		result  = make([]string, 0, 3)
+		result  = make([]string, 0, expectedDNSRecordCount)
 		perPage int64 = 20
 		page    int64 = 1
 	)
@@ -431,9 +463,15 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 			return nil, fmt.Errorf("failed to list DNS records (page %d): %w, response: %v", page, err, detailedResponse)
 		}
 
+		if dnsResources == nil || dnsResources.ResultInfo == nil {
+			return nil, fmt.Errorf("received nil DNS resources or result info on page %d", page)
+		}
+
 		// Process records on this page
+		recordsProcessed := 0
 		for _, record := range dnsResources.Result {
 			if record.Name == nil || record.Content == nil {
+				log.Debugf("fetchMatchingDNSRecords: Skipping record with nil Name or Content on page %d", page)
 				continue
 			}
 
@@ -441,13 +479,15 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 			contentMatches := matcher.Match([]byte(*record.Content))
 
 			if nameMatches || contentMatches {
-				log.Debugf("listIBMDNSRecords: Found matching record: ID=%v, Name=%v", *record.ID, *record.Name)
+				log.Debugf("fetchMatchingDNSRecords: Found matching record: ID=%v, Name=%v, Content=%v",
+					*record.ID, *record.Name, *record.Content)
 				result = append(result, *record.Name)
 			}
+			recordsProcessed++
 		}
 
-		log.Debugf("listIBMDNSRecords: Page %d: PerPage=%v, Count=%v",
-			page, *dnsResources.ResultInfo.PerPage, *dnsResources.ResultInfo.Count)
+		log.Debugf("fetchMatchingDNSRecords: Page %d: Processed=%d, PerPage=%v, Count=%v",
+			page, recordsProcessed, *dnsResources.ResultInfo.PerPage, *dnsResources.ResultInfo.Count)
 
 		// Check if there are more pages
 		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {
@@ -470,8 +510,9 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 //   - error: Any error encountered during the operation
 func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 	var (
-		perPage int64 = 20
-		page    int64 = 1
+		perPage      int64 = 20
+		page         int64 = 1
+		totalRecords int   = 0
 	)
 
 	log.Debugf("logAllDNSRecords: Listing all DNS records for debugging")
@@ -479,7 +520,7 @@ func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled while logging DNS records: %w", ctx.Err())
 		default:
 		}
 
@@ -489,12 +530,18 @@ func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 
 		dnsResources, _, err := listAllDnsRecords(ctx, dns.dnsRecordsSvc, dnsRecordsOptions)
 		if err != nil {
-			return fmt.Errorf("failed to list DNS records for debugging: %w", err)
+			return fmt.Errorf("failed to list DNS records for debugging (page %d): %w", page, err)
+		}
+
+		if dnsResources == nil || dnsResources.ResultInfo == nil {
+			return fmt.Errorf("received nil DNS resources or result info on page %d", page)
 		}
 
 		for _, record := range dnsResources.Result {
 			if record.ID != nil && record.Name != nil {
-				log.Debugf("logAllDNSRecords: Record: ID=%v, Name=%v", *record.ID, *record.Name)
+				log.Debugf("logAllDNSRecords: Record: ID=%v, Name=%v, Type=%v",
+					*record.ID, *record.Name, getRecordType(record))
+				totalRecords++
 			}
 		}
 
@@ -505,7 +552,17 @@ func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 		page++
 	}
 
+	log.Debugf("logAllDNSRecords: Total records logged: %d", totalRecords)
 	return nil
+}
+
+// getRecordType safely extracts the record type from a DNS record.
+// Returns "unknown" if the type is nil.
+func getRecordType(record dnsrecordsv1.DnsrecordDetails) string {
+	if record.Type != nil {
+		return *record.Type
+	}
+	return "unknown"
 }
 
 // Name returns the display name of the DNS service.
@@ -547,58 +604,95 @@ func (dns *IBMDNS) Run() error {
 //
 // The function prints the validation status to stdout and logs details to the debug log.
 // This implements the RunnableObject interface.
+//
+// Example output:
+//   IBM Domain Name Service is OK.
+//   IBM Domain Name Service is NOTOK. Expected DNS record api.cluster.domain.com does not exist
 func (dns *IBMDNS) ClusterStatus() {
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
 	if dns == nil || dns.services == nil {
 		fmt.Printf("%s is NOTOK. It has not been initialized.\n", IBMDNSName)
+		log.Debugf("ClusterStatus: DNS service or services is nil")
 		return
 	}
 
 	metadata := dns.services.GetMetadata()
 	if metadata == nil {
 		fmt.Printf("%s is NOTOK. Metadata is not available.\n", IBMDNSName)
+		log.Debugf("ClusterStatus: Metadata is nil")
+		return
+	}
+
+	clusterName := metadata.GetClusterName()
+	if clusterName == "" {
+		fmt.Printf("%s is NOTOK. Cluster name is empty.\n", IBMDNSName)
+		log.Debugf("ClusterStatus: Cluster name is empty")
+		return
+	}
+
+	baseDomain := dns.services.GetBaseDomain()
+	if baseDomain == "" {
+		fmt.Printf("%s is NOTOK. Base domain is empty.\n", IBMDNSName)
+		log.Debugf("ClusterStatus: Base domain is empty")
 		return
 	}
 
 	records, err := dns.listIBMDNSRecords()
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Could not list DNS records: %v\n", IBMDNSName, err)
+		log.Debugf("ClusterStatus: Failed to list DNS records: %v", err)
 		return
 	}
-	log.Debugf("ClusterStatus: records = %+v", records)
+	log.Debugf("ClusterStatus: Found %d DNS records: %+v", len(records), records)
 
-	// Validate that exactly 3 DNS records exist
-	const expectedRecordCount = 3
-	if len(records) != expectedRecordCount {
+	// Validate that exactly the expected number of DNS records exist
+	if len(records) != expectedDNSRecordCount {
 		fmt.Printf("%s is NOTOK. Expecting %d DNS records, found %d (%+v)\n",
-			IBMDNSName, expectedRecordCount, len(records), records)
+			IBMDNSName, expectedDNSRecordCount, len(records), records)
+		log.Debugf("ClusterStatus: Record count mismatch - expected %d, got %d",
+			expectedDNSRecordCount, len(records))
 		return
 	}
 
 	// Validate each required DNS record pattern
-	patterns := []string{"api-int", "api", "*.apps"}
-	for _, pattern := range patterns {
-		name := fmt.Sprintf("%s.%s.%s", pattern, metadata.GetClusterName(), dns.services.GetBaseDomain())
-		log.Debugf("ClusterStatus: checking for record: %s", name)
+	requiredPatterns := []struct {
+		pattern     string
+		description string
+	}{
+		{"api-int", "Internal API endpoint"},
+		{"api", "External API endpoint"},
+		{"*.apps", "Application routes wildcard"},
+	}
+
+	for _, req := range requiredPatterns {
+		recordName := fmt.Sprintf("%s.%s.%s", req.pattern, clusterName, baseDomain)
+		log.Debugf("ClusterStatus: Checking for %s record: %s", req.description, recordName)
 
 		found := false
 		for _, record := range records {
-			if record == name {
+			if record == recordName {
 				found = true
+				log.Debugf("ClusterStatus: Found required record: %s", recordName)
 				break
 			}
 		}
 
 		if !found {
-			fmt.Printf("%s is NOTOK. Expected DNS record %s does not exist\n", IBMDNSName, name)
+			fmt.Printf("%s is NOTOK. Expected DNS record %s (%s) does not exist\n",
+				IBMDNSName, recordName, req.description)
+			log.Debugf("ClusterStatus: Missing required record: %s (%s)", recordName, req.description)
 			return
 		}
 
 		// TODO: Consider adding DNS lookup validation to verify record resolution
+		// This would involve using net.LookupHost() or similar to verify the records
+		// actually resolve to the expected IP addresses
 	}
 
 	fmt.Printf("%s is OK.\n", IBMDNSName)
+	log.Debugf("ClusterStatus: All DNS records validated successfully for cluster %s.%s",
+		clusterName, baseDomain)
 }
 
 // Priority returns the execution priority for this service.
