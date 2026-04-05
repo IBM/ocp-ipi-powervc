@@ -666,7 +666,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	// This does not work!
 	// if !errors.Is(err, ErrServerNotFound) {
 	// This does
-	if !strings.HasPrefix(err.Error(), "Could not find server named") {
+	if !strings.HasPrefix(strings.ToLower(err.Error()), strings.ToLower("Could not find server named")) {
 		return fmt.Errorf("failed to find server: %w", err)
 	}
 
