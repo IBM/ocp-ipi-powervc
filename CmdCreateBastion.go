@@ -44,17 +44,12 @@ import (
 )
 
 const (
-	bastionIpFilename     = "/tmp/bastionIp"
-	defaultAvailZone      = "s1022"
-	maxSSHRetries         = 10
-	sshRetryDelay         = 15 * time.Second
-	haproxyConfigPerms    = "646"
-	haproxyConfigPath     = "/etc/haproxy/haproxy.cfg"
-	haproxySelinuxSetting = "haproxy_connect_any"
-	filePermReadWrite     = 0644
-	sshUser               = "cloud-user"
-	haproxyPackageName    = "haproxy"
-	haproxyServiceName    = "haproxy.service"
+	bastionIpFilename = "/tmp/bastionIp"
+	defaultAvailZone  = "s1022"
+	maxSSHRetries     = 10
+	sshRetryDelay     = 15 * time.Second
+	filePermReadWrite = 0644
+	sshUser           = "cloud-user"
 )
 
 // ============================================================================
