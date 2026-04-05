@@ -278,3 +278,51 @@ func retryWithBackoff[T any](
 
 	return result, response, err
 }
+
+// retrySshWithBackoff executes a function with exponential backoff retry logic.
+//
+// This helper function implements retry logic with exponential backoff for
+// operations that may fail transiently (e.g., SSH connections, network operations).
+// It retries the operation up to maxRetries times, with increasing delays between
+// attempts.
+//
+// Parameters:
+//   - operation: A function that returns an error; will be retried if it returns an error
+//   - operationName: A descriptive name for the operation (used in log messages)
+//
+// Returns:
+//   - error: The last error encountered, or nil if the operation succeeded
+//
+// The backoff delay starts at initialRetryDelay and increases by retryMultiplier
+// after each failed attempt, up to maxRetryDelay.
+func retrySshWithBackoff(operation func() error, operationName string) error {
+	var err error
+	delay := initialRetryDelay
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = operation()
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("[INFO] %s succeeded on attempt %d", operationName, attempt)
+			}
+			return nil
+		}
+
+		if attempt < maxRetries {
+			log.Printf("[WARN] %s failed (attempt %d/%d): %v. Retrying in %v...",
+				operationName, attempt, maxRetries, err, delay)
+			time.Sleep(delay)
+
+			// Calculate next delay with exponential backoff
+			delay = time.Duration(float64(delay) * retryMultiplier)
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+		} else {
+			log.Printf("[ERROR] %s failed after %d attempts: %v",
+				operationName, maxRetries, err)
+		}
+	}
+
+	return fmt.Errorf("%s failed after %d attempts: %w", operationName, maxRetries, err)
+}

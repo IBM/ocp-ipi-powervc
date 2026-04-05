@@ -171,54 +171,6 @@ func innerNewLoadBalancer(services *Services) ([]*LoadBalancer, []error) {
 	return lbs, errs
 }
 
-// retryWithBackoff executes a function with exponential backoff retry logic.
-//
-// This helper function implements retry logic with exponential backoff for
-// operations that may fail transiently (e.g., SSH connections, network operations).
-// It retries the operation up to maxRetries times, with increasing delays between
-// attempts.
-//
-// Parameters:
-//   - operation: A function that returns an error; will be retried if it returns an error
-//   - operationName: A descriptive name for the operation (used in log messages)
-//
-// Returns:
-//   - error: The last error encountered, or nil if the operation succeeded
-//
-// The backoff delay starts at initialRetryDelay and increases by retryMultiplier
-// after each failed attempt, up to maxRetryDelay.
-func retryWithBackoff(operation func() error, operationName string) error {
-	var err error
-	delay := initialRetryDelay
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err = operation()
-		if err == nil {
-			if attempt > 1 {
-				log.Printf("[INFO] %s succeeded on attempt %d", operationName, attempt)
-			}
-			return nil
-		}
-
-		if attempt < maxRetries {
-			log.Printf("[WARN] %s failed (attempt %d/%d): %v. Retrying in %v...",
-				operationName, attempt, maxRetries, err, delay)
-			time.Sleep(delay)
-
-			// Calculate next delay with exponential backoff
-			delay = time.Duration(float64(delay) * retryMultiplier)
-			if delay > maxRetryDelay {
-				delay = maxRetryDelay
-			}
-		} else {
-			log.Printf("[ERROR] %s failed after %d attempts: %v",
-				operationName, maxRetries, err)
-		}
-	}
-
-	return fmt.Errorf("%s failed after %d attempts: %w", operationName, maxRetries, err)
-}
-
 // Name returns the display name of the LoadBalancer component.
 //
 // This method implements part of the RunnableObject interface.
@@ -278,7 +230,6 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		ipAddress   string
 		outb        []byte
 		outs        string
-		exitError   *exec.ExitError
 		err         error
 	)
 
@@ -326,7 +277,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 
 	// Check SSH connectivity using ssh-keyscan with retry logic
 	log.Printf("[INFO] Checking SSH connectivity to bastion at %s", ipAddress)
-	err = retryWithBackoff(func() error {
+	err = retrySshWithBackoff(func() error {
 		var sshErr error
 		outb, sshErr = runSplitCommand2([]string{
 			sshKeyscanCmd,
@@ -373,7 +324,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		return
 	}
 
-	err = retryWithBackoff(func() error {
+	err = retrySshWithBackoff(func() error {
 		var configErr error
 		outb, configErr = runSplitCommand2([]string{
 			sshCmd,
@@ -403,7 +354,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 
 	// Retrieve HAProxy service status with retry logic
 	log.Printf("[INFO] Retrieving HAProxy service status from bastion")
-	err = retryWithBackoff(func() error {
+	err = retrySshWithBackoff(func() error {
 		var statusErr error
 		outb, statusErr = runSplitCommand2([]string{
 			sshCmd,
