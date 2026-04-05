@@ -56,7 +56,7 @@ const (
 	flagWatchBastionRsa      = "bastionRsa"
 	flagWatchBaseDomain      = "baseDomain"
 	flagWatchShouldDebug     = "shouldDebug"
-	
+
 	// Flag default values
 	defaultWatchCloud           = ""
 	defaultWatchMetadata        = ""
@@ -65,14 +65,14 @@ const (
 	defaultWatchBastionRsa      = ""
 	defaultWatchBaseDomain      = ""
 	defaultWatchShouldDebug     = "false"
-	
+
 	// Boolean string values
 	watchBoolTrue  = "true"
 	watchBoolFalse = "false"
-	
+
 	// Error message prefixes
 	errPrefixWatch = "Error: "
-	
+
 	// Usage messages
 	usageWatchCloud           = "The cloud to use in clouds.yaml"
 	usageWatchMetadata        = "The location of the metadata.json file"
@@ -81,10 +81,10 @@ const (
 	usageWatchBastionRsa      = "The RSA filename for the bastion VM to use"
 	usageWatchBaseDomain      = "The DNS base name to use"
 	usageWatchShouldDebug     = "Should output debug output"
-	
+
 	// Environment variable names
 	envIBMCloudAPIKey = "IBMCLOUD_API_KEY"
-	
+
 	// Component names
 	componentOpenShift = "OpenShift Cluster"
 	componentVMs       = "Virtual Machines"

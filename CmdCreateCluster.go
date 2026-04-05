@@ -50,19 +50,19 @@ const (
 	// Flag names
 	flagDirectory   = "directory"
 	flagShouldDebug = "shouldDebug"
-	
+
 	// Flag default values
 	defaultDirectory   = ""
 	defaultShouldDebug = "false"
-	
+
 	// Boolean string values
 	boolTrue  = "true"
 	boolFalse = "false"
-	
+
 	// Error message prefixes
 	errPrefixFlag      = "Error: "
 	errPrefixPhase     = "Phase execution failed: "
-	
+
 	// Usage messages
 	usageDirectory   = "The location of the installation directory"
 	usageShouldDebug = "Should output debug output"
@@ -178,12 +178,12 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 	for i, function := range functions {
 		phaseNum := i + 1
 		log.Printf("[INFO] Executing phase %d of %d", phaseNum, len(functions))
-		
+
 		err = function(absDirectory)
 		if err != nil {
 			return fmt.Errorf("%sphase %d failed: %w", errPrefixPhase, phaseNum, err)
 		}
-		
+
 		log.Printf("[INFO] Phase %d completed successfully", phaseNum)
 	}
 
