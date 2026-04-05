@@ -174,22 +174,22 @@ then
 fi
 #${DEBUG} && echo "PASSWORD=${PASSWORD}"
 
-INFRA_ID=$(jq -r .infraID ${CLUSTER_DIR}/metadata.json)
-RC=$?
-if [ ${RC} -gt 0 ]
-then
-	echo "Error: Trying to eval infraID returned an RC of ${RC}"
-	exit 1
-fi
-if [ -z "${INFRA_ID}" ]
-then
-	echo "Error: infraID is empty?"
-	exit 1
-fi
-${DEBUG} && echo "INFRA_ID=${INFRA_ID}"
-
 if ${IS_INFRA}
 then
+	INFRA_ID=$(jq -r .infraID ${CLUSTER_DIR}/metadata.json)
+	RC=$?
+	if [ ${RC} -gt 0 ]
+	then
+		echo "Error: Trying to eval infraID returned an RC of ${RC}"
+		exit 1
+	fi
+	if [ -z "${INFRA_ID}" ]
+	then
+		echo "Error: infraID is empty?"
+		exit 1
+	fi
+	${DEBUG} && echo "INFRA_ID=${INFRA_ID}"
+
 	SERVER="${INFRA_ID}-${ARG}"
 fi
 if [ -z "${SERVER}" ]
