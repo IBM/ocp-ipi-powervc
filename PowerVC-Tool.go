@@ -12,8 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// (/bin/rm go.*; go mod init example/user/PowerVS-Check; go mod tidy)
-// (echo "vet:"; go vet || exit 1; echo "build:"; go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o PowerVS-Check-Create *.go || exit 1; echo "run:"; ./PowerVS-Check check-create -apiKey "..." -metadata metadata.json -shouldDebug true)
+// PowerVC-Tool is the main entry point for the OpenShift IPI PowerVC deployment tool.
+// It provides a command-line interface for managing OpenShift cluster deployments on PowerVC.
+//
+// Build instructions:
+//   /bin/rm go.*; go mod init example/user/PowerVS-Check; go mod tidy
+//   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
+//
+// Usage:
+//   ocp-ipi-powervc-linux-${ARCH} <command> [flags]
+//
+// Available commands:
+//   check-alive        - Check if cluster nodes are alive
+//   create-bastion     - Create bastion host
+//   create-rhcos       - Create RHCOS image
+//   create-cluster     - Create OpenShift cluster
+//   send-metadata      - Send metadata to cluster
+//   watch-installation - Watch cluster installation progress
+//   watch-create       - Watch cluster creation process
 
 package main
 
@@ -27,32 +43,63 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// Command name constants
+	cmdCheckAlive        = "check-alive"
+	cmdCreateBastion     = "create-bastion"
+	cmdCreateRhcos       = "create-rhcos"
+	cmdCreateCluster     = "create-cluster"
+	cmdSendMetadata      = "send-metadata"
+	cmdWatchInstallation = "watch-installation"
+	cmdWatchCreate       = "watch-create"
+
+	// Version flag
+	versionFlag = "-version"
+
+	// Exit codes
+	exitSuccess = 0
+	exitError   = 1
+)
+
 var (
-	// Replaced with:
+	// version is the build version, replaced at build time with:
 	//   -ldflags="-X main.version=$(git describe --always --long --dirty)"
 	version = "undefined"
+
+	// release is the release tag, replaced at build time with:
+	//   -ldflags="-X main.release=$(git describe --tags --abbrev=0)"
 	release = "undefined"
 
-	shouldDebug  = false
-	shouldDelete = false
+	// shouldDebug enables debug logging when set to true
+	shouldDebug = false
 
+	// log is the global logger instance used throughout the application
 	log *logrus.Logger
 )
 
+// printUsage displays the program usage information to stderr.
+//
+// Parameters:
+//   - executableName: Name of the executable binary
 func printUsage(executableName string) {
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
-
-	fmt.Fprintf(os.Stderr, "Usage: %s [ "+
-		"check-alive "+
-		"| create-bastion "+
-		"| create-rhcos "+
-		"| create-cluster "+
-		"| send-metadata "+
-		"| watch-installation "+
-		"| watch-create"+
-		" ]\n", executableName)
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Usage: %s <command> [flags]\n", executableName)
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Available commands:\n")
+	fmt.Fprintf(os.Stderr, "  %-20s Check if cluster nodes are alive\n", cmdCheckAlive)
+	fmt.Fprintf(os.Stderr, "  %-20s Create bastion host\n", cmdCreateBastion)
+	fmt.Fprintf(os.Stderr, "  %-20s Create RHCOS image\n", cmdCreateRhcos)
+	fmt.Fprintf(os.Stderr, "  %-20s Create OpenShift cluster\n", cmdCreateCluster)
+	fmt.Fprintf(os.Stderr, "  %-20s Send metadata to cluster\n", cmdSendMetadata)
+	fmt.Fprintf(os.Stderr, "  %-20s Watch cluster installation progress\n", cmdWatchInstallation)
+	fmt.Fprintf(os.Stderr, "  %-20s Watch cluster creation process\n", cmdWatchCreate)
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Use '%s <command> -h' for more information about a command.\n", executableName)
 }
 
+// main is the entry point for the PowerVC-Tool application.
+// It parses command-line arguments and dispatches to the appropriate command handler.
 func main() {
 	var (
 		executableName          string
@@ -66,60 +113,71 @@ func main() {
 		err                     error
 	)
 
+	// Get executable name for usage messages
 	executablePath, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting executable path: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error: Failed to get executable path: %v\n", err)
+		os.Exit(exitError)
 	}
-
 	executableName = filepath.Base(executablePath)
 
+	// Handle no arguments case
 	if len(os.Args) == 1 {
+		fmt.Fprintf(os.Stderr, "Error: No command specified\n\n")
 		printUsage(executableName)
-		os.Exit(1)
-	} else if len(os.Args) == 2 && os.Args[1] == "-version" {
-		fmt.Fprintf(os.Stderr, "version = %v\nrelease = %v\n", version, release)
-		os.Exit(1)
+		os.Exit(exitError)
 	}
 
-	checkAliveFlags = flag.NewFlagSet("check-alive", flag.ExitOnError)
-	createBastionFlags = flag.NewFlagSet("create-bastion", flag.ExitOnError)
-	createClusterFlags = flag.NewFlagSet("create-cluster", flag.ExitOnError)
-	createRhcosFlags = flag.NewFlagSet("create-rhcos", flag.ExitOnError)
-	sendMetadataFlags = flag.NewFlagSet("send-metadata", flag.ExitOnError)
-	watchInstallationFlags = flag.NewFlagSet("watch-cluster", flag.ExitOnError)
-	watchCreateClusterFlags = flag.NewFlagSet("watch-create", flag.ExitOnError)
+	// Handle version flag
+	if len(os.Args) == 2 && os.Args[1] == versionFlag {
+		fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
+		os.Exit(exitSuccess)
+	}
 
-	switch strings.ToLower(os.Args[1]) {
-	case "check-alive":
+	// Initialize flag sets for each command
+	checkAliveFlags = flag.NewFlagSet(cmdCheckAlive, flag.ExitOnError)
+	createBastionFlags = flag.NewFlagSet(cmdCreateBastion, flag.ExitOnError)
+	createClusterFlags = flag.NewFlagSet(cmdCreateCluster, flag.ExitOnError)
+	createRhcosFlags = flag.NewFlagSet(cmdCreateRhcos, flag.ExitOnError)
+	sendMetadataFlags = flag.NewFlagSet(cmdSendMetadata, flag.ExitOnError)
+	watchInstallationFlags = flag.NewFlagSet(cmdWatchInstallation, flag.ExitOnError)
+	watchCreateClusterFlags = flag.NewFlagSet(cmdWatchCreate, flag.ExitOnError)
+
+	// Dispatch to appropriate command handler
+	command := strings.ToLower(os.Args[1])
+	switch command {
+	case cmdCheckAlive:
 		err = checkAliveCommand(checkAliveFlags, os.Args[2:])
 
-	case "create-bastion":
+	case cmdCreateBastion:
 		err = createBastionCommand(createBastionFlags, os.Args[2:])
 
-	case "create-cluster":
+	case cmdCreateCluster:
 		err = createClusterCommand(createClusterFlags, os.Args[2:])
 
-	case "create-rhcos":
+	case cmdCreateRhcos:
 		err = createRhcosCommand(createRhcosFlags, os.Args[2:])
 
-	case "send-metadata":
+	case cmdSendMetadata:
 		err = sendMetadataCommand(sendMetadataFlags, os.Args[2:])
 
-	case "watch-installation":
+	case cmdWatchInstallation:
 		err = watchInstallationCommand(watchInstallationFlags, os.Args[2:])
 
-	case "watch-create":
+	case cmdWatchCreate:
 		err = watchCreateClusterCommand(watchCreateClusterFlags, os.Args[2:])
 
 	default:
-		fmt.Fprintf(os.Stderr, "Error: Unknown command %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", os.Args[1])
 		printUsage(executableName)
-		os.Exit(1)
+		os.Exit(exitError)
 	}
 
+	// Handle command execution errors
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error: Command '%s' failed: %v\n", command, err)
+		os.Exit(exitError)
 	}
+
+	os.Exit(exitSuccess)
 }
