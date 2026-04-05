@@ -281,7 +281,7 @@ func (vms *VMs) ClusterStatus() {
 	}
 
 	log.Debugf("ClusterStatus: Found %d cluster servers out of %d total servers", clusterServerCount, len(allServers))
-	
+
 	if clusterServerCount == 0 {
 		fmt.Printf("%s: Warning: No servers found for cluster with infraID %s\n", VMsName, infraID)
 	}

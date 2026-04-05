@@ -62,10 +62,10 @@ const (
 	sshKeygenExitCodeNotFound = 1
 	knownHostsFilePerms       = 0644
 	sshDirPerms               = 0700
-	
+
 	// Error message patterns
 	serverNotFoundPrefix = "Could not find server named"
-	
+
 	// SSH key validation
 	minSSHKeyLength = 100  // Minimum reasonable SSH public key length
 	minPasswordHashLength = 13 // Minimum crypt hash length
@@ -77,33 +77,33 @@ const (
 type rhcosConfig struct {
 	// Cloud specifies the cloud name from clouds.yaml to use for OpenStack authentication
 	Cloud string
-	
+
 	// RhcosName is the name to assign to the RHCOS virtual machine
 	RhcosName string
-	
+
 	// FlavorName specifies the OpenStack flavor (instance type) to use
 	FlavorName string
-	
+
 	// ImageName is the name of the RHCOS image in OpenStack/PowerVC
 	ImageName string
-	
+
 	// NetworkName specifies the network to attach the VM to
 	NetworkName string
-	
+
 	// PasswdHash is the crypt-formatted password hash for the 'core' user
 	// Must be in format: $<algorithm>$<salt>$<hash>
 	PasswdHash string
-	
+
 	// SshPublicKey contains the SSH public key for the 'core' user
 	// Must start with 'ssh-' or 'ecdsa-'
 	SshPublicKey string
-	
+
 	// DomainName is the optional DNS domain for the server (requires IBMCLOUD_API_KEY)
 	DomainName string
-	
+
 	// ShouldDebug enables verbose debug logging when true
 	ShouldDebug bool
-	
+
 	// APIKey is the IBM Cloud API key for DNS configuration (from IBMCLOUD_API_KEY env var)
 	APIKey string
 }
@@ -132,7 +132,7 @@ func (c *rhcosConfig) validate() error {
 	if c.NetworkName == "" {
 		return fmt.Errorf("network name is required")
 	}
-	
+
 	// Validate SSH public key
 	if c.SshPublicKey == "" {
 		return fmt.Errorf("SSH public key is required")
@@ -143,7 +143,7 @@ func (c *rhcosConfig) validate() error {
 	if !strings.HasPrefix(c.SshPublicKey, "ssh-") && !strings.HasPrefix(c.SshPublicKey, "ecdsa-") {
 		return fmt.Errorf("SSH public key must start with 'ssh-' or 'ecdsa-'")
 	}
-	
+
 	// Validate password hash
 	if c.PasswdHash == "" {
 		return fmt.Errorf("password hash is required")
@@ -154,7 +154,7 @@ func (c *rhcosConfig) validate() error {
 	if !strings.HasPrefix(c.PasswdHash, "$") {
 		return fmt.Errorf("password hash must be in crypt format (starting with $)")
 	}
-	
+
 	return nil
 }
 
@@ -285,7 +285,7 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 //   - error: Any error encountered during search or creation
 func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
 	log.Debugf("Looking for existing server: %s", config.RhcosName)
-	
+
 	foundServer, err := findServer(ctx, config.Cloud, config.RhcosName)
 	if err != nil {
 		// Check if error is due to server not found
@@ -425,12 +425,12 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 
 	sshDir := path.Join(homeDir, ".ssh")
 	knownHostsPath := path.Join(sshDir, "known_hosts")
-	
+
 	// Ensure .ssh directory exists
 	if err := ensureSSHDirectory(sshDir); err != nil {
 		return fmt.Errorf("failed to ensure SSH directory: %w", err)
 	}
-	
+
 	log.Debugf("Known hosts file: %s", knownHostsPath)
 
 	// Check if host key already exists using ssh-keygen
@@ -499,11 +499,11 @@ func ensureSSHDirectory(sshDir string) error {
 		}
 		return fmt.Errorf("failed to stat SSH directory: %w", err)
 	}
-	
+
 	if !info.IsDir() {
 		return fmt.Errorf("SSH path exists but is not a directory: %s", sshDir)
 	}
-	
+
 	return nil
 }
 

@@ -37,7 +37,7 @@ import (
 const (
 	// defaultTimeout is the default timeout for operations
 	defaultTimeout = 15 * time.Minute
-	
+
 	// maxFileSize is the maximum file size allowed for validation (100MB)
 	maxFileSize = 100 * 1024 * 1024
 
@@ -48,13 +48,13 @@ const (
 var (
 	// ErrServerNotFound indicates the server could not be found
 	ErrServerNotFound = errors.New("server not found")
-	
+
 	// ErrInvalidConfig indicates invalid configuration
 	ErrInvalidConfig = errors.New("invalid configuration")
-	
+
 	// ErrFileTooBig indicates the file exceeds maximum size
 	ErrFileTooBig = errors.New("file size exceeds maximum allowed")
-	
+
 	// validResourceNameRegex matches valid resource names
 	validResourceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
@@ -66,7 +66,7 @@ func initLogger(debug bool) *logrus.Logger {
 	if debug {
 		out = os.Stderr
 	}
-	
+
 	return &logrus.Logger{
 		Out:   out,
 		Formatter: &logrus.TextFormatter{
@@ -81,7 +81,7 @@ func initLogger(debug bool) *logrus.Logger {
 // Returns an error if the value is not "true" or "false" (case-insensitive).
 func parseBoolFlag(value, flagName string) (bool, error) {
 	trimmedValue := strings.TrimSpace(strings.ToLower(value))
-	
+
 	switch trimmedValue {
 	case "true", "1", "yes", "y":
 		return true, nil

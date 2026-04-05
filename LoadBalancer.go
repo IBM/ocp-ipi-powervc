@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 )
@@ -43,7 +44,7 @@ import (
 const (
 	// LoadBalancerName is the display name for the load balancer component
 	LoadBalancerName = "Load Balancer"
-	
+
 	// HAProxy configuration and service constants
 	haproxyConfigPath     = "/etc/haproxy/haproxy.cfg"
 	haproxyService        = "haproxy.service"
@@ -51,21 +52,27 @@ const (
 	haproxySelinuxSetting = "haproxy_connect_any"
 	haproxyPackageName    = "haproxy"
 	haproxyServiceName    = "haproxy.service"
-	
+
 	// SSH command constants
 	sshKeyscanCmd = "ssh-keyscan"
 	sshCmd        = "ssh"
 	sudoCmd       = "sudo"
 	catCmd        = "cat"
 	systemctlCmd  = "systemctl"
-	
+
 	// systemctl command options
 	systemctlStatusCmd = "status"
 	systemctlNoPager   = "--no-pager"
 	systemctlLongLines = "-l"
-	
+
 	// SSH command options
 	sshIdentityFlag = "-i"
+
+	// Retry configuration constants
+	maxRetries        = 3
+	initialRetryDelay = 2 * time.Second
+	maxRetryDelay     = 30 * time.Second
+	retryMultiplier   = 2.0
 )
 
 // LoadBalancer manages HAProxy-based load balancing on the cluster's bastion host.
@@ -162,6 +169,54 @@ func innerNewLoadBalancer(services *Services) ([]*LoadBalancer, []error) {
 	}
 
 	return lbs, errs
+}
+
+// retryWithBackoff executes a function with exponential backoff retry logic.
+//
+// This helper function implements retry logic with exponential backoff for
+// operations that may fail transiently (e.g., SSH connections, network operations).
+// It retries the operation up to maxRetries times, with increasing delays between
+// attempts.
+//
+// Parameters:
+//   - operation: A function that returns an error; will be retried if it returns an error
+//   - operationName: A descriptive name for the operation (used in log messages)
+//
+// Returns:
+//   - error: The last error encountered, or nil if the operation succeeded
+//
+// The backoff delay starts at initialRetryDelay and increases by retryMultiplier
+// after each failed attempt, up to maxRetryDelay.
+func retryWithBackoff(operation func() error, operationName string) error {
+	var err error
+	delay := initialRetryDelay
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = operation()
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("[INFO] %s succeeded on attempt %d", operationName, attempt)
+			}
+			return nil
+		}
+
+		if attempt < maxRetries {
+			log.Printf("[WARN] %s failed (attempt %d/%d): %v. Retrying in %v...",
+				operationName, attempt, maxRetries, err, delay)
+			time.Sleep(delay)
+
+			// Calculate next delay with exponential backoff
+			delay = time.Duration(float64(delay) * retryMultiplier)
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
+		} else {
+			log.Printf("[ERROR] %s failed after %d attempts: %v",
+				operationName, maxRetries, err)
+		}
+	}
+
+	return fmt.Errorf("%s failed after %d attempts: %w", operationName, maxRetries, err)
 }
 
 // Name returns the display name of the LoadBalancer component.
@@ -269,23 +324,33 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	}
 	log.Debugf("ClusterStatus: ipAddress = %s", ipAddress)
 
-	// Check SSH connectivity using ssh-keyscan
+	// Check SSH connectivity using ssh-keyscan with retry logic
 	log.Printf("[INFO] Checking SSH connectivity to bastion at %s", ipAddress)
-	outb, err = runSplitCommand2([]string{
-		sshKeyscanCmd,
-		ipAddress,
-	})
-	outs = strings.TrimSpace(string(outb))
-	log.Debugf("ClusterStatus: ssh-keyscan output = \"%s\"", outs)
-	if errors.As(err, &exitError) {
-		log.Debugf("ClusterStatus: ssh-keyscan exit code = %d", exitError.ExitCode())
-	}
-	if outs != "" {
-		fmt.Printf("%s: Cluster bastion is alive\n", LoadBalancerName)
-	} else {
-		fmt.Printf("%s: Error: bastion host is not responding to SSH\n", LoadBalancerName)
+	err = retryWithBackoff(func() error {
+		var sshErr error
+		outb, sshErr = runSplitCommand2([]string{
+			sshKeyscanCmd,
+			ipAddress,
+		})
+		outs = strings.TrimSpace(string(outb))
+		log.Debugf("ClusterStatus: ssh-keyscan output = \"%s\"", outs)
+
+		var exitError *exec.ExitError
+		if errors.As(sshErr, &exitError) {
+			log.Debugf("ClusterStatus: ssh-keyscan exit code = %d", exitError.ExitCode())
+		}
+
+		if outs == "" {
+			return fmt.Errorf("bastion host is not responding to SSH")
+		}
+		return nil
+	}, "SSH connectivity check")
+
+	if err != nil {
+		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
 		return
 	}
+	fmt.Printf("%s: Cluster bastion is alive\n", LoadBalancerName)
 
 	// Add bastion to known hosts
 	log.Printf("[INFO] Adding bastion to known hosts")
@@ -295,7 +360,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		return
 	}
 
-	// Retrieve HAProxy configuration
+	// Retrieve HAProxy configuration with retry logic
 	log.Printf("[INFO] Retrieving HAProxy configuration from bastion")
 	installerRsa := lbs.services.GetInstallerRsa()
 	if installerRsa == "" {
@@ -308,40 +373,62 @@ func (lbs *LoadBalancer) ClusterStatus() {
 		return
 	}
 
-	outb, err = runSplitCommand2([]string{
-		sshCmd,
-		sshIdentityFlag,
-		installerRsa,
-		fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
-		sudoCmd,
-		catCmd,
-		haproxyConfigPath,
-	})
-	outs = strings.TrimSpace(string(outb))
+	err = retryWithBackoff(func() error {
+		var configErr error
+		outb, configErr = runSplitCommand2([]string{
+			sshCmd,
+			sshIdentityFlag,
+			installerRsa,
+			fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
+			sudoCmd,
+			catCmd,
+			haproxyConfigPath,
+		})
+		if configErr != nil {
+			return fmt.Errorf("failed to retrieve HAProxy configuration: %w", configErr)
+		}
+		outs = strings.TrimSpace(string(outb))
+		if outs == "" {
+			return fmt.Errorf("HAProxy configuration is empty")
+		}
+		return nil
+	}, "HAProxy configuration retrieval")
+
 	if err != nil {
-		fmt.Printf("%s: Error: failed to retrieve HAProxy configuration: %v\n", LoadBalancerName, err)
+		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
 		return
 	}
 	fmt.Printf("%s: Cluster bastion has the following config:\n", LoadBalancerName)
 	fmt.Println(outs)
 
-	// Retrieve HAProxy service status
+	// Retrieve HAProxy service status with retry logic
 	log.Printf("[INFO] Retrieving HAProxy service status from bastion")
-	outb, err = runSplitCommand2([]string{
-		sshCmd,
-		sshIdentityFlag,
-		installerRsa,
-		fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
-		sudoCmd,
-		systemctlCmd,
-		systemctlStatusCmd,
-		haproxyService,
-		systemctlNoPager,
-		systemctlLongLines,
-	})
-	outs = strings.TrimSpace(string(outb))
+	err = retryWithBackoff(func() error {
+		var statusErr error
+		outb, statusErr = runSplitCommand2([]string{
+			sshCmd,
+			sshIdentityFlag,
+			installerRsa,
+			fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
+			sudoCmd,
+			systemctlCmd,
+			systemctlStatusCmd,
+			haproxyService,
+			systemctlNoPager,
+			systemctlLongLines,
+		})
+		if statusErr != nil {
+			return fmt.Errorf("failed to retrieve HAProxy service status: %w", statusErr)
+		}
+		outs = strings.TrimSpace(string(outb))
+		if outs == "" {
+			return fmt.Errorf("HAProxy service status is empty")
+		}
+		return nil
+	}, "HAProxy service status retrieval")
+
 	if err != nil {
-		fmt.Printf("%s: Error: failed to retrieve HAProxy service status: %v\n", LoadBalancerName, err)
+		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
 		return
 	}
 

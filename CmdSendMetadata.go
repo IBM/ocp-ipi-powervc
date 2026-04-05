@@ -38,7 +38,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	// Parse and validate operation flags
 	createFile := strings.TrimSpace(*ptrCreateMetadata)
 	deleteFile := strings.TrimSpace(*ptrDeleteMetadata)
-	
+
 	shouldCreateMetadata := createFile != ""
 	shouldDeleteMetadata := deleteFile != ""
 

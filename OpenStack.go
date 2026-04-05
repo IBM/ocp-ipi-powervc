@@ -421,11 +421,11 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 			log.Debugf("waitForServer: server %s is active and running", name)
 			return true, nil
 		}
-		
+
 		log.Debugf("waitForServer: server %s not ready yet (Status=%s, PowerState=%d)", name, foundServer.Status, foundServer.PowerState)
 		return false, nil
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed waiting for server %s to become active: %w", name, err)
 	}

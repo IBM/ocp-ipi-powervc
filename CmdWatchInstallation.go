@@ -712,7 +712,7 @@ func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastion
 			if !strings.HasPrefix(strings.ToLower(server.Name), prefixMatch) {
 				continue
 			}
-	
+
 			macAddr, ipAddress, err := findIpAddress(server)
 			if err == nil && macAddr != "" && ipAddress != "" {
 				fmt.Fprintf(file, "server %s %s:80 check\n", server.Name, ipAddress)
