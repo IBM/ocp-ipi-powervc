@@ -136,6 +136,18 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%srequired flag --%s or --%s must be specified", errPrefixSend, flagSendCreateMetadata, flagSendDeleteMetadata)
 	}
 
+	// Parse debug flag
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagSendShouldDebug)
+	if err != nil {
+		return fmt.Errorf("%s%w", errPrefixSend, err)
+	}
+
+	// Initialize logger
+	log = initLogger(shouldDebug)
+	if shouldDebug {
+		log.Printf("[INFO] Debug mode enabled")
+	}
+
 	// Determine which file to use and operation type
 	metadataFile := createFile
 	operationType := operationCreate
@@ -167,18 +179,6 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%sinvalid server IP: %w", errPrefixSend, err)
 	}
 	log.Printf("[INFO] Server IP validated successfully")
-
-	// Parse debug flag
-	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagSendShouldDebug)
-	if err != nil {
-		return fmt.Errorf("%s%w", errPrefixSend, err)
-	}
-
-	// Initialize logger
-	log = initLogger(shouldDebug)
-	if shouldDebug {
-		log.Printf("[INFO] Debug mode enabled")
-	}
 
 	log.Debugf("sendMetadataCommand: operation=%s, file=%s, server=%s",
 		operationType,
