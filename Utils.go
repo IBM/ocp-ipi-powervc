@@ -333,7 +333,7 @@ func keyscanServer(ctx context.Context, ipAddress string, silent bool) ([]byte, 
 	backoff := wait.Backoff{
 		Duration: 1 * time.Second,
 		Factor:   1.1,
-		Cap:      leftInContext(ctx),
+		Cap:      30 * time.Second,
 		Steps:    math.MaxInt32,
 	}
 
