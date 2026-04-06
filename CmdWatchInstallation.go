@@ -1086,35 +1086,39 @@ func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastion
 	return nil
 }
 
+// getClusterName extracts the cluster name from a list of servers.
+//
+// Parameters:
+//   - allServers: List of all servers from OpenStack
+//
+// Returns:
+//   - clusterName: The extracted cluster name, or empty string if not found
+//
+// The function searches for servers with "-bootstrap" or "-master" in their names
+// and extracts the cluster name by removing the infrastructure ID suffix.
+// For example, from "mycluster-abc123-master-0", it extracts "mycluster".
 func getClusterName(allServers []servers.Server) (clusterName string) {
 	var (
 		server servers.Server
 	)
 
 	for _, server = range allServers {
-//		log.Debugf("getClusterName: server.Name = %s", server.Name)
-
 		idx := strings.Index(server.Name, "-bootstrap")
-//		log.Debugf("getClusterName: idx = %d", idx)
 		if idx < 0 {
 			idx = strings.Index(server.Name, "-master")
-//			log.Debugf("getClusterName: idx = %d", idx)
 		}
 		if idx < 0 {
 			continue
 		}
 
 		clusterName = server.Name[0:idx-1]
-//		log.Debugf("getClusterName: clusterName = %s", clusterName)
 
 		idx = strings.LastIndex(clusterName, "-")
-//		log.Debugf("getClusterName: idx = %d", idx)
 		if idx < 0 {
 			continue
 		}
 
 		clusterName = clusterName[0:idx]
-//		log.Debugf("getClusterName: clusterName = %s", clusterName)
 		break
 	}
 
@@ -1279,6 +1283,17 @@ func dnsRecords(ctx context.Context, cloud string, apiKey string, domainName str
 	return nil
 }
 
+// loadResourceControllerAPI creates and initializes an IBM Cloud Resource Controller API client.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//
+// Returns:
+//   - controllerAPI: Initialized Resource Controller API client
+//   - err: Any error encountered during initialization
+//
+// The function creates a new Resource Controller V2 client with IAM authentication
+// for managing IBM Cloud resources and service instances.
 func loadResourceControllerAPI(apiKey string) (controllerAPI *resourcecontrollerv2.ResourceControllerV2, err error) {
 	controllerAPI, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
 		Authenticator: &core.IamAuthenticator{
@@ -1289,6 +1304,19 @@ func loadResourceControllerAPI(apiKey string) (controllerAPI *resourcecontroller
 	return
 }
 
+// loadDnsServiceAPI creates and initializes an IBM Cloud DNS Records API client.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key for authentication
+//   - crnstr: Cloud Resource Name (CRN) for the DNS service instance
+//   - zoneID: DNS zone identifier
+//
+// Returns:
+//   - service: Initialized DNS Records API client
+//   - err: Any error encountered during initialization
+//
+// The function creates a new DNS Records V1 client with IAM authentication
+// for managing DNS records in IBM Cloud Internet Services (CIS).
 func loadDnsServiceAPI(apiKey string, crnstr string, zoneID string)(service *dnsrecordsv1.DnsRecordsV1, err error) {
 	service, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
 		Authenticator:  &core.IamAuthenticator{
@@ -1727,6 +1755,15 @@ func handleConnection(conn net.Conn, cloud string) error {
 //	return err
 }
 
+// handleCheckAlive processes a check-alive command from a client connection.
+//
+// Parameters:
+//   - data: JSON-formatted command data
+//   - errChan: Channel to send the result error (or nil for success)
+//
+// The function unmarshals the check-alive command and sends the result to the
+// error channel. This is a simple health check command that always succeeds
+// if the JSON can be parsed.
 func handleCheckAlive(data string, errChan chan error) {
 	var (
 		cmd            CommandCheckAlive
@@ -1747,6 +1784,23 @@ func handleCheckAlive(data string, errChan chan error) {
 	return
 }
 
+// handleCreateMetadata processes a create or delete metadata command.
+//
+// Parameters:
+//   - data: JSON-formatted command data containing cluster metadata
+//   - shouldCreate: true to create metadata, false to delete it
+//   - errChan: Channel to send the result error (or nil for success)
+//
+// For create operations, the function:
+//  1. Unmarshals the command data
+//  2. Creates a directory named after the infrastructure ID
+//  3. Writes metadata.json file in that directory
+//
+// For delete operations, the function:
+//  1. Removes the metadata.json file
+//  2. Removes the infrastructure ID directory
+//
+// The result (error or nil) is sent to the error channel.
 func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 	var (
 		cmd            CommandSendMetadata
@@ -1810,6 +1864,21 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 	return
 }
 
+// handleCreateBastion processes a create-bastion command to set up a bastion server.
+//
+// Parameters:
+//   - data: JSON-formatted command data containing bastion configuration
+//   - cloud: Cloud name for the operation
+//   - errChan: Channel to send the result error (or nil for success)
+//
+// The function performs the following steps:
+//  1. Unmarshals the command data to extract server name and domain name
+//  2. Creates a context with 10-minute timeout (using bastionContextTimeout constant)
+//  3. Calls setupBastionServer to configure the bastion with HAProxy enabled
+//  4. Sends the result to the error channel
+//
+// The bastion server is configured with HAProxy enabled by default (hardcoded to true).
+// Note: There's a known limitation that enableHAProxy should be part of the command structure.
 func handleCreateBastion(data string, cloud string, errChan chan error) {
 	var (
 		cmd    CommandCreateBastion
@@ -1832,10 +1901,10 @@ func handleCreateBastion(data string, cloud string, errChan chan error) {
 	log.Debugf("handleCreateBastion: cmd.ServerName = %s", cmd.ServerName)
 	log.Debugf("handleCreateBastion: cmd.DomainName = %s", cmd.DomainName)
 
-	ctx, cancel = context.WithTimeout(context.TODO(), 10*time.Minute)
+	ctx, cancel = context.WithTimeout(context.TODO(), bastionContextTimeout)
 	defer cancel()
 
-	// @HACK need to add enableHAProxy to the comand structure
+	// @HACK need to add enableHAProxy to the command structure
 	err = setupBastionServer(ctx, true, cloud, cmd.ServerName, cmd.DomainName, bastionRsa)
 	log.Debugf("handleCreateBastion: setupBastionServer returns %v", err)
 	errChan <- err
