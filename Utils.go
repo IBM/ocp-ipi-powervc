@@ -44,6 +44,10 @@ const (
 
 	// separatorLine is the visual separator used in command output
 	separatorLine = "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
+
+	// Boolean string values
+	boolTrue  = "true"
+	boolFalse = "false"
 )
 
 var (

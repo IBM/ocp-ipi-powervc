@@ -12,6 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package main provides the watch-installation command implementation.
+//
+// This file implements the watch-installation command which monitors OpenShift
+// cluster installations and manages associated infrastructure resources. The command
+// continuously watches for changes in cluster VMs and automatically updates:
+//
+//   - DNS records for cluster nodes and services
+//   - HAProxy load balancer configuration
+//   - DHCP server configuration (optional)
+//   - Bastion server setup and metadata
+//
+// The command accepts the following flags:
+//   - cloud: The cloud to use in clouds.yaml (required)
+//   - domainName: The DNS domain to use (required)
+//   - bastionMetadata: Root directory where OpenShift cluster installs are located (required)
+//   - bastionUsername: The username of the bastion VM (required)
+//   - bastionRsa: The RSA filename for the bastion VM (required)
+//   - enableDhcpd: Enable the DHCP server (true/false, default: false)
+//   - dhcpInterface: The interface name for the DHCP server (required if enableDhcpd=true)
+//   - dhcpSubnet: The subnet for DHCP requests (required if enableDhcpd=true)
+//   - dhcpNetmask: The netmask for DHCP requests (required if enableDhcpd=true)
+//   - dhcpRouter: The router for DHCP requests (required if enableDhcpd=true)
+//   - dhcpDnsServers: The DNS servers for DHCP requests (required if enableDhcpd=true)
+//   - dhcpServerId: The DNS server identifier for DHCP requests (required if enableDhcpd=true)
+//   - shouldDebug: Enable debug output (true/false, default: false)
+//
+// The command runs continuously, waking up every 30 seconds to check for changes
+// in the cluster infrastructure and updating configurations as needed.
+//
+// Example usage:
+//   ./tool watch-installation --cloud mycloud --domainName example.com \
+//     --bastionMetadata /path/to/metadata --bastionUsername core \
+//     --bastionRsa /path/to/key.rsa --shouldDebug true
+
 package main
 
 import (
@@ -22,7 +56,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -45,24 +78,85 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-var (
-	bastionRsa string // @HACK
+const (
+	// Flag names for watch-installation command
+	flagWatchInstallationCloud            = "cloud"
+	flagWatchInstallationDomainName       = "domainName"
+	flagWatchInstallationBastionMetadata  = "bastionMetadata"
+	flagWatchInstallationBastionUsername  = "bastionUsername"
+	flagWatchInstallationBastionRsa       = "bastionRsa"
+	flagWatchInstallationEnableDhcpd      = "enableDhcpd"
+	flagWatchInstallationDhcpInterface    = "dhcpInterface"
+	flagWatchInstallationDhcpSubnet       = "dhcpSubnet"
+	flagWatchInstallationDhcpNetmask      = "dhcpNetmask"
+	flagWatchInstallationDhcpRouter       = "dhcpRouter"
+	flagWatchInstallationDhcpDnsServers   = "dhcpDnsServers"
+	flagWatchInstallationDhcpServerId     = "dhcpServerId"
+	flagWatchInstallationShouldDebug      = "shouldDebug"
+
+	// Flag default values
+	defaultWatchInstallationCloud            = ""
+	defaultWatchInstallationDomainName       = ""
+	defaultWatchInstallationBastionMetadata  = ""
+	defaultWatchInstallationBastionUsername  = ""
+	defaultWatchInstallationBastionRsa       = ""
+	defaultWatchInstallationEnableDhcpd      = "false"
+	defaultWatchInstallationDhcpInterface    = ""
+	defaultWatchInstallationDhcpSubnet       = ""
+	defaultWatchInstallationDhcpNetmask      = ""
+	defaultWatchInstallationDhcpRouter       = ""
+	defaultWatchInstallationDhcpDnsServers   = ""
+	defaultWatchInstallationDhcpServerId     = ""
+	defaultWatchInstallationShouldDebug      = "false"
+
+	// Usage messages
+	usageWatchInstallationCloud            = "The cloud to use in clouds.yaml"
+	usageWatchInstallationDomainName       = "The DNS domain to use"
+	usageWatchInstallationBastionMetadata  = "A root directory where OpenShift clusters installs are located"
+	usageWatchInstallationBastionUsername  = "The username of the bastion VM to use"
+	usageWatchInstallationBastionRsa       = "The RSA filename for the bastion VM to use"
+	usageWatchInstallationEnableDhcpd      = "Should enable the dhcpd server"
+	usageWatchInstallationDhcpInterface    = "The interface name for the dhcpd server"
+	usageWatchInstallationDhcpSubnet       = "The subnet for a DHCP request"
+	usageWatchInstallationDhcpNetmask      = "The netmask for a DHCP request"
+	usageWatchInstallationDhcpRouter       = "The router for a DHCP request"
+	usageWatchInstallationDhcpDnsServers   = "The DNS servers for a DHCP request"
+	usageWatchInstallationDhcpServerId     = "The DNS server identifier for a DHCP request"
+	usageWatchInstallationShouldDebug      = "Should output debug output"
+
+	// Error message prefix
+	errPrefixWatchInstallation = "Error: "
+
+	// Timing constants
+	watchSleepDuration    = 30 * time.Second
+	watchContextTimeout   = 5 * time.Minute
+	watchLongTimeout      = 24 * time.Hour
+	bastionContextTimeout = 10 * time.Minute
+
+	// Network constants
+	listenPort = ":8080"
 )
 
-//	scanner := bufio.NewScanner(conn)
-//	for scanner.Scan() {
-//		data = scanner.Text()
+var (
+	bastionRsa string // @HACK - Global variable for bastion RSA key path
+)
+
+//      scanner := bufio.NewScanner(conn)
+//      for scanner.Scan() {
+//              data = scanner.Text()
 // vs
 
-//	reader := bufio.NewReader(conn)
-//	for {
-//		data, err = reader.ReadString('\n')
+//      reader := bufio.NewReader(conn)
+//      for {
+//              data, err = reader.ReadString('\n')
 // vs
 
 // stringArray is a custom type to hold an array of strings.
+// It implements the flag.Value interface to support multiple flag values.
 type stringArray []string
 
 // String implements the flag.Value interface's String method.
+// It returns a comma-separated string of all values.
 func (s *stringArray) String() string {
 	return strings.Join(*s, ",")
 }
@@ -74,20 +168,62 @@ func (s *stringArray) Set(value string) error {
 	return nil
 }
 
+// bastionInformation holds configuration and state information for a bastion server.
+// It contains metadata about the cluster installation and connection details.
 type bastionInformation struct {
-	Valid        bool
-	Metadata     string
-	Username     string
-	InstallerRsa string
+	Valid        bool   // Whether the bastion information is valid
+	Metadata     string // Path to metadata file
+	Username     string // SSH username for bastion
+	InstallerRsa string // Path to RSA key for installer
 
-	ClusterName  string
-	InfraID      string
-	IPAddress    string
-	NumVMs       int
+	ClusterName string // Name of the OpenShift cluster
+	InfraID     string // Infrastructure ID of the cluster
+	IPAddress   string // IP address of the bastion server
+	NumVMs      int    // Number of VMs in the cluster
 }
 
+// watchInstallationCommand executes the watch-installation command with the given flags and arguments.
+//
+// This function continuously monitors OpenShift cluster installations and manages associated
+// infrastructure resources including DNS records, HAProxy configuration, and optionally DHCP
+// server configuration. It runs in an infinite loop, checking for changes every 30 seconds.
+//
+// Parameters:
+//   - watchInstallationFlags: The FlagSet containing command-line flags (must not be nil)
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - error: Any error encountered during flag parsing, validation, or operation execution
+//
+// The function executes the following steps:
+//  1. Validates input parameters
+//  2. Displays program version information
+//  3. Retrieves IBM Cloud API key from environment
+//  4. Defines and parses command-line flags
+//  5. Validates all required flags
+//  6. Configures logging based on debug flag
+//  7. Spawns metadata listener goroutine
+//  8. Enters infinite monitoring loop:
+//     - Gathers bastion information from metadata directories
+//     - Retrieves all servers from OpenStack
+//     - Detects added/deleted servers
+//     - Updates bastion configurations
+//     - Updates DNS records
+//     - Updates HAProxy configuration
+//     - Updates DHCP configuration (if enabled)
+//     - Sleeps for 30 seconds before next iteration
+//
+// Example usage:
+//   err := watchInstallationCommand(flagSet, []string{
+//       "--cloud", "mycloud",
+//       "--domainName", "example.com",
+//       "--bastionMetadata", "/path/to/metadata",
+//       "--bastionUsername", "core",
+//       "--bastionRsa", "/path/to/key.rsa",
+//   })
 func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
+		preLog              strings.Builder
 		out                 io.Writer
 		apiKey              string
 		ptrCloud            *string
@@ -115,79 +251,104 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		err                 error
 	)
 
+
+	// Validate input parameters
+	if watchInstallationFlags == nil {
+		return fmt.Errorf("%sflag set cannot be nil", errPrefixWatchInstallation)
+	}
+
+	// Display version information
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
+	// Retrieve IBM Cloud API key from environment
 	apiKey = os.Getenv("IBMCLOUD_API_KEY")
+	fmt.Fprintf(&preLog, "[INFO] Starting watch-installation command\n")
 
-	ptrCloud = watchInstallationFlags.String("cloud", "", "The cloud to use in clouds.yaml")
-	ptrDomainName = watchInstallationFlags.String("domainName", "", "The DNS domain to use")
-	ptrBastionMetadata = watchInstallationFlags.String("bastionMetadata", "", "A root directory where OpenShift clusters installs are located")
-	ptrBastionUsername = watchInstallationFlags.String("bastionUsername", "", "The username of the bastion VM to use")
-	ptrBastionRsa = watchInstallationFlags.String("bastionRsa", "", "The RSA filename for the bastion VM to use")
-	ptrEnableDhcpd = watchInstallationFlags.String("enableDhcpd", "false", "Should enable the dhcpd server")
-	ptrDhcpInterface = watchInstallationFlags.String("dhcpInterface", "false", "The interface name for the dhcpd server")
-	ptrDhcpSubnet = watchInstallationFlags.String("dhcpSubnet", "", "The subnet for a DHCP request")
-	ptrDhcpNetmask = watchInstallationFlags.String("dhcpNetmask", "", "The netmask for a DHCP request")
-	ptrDhcpRouter = watchInstallationFlags.String("dhcpRouter", "", "The router for a DHCP request")
-	ptrDhcpDnsServers = watchInstallationFlags.String("dhcpDnsServers",  "", "The DNS servers for a DHCP request")
-	ptrDhcpServerId = watchInstallationFlags.String("dhcpServerId",  "", "The DNS server identifier for a DHCP request")
-	ptrShouldDebug = watchInstallationFlags.String("shouldDebug", "false", "Should output debug output")
+	// Define command-line flags
+	ptrCloud = watchInstallationFlags.String(flagWatchInstallationCloud, defaultWatchInstallationCloud, usageWatchInstallationCloud)
+	ptrDomainName = watchInstallationFlags.String(flagWatchInstallationDomainName, defaultWatchInstallationDomainName, usageWatchInstallationDomainName)
+	ptrBastionMetadata = watchInstallationFlags.String(flagWatchInstallationBastionMetadata, defaultWatchInstallationBastionMetadata, usageWatchInstallationBastionMetadata)
+	ptrBastionUsername = watchInstallationFlags.String(flagWatchInstallationBastionUsername, defaultWatchInstallationBastionUsername, usageWatchInstallationBastionUsername)
+	ptrBastionRsa = watchInstallationFlags.String(flagWatchInstallationBastionRsa, defaultWatchInstallationBastionRsa, usageWatchInstallationBastionRsa)
+	ptrEnableDhcpd = watchInstallationFlags.String(flagWatchInstallationEnableDhcpd, defaultWatchInstallationEnableDhcpd, usageWatchInstallationEnableDhcpd)
+	ptrDhcpInterface = watchInstallationFlags.String(flagWatchInstallationDhcpInterface, defaultWatchInstallationDhcpInterface, usageWatchInstallationDhcpInterface)
+	ptrDhcpSubnet = watchInstallationFlags.String(flagWatchInstallationDhcpSubnet, defaultWatchInstallationDhcpSubnet, usageWatchInstallationDhcpSubnet)
+	ptrDhcpNetmask = watchInstallationFlags.String(flagWatchInstallationDhcpNetmask, defaultWatchInstallationDhcpNetmask, usageWatchInstallationDhcpNetmask)
+	ptrDhcpRouter = watchInstallationFlags.String(flagWatchInstallationDhcpRouter, defaultWatchInstallationDhcpRouter, usageWatchInstallationDhcpRouter)
+	ptrDhcpDnsServers = watchInstallationFlags.String(flagWatchInstallationDhcpDnsServers, defaultWatchInstallationDhcpDnsServers, usageWatchInstallationDhcpDnsServers)
+	ptrDhcpServerId = watchInstallationFlags.String(flagWatchInstallationDhcpServerId, defaultWatchInstallationDhcpServerId, usageWatchInstallationDhcpServerId)
+	ptrShouldDebug = watchInstallationFlags.String(flagWatchInstallationShouldDebug, defaultWatchInstallationShouldDebug, usageWatchInstallationShouldDebug)
 
-	watchInstallationFlags.Parse(args)
+	// Parse command-line arguments
+	err = watchInstallationFlags.Parse(args)
+	if err != nil {
+		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixWatchInstallation, err)
+	}
 
+	// Validate required flags
+	fmt.Fprintf(&preLog, "[INFO] Validating required flags\n")
 	if ptrCloud == nil || *ptrCloud == "" {
-		return fmt.Errorf("Error: --cloud not specified")
+		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationCloud)
 	}
 	if ptrDomainName == nil || *ptrDomainName == "" {
-		return fmt.Errorf("Error: --domainName not specified")
+		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationDomainName)
 	}
 	if ptrBastionMetadata == nil || *ptrBastionMetadata == "" {
-		return fmt.Errorf("Error: --bastionMetadata not specified")
+		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationBastionMetadata)
 	}
 	if ptrBastionUsername == nil || *ptrBastionUsername == "" {
-		return fmt.Errorf("Error: --bastionUsername not specified")
+		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationBastionUsername)
 	}
 	if ptrBastionRsa == nil || *ptrBastionRsa == "" {
-		return fmt.Errorf("Error: --bastionRsa not specified")
+		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationBastionRsa)
 	}
+	fmt.Fprintf(&preLog, "[INFO] Required flags validated successfully\n")
 
+	// Parse and validate enableDhcpd flag
+	fmt.Fprintf(&preLog, "[INFO] Validating DHCP configuration\n")
 	switch strings.ToLower(*ptrEnableDhcpd) {
-	case "true":
+	case boolTrue:
 		enableDhcpd = true
+		fmt.Fprintf(&preLog, "[INFO] DHCP server enabled\n")
 
 		if ptrDhcpInterface == nil || *ptrDhcpInterface == "" {
-			return fmt.Errorf("Error: --dhcpInterface not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpInterface)
 		}
 		if ptrDhcpSubnet == nil || *ptrDhcpSubnet == "" {
-			return fmt.Errorf("Error: --dhcpSubnet not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpSubnet)
 		}
 		if ptrDhcpNetmask == nil || *ptrDhcpNetmask == "" {
-			return fmt.Errorf("Error: --dhcpNetmask not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpNetmask)
 		}
 		if ptrDhcpRouter == nil || *ptrDhcpRouter == "" {
-			return fmt.Errorf("Error: --dhcpRouter not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpRouter)
 		}
 		if ptrDhcpDnsServers == nil || *ptrDhcpDnsServers == "" {
-			return fmt.Errorf("Error: --dhcpDnsServers not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpDnsServers)
 		}
 		if ptrDhcpServerId == nil || *ptrDhcpServerId == "" {
-			return fmt.Errorf("Error: --dhcpServerId not specified")
+			return fmt.Errorf("%s--%s not specified (required when DHCP is enabled)", errPrefixWatchInstallation, flagWatchInstallationDhcpServerId)
 		}
-	case "false":
+		fmt.Fprintf(&preLog, "[INFO] DHCP configuration validated successfully\n")
+	case boolFalse:
 		enableDhcpd = false
+		fmt.Fprintf(&preLog, "[INFO] DHCP server disabled\n")
 	default:
-		return fmt.Errorf("Error: enableDhcpd is not true/false (%s)\n", *ptrShouldDebug)
+		return fmt.Errorf("%s%s must be 'true' or 'false', got '%s'", errPrefixWatchInstallation, flagWatchInstallationEnableDhcpd, *ptrEnableDhcpd)
 	}
 
+	// Parse and validate shouldDebug flag
 	switch strings.ToLower(*ptrShouldDebug) {
-	case "true":
+	case boolTrue:
 		shouldDebug = true
-	case "false":
+		fmt.Fprintf(&preLog, "[INFO] Debug mode enabled\n")
+	case boolFalse:
 		shouldDebug = false
 	default:
-		return fmt.Errorf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		return fmt.Errorf("%s%s must be 'true' or 'false', got '%s'", errPrefixWatchInstallation, flagWatchInstallationShouldDebug, *ptrShouldDebug)
 	}
 
+	// Configure logging based on debug flag
 	if shouldDebug {
 		out = os.Stderr
 	} else {
@@ -198,32 +359,46 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		Formatter: new(logrus.TextFormatter),
 		Level:     logrus.DebugLevel,
 	}
+	log.Printf("%s", preLog.String())
 
+	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
 
-	ctx, cancel = context.WithTimeout(context.TODO(), 5*time.Minute)
+	// Create initial context with timeout
+	ctx, cancel = context.WithTimeout(context.TODO(), watchContextTimeout)
 	defer cancel()
 
-	// Spawn off the metadata listeners
+	// Spawn metadata listener goroutine
+	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
 	go listenForCommands(*ptrCloud)
 
+	// Enter infinite monitoring loop
+	log.Printf("[INFO] Entering monitoring loop")
 	for true {
-		fmt.Println("Waking up")
+		log.Printf("[INFO] Waking up to check for changes")
 
+		// Gather bastion information from metadata directories
+		log.Printf("[INFO] Gathering bastion information from: %s", *ptrBastionMetadata)
 		bastionInformations, err = gatherBastionInformations(*ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to gather bastion information: %w", err)
 		}
 		log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
+		log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
 
-		ctx, cancel = context.WithTimeout(context.TODO(), 24*time.Hour)
+		// Create new context for this iteration
+		ctx, cancel = context.WithTimeout(context.TODO(), watchLongTimeout)
 		defer cancel()
 
+		// Retrieve all servers from OpenStack
+		log.Printf("[INFO] Retrieving all servers from cloud: %s", *ptrCloud)
 		allServers, err = getAllServers(ctx, *ptrCloud)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get all servers: %w", err)
 		}
+		log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
 
+		// Detect changes in server set
 		newServerSet = getServerSet(allServers)
 		addedServersSet = newServerSet.Difference(knownServers)
 		deletedServerSet = knownServers.Difference(newServerSet)
@@ -232,26 +407,32 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		log.Debugf("addedServersSet  = %+v", addedServersSet)
 		log.Debugf("deletedServerSet = %+v", deletedServerSet)
 
-		// If we haven't added new servers or deleted old servers, then try again
+		// If no changes detected, sleep and continue
 		if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
-			fmt.Println("Sleeping")
+			log.Printf("[INFO] No server changes detected")
+			log.Printf("[INFO] Sleeping for %v", watchSleepDuration)
 
-			time.Sleep(30 * time.Second)
+			time.Sleep(watchSleepDuration)
 
 			continue
 		}
 
+		// Update known servers set
+		log.Printf("[INFO] Server changes detected: %d added, %d deleted", addedServersSet.Len(), deletedServerSet.Len())
 		knownServers = newServerSet
 
+		// Update bastion configurations
+		log.Printf("[INFO] Updating bastion configurations")
 		err = updateBastionInformations(ctx, *ptrCloud, bastionInformations)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to update bastion information: %w", err)
 		}
+		log.Printf("[INFO] Bastion configurations updated successfully")
 
-		fmt.Println("8<--------8<--------8<--------8<--DHCP--8<--------8<--------8<--------8<--------")
-
+		// Update DHCP configuration if enabled
 		log.Debugf("enableDhcpd = %v", enableDhcpd)
 		if enableDhcpd {
+			log.Printf("[INFO] Updating DHCP configuration")
 			filename := "/tmp/dhcpd.conf"
 			err = dhcpdConf(ctx,
 				filename,
@@ -265,9 +446,11 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				*ptrDhcpServerId,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to generate DHCP configuration: %w", err)
 			}
+			log.Printf("[INFO] DHCP configuration generated: %s", filename)
 
+			log.Printf("[INFO] Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
 			err = runSplitCommand([]string{
 				"sudo",
 				"/usr/bin/cp",
@@ -275,9 +458,10 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				"/etc/dhcp/dhcpd.conf",
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to copy DHCP configuration: %w", err)
 			}
 
+			log.Printf("[INFO] Restarting DHCP service")
 			err = runSplitCommand([]string{
 				"sudo",
 				"systemctl",
@@ -285,20 +469,22 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				"dhcpd.service",
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to restart DHCP service: %w", err)
 			}
+			log.Printf("[INFO] DHCP service restarted successfully")
 		}
 
-		fmt.Println("8<--------8<--------8<--------8<HAPROXY-8<--------8<--------8<--------8<--------")
-
+		// Update HAProxy configuration
+		log.Printf("[INFO] Updating HAProxy configuration")
 		err = haproxyCfg(ctx, *ptrCloud, bastionInformations)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to update HAProxy configuration: %w", err)
 		}
+		log.Printf("[INFO] HAProxy configuration updated successfully")
 
-		fmt.Println("8<--------8<--------8<--------8<--DNS---8<--------8<--------8<--------8<--------")
-
+		// Update DNS records if API key is available
 		if apiKey != "" {
+			log.Printf("[INFO] Updating DNS records")
 			err = dnsRecords(ctx,
 				*ptrCloud,
 				apiKey,
@@ -309,13 +495,17 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				deletedServerSet,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to update DNS records: %w", err)
 			}
+			log.Printf("[INFO] DNS records updated successfully")
+		} else {
+			log.Printf("[INFO] Skipping DNS updates (no API key provided)")
 		}
 
-		fmt.Println("Sleeping")
+		// Sleep before next iteration
+		log.Printf("[INFO] Iteration complete, sleeping for %v", watchSleepDuration)
 
-		time.Sleep(30 * time.Second)
+		time.Sleep(watchSleepDuration)
 	}
 
 	return nil
@@ -363,7 +553,7 @@ func getMetadataClusterName(filename string) (clusterName string, infraID string
 		metadata MinimalMetadata
 	)
 
-	content, err = ioutil.ReadFile(filename)
+	content, err = os.ReadFile(filename)
 	if err != nil {
 		log.Debugf("Error when opening file: %v", err)
 		return

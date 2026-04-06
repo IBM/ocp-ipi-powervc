@@ -55,10 +55,6 @@ const (
 	defaultDirectory   = ""
 	defaultShouldDebug = "false"
 
-	// Boolean string values
-	boolTrue  = "true"
-	boolFalse = "false"
-
 	// Error message prefixes
 	errPrefixFlag      = "Error: "
 	errPrefixPhase     = "Phase execution failed: "

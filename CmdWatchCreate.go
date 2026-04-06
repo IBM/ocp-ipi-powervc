@@ -49,38 +49,34 @@ import (
 
 const (
 	// Flag names for watch-create command
-	flagWatchCloud           = "cloud"
-	flagWatchMetadata        = "metadata"
-	flagWatchKubeConfig      = "kubeconfig"
-	flagWatchBastionUsername = "bastionUsername"
-	flagWatchBastionRsa      = "bastionRsa"
-	flagWatchBaseDomain      = "baseDomain"
-	flagWatchShouldDebug     = "shouldDebug"
+	flagWatchCreateCloud           = "cloud"
+	flagWatchCreateMetadata        = "metadata"
+	flagWatchCreateKubeConfig      = "kubeconfig"
+	flagWatchCreateBastionUsername = "bastionUsername"
+	flagWatchCreateBastionRsa      = "bastionRsa"
+	flagWatchCreateBaseDomain      = "baseDomain"
+	flagWatchCreateShouldDebug     = "shouldDebug"
 
 	// Flag default values
-	defaultWatchCloud           = ""
-	defaultWatchMetadata        = ""
-	defaultWatchKubeConfig      = ""
-	defaultWatchBastionUsername = ""
-	defaultWatchBastionRsa      = ""
-	defaultWatchBaseDomain      = ""
-	defaultWatchShouldDebug     = "false"
-
-	// Boolean string values
-	watchBoolTrue  = "true"
-	watchBoolFalse = "false"
+	defaultWatchCreateCloud           = ""
+	defaultWatchCreateMetadata        = ""
+	defaultWatchCreateKubeConfig      = ""
+	defaultWatchCreateBastionUsername = ""
+	defaultWatchCreateBastionRsa      = ""
+	defaultWatchCreateBaseDomain      = ""
+	defaultWatchCreateShouldDebug     = "false"
 
 	// Error message prefixes
-	errPrefixWatch = "Error: "
+	errPrefixWatchCreate = "Error: "
 
 	// Usage messages
-	usageWatchCloud           = "The cloud to use in clouds.yaml"
-	usageWatchMetadata        = "The location of the metadata.json file"
-	usageWatchKubeConfig      = "The KUBECONFIG file"
-	usageWatchBastionUsername = "The username of the bastion VM to use"
-	usageWatchBastionRsa      = "The RSA filename for the bastion VM to use"
-	usageWatchBaseDomain      = "The DNS base name to use"
-	usageWatchShouldDebug     = "Should output debug output"
+	usageWatchCreateCloud           = "The cloud to use in clouds.yaml"
+	usageWatchCreateMetadata        = "The location of the metadata.json file"
+	usageWatchCreateKubeConfig      = "The KUBECONFIG file"
+	usageWatchCreateBastionUsername = "The username of the bastion VM to use"
+	usageWatchCreateBastionRsa      = "The RSA filename for the bastion VM to use"
+	usageWatchCreateBaseDomain      = "The DNS base name to use"
+	usageWatchCreateShouldDebug     = "Should output debug output"
 
 	// Environment variable names
 	envIBMCloudAPIKey = "IBMCLOUD_API_KEY"
@@ -147,36 +143,36 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 
 	// Validate input parameters
 	if watchCreateClusterFlags == nil {
-		return fmt.Errorf("%sflag set cannot be nil", errPrefixWatch)
+		return fmt.Errorf("%sflag set cannot be nil", errPrefixWatchCreate)
 	}
 
 	// Display version information
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	// Define command-line flags
-	ptrCloud = watchCreateClusterFlags.String(flagWatchCloud, defaultWatchCloud, usageWatchCloud)
-	ptrMetadata = watchCreateClusterFlags.String(flagWatchMetadata, defaultWatchMetadata, usageWatchMetadata)
-	ptrKubeConfig = watchCreateClusterFlags.String(flagWatchKubeConfig, defaultWatchKubeConfig, usageWatchKubeConfig)
-	ptrBastionUsername = watchCreateClusterFlags.String(flagWatchBastionUsername, defaultWatchBastionUsername, usageWatchBastionUsername)
-	ptrBastionRsa = watchCreateClusterFlags.String(flagWatchBastionRsa, defaultWatchBastionRsa, usageWatchBastionRsa)
-	ptrBaseDomain = watchCreateClusterFlags.String(flagWatchBaseDomain, defaultWatchBaseDomain, usageWatchBaseDomain)
-	ptrShouldDebug = watchCreateClusterFlags.String(flagWatchShouldDebug, defaultWatchShouldDebug, usageWatchShouldDebug)
+	ptrCloud = watchCreateClusterFlags.String(flagWatchCreateCloud, defaultWatchCreateCloud, usageWatchCreateCloud)
+	ptrMetadata = watchCreateClusterFlags.String(flagWatchCreateMetadata, defaultWatchCreateMetadata, usageWatchCreateMetadata)
+	ptrKubeConfig = watchCreateClusterFlags.String(flagWatchCreateKubeConfig, defaultWatchCreateKubeConfig, usageWatchCreateKubeConfig)
+	ptrBastionUsername = watchCreateClusterFlags.String(flagWatchCreateBastionUsername, defaultWatchCreateBastionUsername, usageWatchCreateBastionUsername)
+	ptrBastionRsa = watchCreateClusterFlags.String(flagWatchCreateBastionRsa, defaultWatchCreateBastionRsa, usageWatchCreateBastionRsa)
+	ptrBaseDomain = watchCreateClusterFlags.String(flagWatchCreateBaseDomain, defaultWatchCreateBaseDomain, usageWatchCreateBaseDomain)
+	ptrShouldDebug = watchCreateClusterFlags.String(flagWatchCreateShouldDebug, defaultWatchCreateShouldDebug, usageWatchCreateShouldDebug)
 
 	// Parse command-line arguments
 	err = watchCreateClusterFlags.Parse(args)
 	if err != nil {
-		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixWatch, err)
+		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixWatchCreate, err)
 	}
 
 	// Parse and validate shouldDebug flag
 	switch strings.ToLower(*ptrShouldDebug) {
-	case watchBoolTrue:
+	case boolTrue:
 		shouldDebug = true
 		fmt.Println("[INFO] Debug mode enabled")
-	case watchBoolFalse:
+	case boolFalse:
 		shouldDebug = false
 	default:
-		return fmt.Errorf("%sshouldDebug must be 'true' or 'false', got '%s'", errPrefixWatch, *ptrShouldDebug)
+		return fmt.Errorf("%sshouldDebug must be 'true' or 'false', got '%s'", errPrefixWatchCreate, *ptrShouldDebug)
 	}
 
 	// Configure logging based on debug flag
@@ -198,7 +194,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		// Before we do a lot of work, validate the API key!
 		_, err = InitBXService(apiKey)
 		if err != nil {
-			return fmt.Errorf("%sfailed to initialize IBM Cloud service: %w", errPrefixWatch, err)
+			return fmt.Errorf("%sfailed to initialize IBM Cloud service: %w", errPrefixWatchCreate, err)
 		}
 		log.Printf("[INFO] IBM Cloud API key validated successfully")
 	} else {
@@ -207,29 +203,29 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 
 	// Validate required flags
 	if ptrCloud == nil || *ptrCloud == "" {
-		return fmt.Errorf("%scloud name is required, use -%s flag", errPrefixWatch, flagWatchCloud)
+		return fmt.Errorf("%scloud name is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateCloud)
 	}
 	log.Printf("[INFO] Using cloud: %s", *ptrCloud)
 
 	if *ptrMetadata == "" {
-		return fmt.Errorf("%smetadata file location is required, use -%s flag", errPrefixWatch, flagWatchMetadata)
+		return fmt.Errorf("%smetadata file location is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateMetadata)
 	}
 	log.Printf("[INFO] Using metadata file: %s", *ptrMetadata)
 
 	if ptrBastionUsername == nil || *ptrBastionUsername == "" {
-		return fmt.Errorf("%sbastion username is required, use -%s flag", errPrefixWatch, flagWatchBastionUsername)
+		return fmt.Errorf("%sbastion username is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionUsername)
 	}
 	log.Printf("[INFO] Using bastion username: %s", *ptrBastionUsername)
 
 	if ptrBastionRsa == nil || *ptrBastionRsa == "" {
-		return fmt.Errorf("%sbastion RSA key is required, use -%s flag", errPrefixWatch, flagWatchBastionRsa)
+		return fmt.Errorf("%sbastion RSA key is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionRsa)
 	}
 	log.Printf("[INFO] Using bastion RSA key: %s", *ptrBastionRsa)
 
 	// Validate metadata file accessibility
 	_, err = os.ReadFile(*ptrMetadata)
 	if err != nil {
-		return fmt.Errorf("%sfailed to read metadata file '%s': %w", errPrefixWatch, *ptrMetadata, err)
+		return fmt.Errorf("%sfailed to read metadata file '%s': %w", errPrefixWatchCreate, *ptrMetadata, err)
 	}
 	log.Printf("[INFO] Metadata file validated successfully")
 
@@ -253,7 +249,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	log.Printf("[INFO] Loading metadata from file")
 	metadata, err = NewMetadataFromCCMetadata(*ptrMetadata)
 	if err != nil {
-		return fmt.Errorf("%sfailed to load metadata from '%s': %w", errPrefixWatch, *ptrMetadata, err)
+		return fmt.Errorf("%sfailed to load metadata from '%s': %w", errPrefixWatchCreate, *ptrMetadata, err)
 	}
 	log.Debugf("metadata = %+v", metadata)
 
@@ -261,14 +257,14 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	log.Printf("[INFO] Creating services object")
 	services, err = NewServices(metadata, apiKey, *ptrKubeConfig, *ptrCloud, *ptrBastionUsername, *ptrBastionRsa, *ptrBaseDomain)
 	if err != nil {
-		return fmt.Errorf("%sfailed to create services object: %w", errPrefixWatch, err)
+		return fmt.Errorf("%sfailed to create services object: %w", errPrefixWatchCreate, err)
 	}
 
 	// Initialize runnable objects
 	log.Printf("[INFO] Initializing runnable objects")
 	robjsCluster, err = initializeRunnableObjects(services, robjsFuncs)
 	if err != nil {
-		return fmt.Errorf("%sfailed to initialize runnable objects: %w", errPrefixWatch, err)
+		return fmt.Errorf("%sfailed to initialize runnable objects: %w", errPrefixWatchCreate, err)
 	}
 
 	// Sort the objects by their priority
