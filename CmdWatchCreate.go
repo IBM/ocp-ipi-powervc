@@ -172,7 +172,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	switch strings.ToLower(*ptrShouldDebug) {
 	case watchBoolTrue:
 		shouldDebug = true
-		log.Printf("[INFO] Debug mode enabled")
+		fmt.Println("[INFO] Debug mode enabled")
 	case watchBoolFalse:
 		shouldDebug = false
 	default:
