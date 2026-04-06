@@ -602,6 +602,27 @@ func getMetadataClusterName(filename string) (clusterName string, infraID string
 	return
 }
 
+// updateBastionInformations refreshes bastion server information for all clusters.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - cloud: Cloud name to query for servers
+//   - bastionInformations: Slice of bastion information to update
+//
+// Returns:
+//   - error: Any error encountered during the update process
+//
+// The function performs the following for each bastion:
+//  1. Retrieves all servers from OpenStack
+//  2. Reads cluster metadata to get cluster name and infrastructure ID
+//  3. Finds the bastion server in the server list
+//  4. Extracts the bastion's IP address
+//  5. Adds the server to known_hosts
+//  6. Counts VMs belonging to the cluster
+//  7. Updates bastion information with current state
+//
+// Bastions that cannot be found or have errors are marked as invalid
+// and skipped without failing the entire operation.
 func updateBastionInformations(ctx context.Context, cloud string, bastionInformations []bastionInformation) (err error) {
 	var (
 		allServers []servers.Server
@@ -611,7 +632,6 @@ func updateBastionInformations(ctx context.Context, cloud string, bastionInforma
 	if err != nil {
 		return
 	}
-//	log.Debugf("updateBastionInformations: allServers = %+v", allServers)
 
 	for i, bastionInformation := range bastionInformations {
 		var (
@@ -749,11 +769,7 @@ func findIpAddress(server servers.Server) (string, string, error) {
 		ipAddress      string
 	)
 
-//	log.Debugf("server = %+v", server)
-
 	for key := range server.Addresses {
-//		log.Debugf("key = %+v", key)
-
 		// Addresses:map[vlan1337:[map[OS-EXT-IPS-MAC:mac_addr:fa:16:3e:b1:33:03 OS-EXT-IPS:type:fixed addr:10.20.182.169 version:4]]]
 		subnetContents, ok = server.Addresses[key].([]interface {})
 		if !ok {
@@ -761,34 +777,25 @@ func findIpAddress(server servers.Server) (string, string, error) {
 		}
 
 		for _, subnetValue := range subnetContents {
-//			log.Debugf("subnetValue = %+v", subnetValue)
-//			log.Debugf("subnetValue = %+v", reflect.TypeOf(subnetValue))
-
 			mapSubNetwork, ok = subnetValue.(map[string]interface{})
 			if !ok {
 				return "", "", fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
 			}
 
-//			log.Debugf("mapSubNetwork = %+v", mapSubNetwork)
-
 			macAddrI, ok := mapSubNetwork["OS-EXT-IPS-MAC:mac_addr"]
-//			log.Debugf("macAddrI, ok = %+v, %v", macAddrI, ok)
 			if !ok {
 				return "", "", fmt.Errorf("Error: mapSubNetwork did not contain \"OS-EXT-IPS-MAC:mac_addr\": %v", mapSubNetwork)
 			}
 			macAddr, ok := macAddrI.(string)
-//			log.Debugf("macAddr, ok = %+v, %v", macAddr, ok)
 			if !ok {
 				return "", "", fmt.Errorf("Error: macAddrI was not a string: %v", macAddrI)
 			}
 
 			ipAddressI, ok := mapSubNetwork["addr"]
-//			log.Debugf("ipAddressI, ok = %+v, %v", ipAddressI, ok)
 			if !ok {
 				return "", "", fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
 			}
 			ipAddress, ok = ipAddressI.(string)
-//			log.Debugf("ipAddress, ok = %+v, %v", ipAddress, ok)
 			if !ok {
 				return "", "", fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
 			}
@@ -800,6 +807,26 @@ func findIpAddress(server servers.Server) (string, string, error) {
 	return "", "", nil
 }
 
+// dhcpdConf generates a DHCP server configuration file for cluster nodes.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - filename: Path where the configuration file will be written
+//   - cloud: Cloud name to query for servers
+//   - domainName: DNS domain name for the cluster
+//   - dhcpInterface: Network interface for DHCP server
+//   - dhcpSubnet: Subnet for DHCP address pool
+//   - dhcpNetmask: Netmask for the subnet
+//   - dhcpRouter: Default gateway/router address
+//   - dhcpDnsServers: DNS server addresses (comma-separated)
+//   - dhcpServerId: DHCP server identifier
+//
+// Returns:
+//   - error: Any error encountered generating the configuration
+//
+// The function retrieves all servers from OpenStack, filters for cluster nodes
+// (bootstrap, master, worker), and generates a dhcpd.conf file with static
+// host entries mapping MAC addresses to IP addresses and hostnames.
 func dhcpdConf(ctx context.Context, filename string, cloud string, domainName string, dhcpInterface string, dhcpSubnet string, dhcpNetmask string, dhcpRouter string, dhcpDnsServers string, dhcpServerId string) error {
 	var (
 		allServers []servers.Server
@@ -812,7 +839,6 @@ func dhcpdConf(ctx context.Context, filename string, cloud string, domainName st
 	if err != nil {
 		return err
 	}
-//	log.Debugf("dhcpdConf: allServers = %+v", allServers)
 
 	fmt.Printf("Writing %s\n\n", filename)
 
@@ -855,8 +881,6 @@ func dhcpdConf(ctx context.Context, filename string, cloud string, domainName st
 	fmt.Fprintf(file, "\n")
 
 	for _, server = range allServers {
-//		log.Debugf("dhcpdConf: server = %+v", server)
-
 		macAddr, ipAddress, err := findIpAddress(server)
 		if err == nil && macAddr != "" && ipAddress != "" {
 			fmt.Fprintf(file, "host %s {\n", server.Name)
@@ -873,6 +897,25 @@ func dhcpdConf(ctx context.Context, filename string, cloud string, domainName st
 	return nil
 }
 
+// haproxyCfg generates HAProxy configuration files for each bastion server.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - cloud: Cloud name to query for servers
+//   - bastionInformations: Slice of bastion information for clusters
+//
+// Returns:
+//   - error: Any error encountered generating the configurations
+//
+// The function creates HAProxy configuration files that set up load balancing for:
+//   - Ingress HTTP traffic (port 80) to worker nodes
+//   - Ingress HTTPS traffic (port 443) to worker nodes
+//   - API traffic (port 6443) to master nodes
+//   - Machine config server traffic (port 22623) to master and bootstrap nodes
+//
+// For each valid bastion with VMs, it generates /tmp/haproxy.cfg with backend
+// server entries for all cluster nodes, then copies it to the bastion server
+// and restarts the HAProxy service.
 func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastionInformation) error {
 	var (
 		allServers []servers.Server
@@ -884,7 +927,6 @@ func haproxyCfg(ctx context.Context, cloud string, bastionInformations []bastion
 	if err != nil {
 		return err
 	}
-//	log.Debugf("haproxyCfg: allServers = %+v", allServers)
 
 	log.Debugf("haproxyCfg: len(bastionInformations) = %d", len(bastionInformations))
 	if len(bastionInformations) == 0 {
