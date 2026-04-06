@@ -1129,6 +1129,35 @@ var (
 	firstDnsRun = true
 )
 
+// dnsRecords manages DNS records for cluster nodes in IBM Cloud Internet Services.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - cloud: Cloud name to query for servers
+//   - apiKey: IBM Cloud API key for DNS service authentication
+//   - domainName: Base domain name for DNS records
+//   - bastionInformations: Slice of bastion information for clusters
+//   - knownServers: Set of previously known server names
+//   - addedServerSet: Set of newly added server names
+//   - deletedServerSet: Set of deleted server names
+//
+// Returns:
+//   - error: Any error encountered during DNS record management
+//
+// The function performs the following operations:
+//  1. Retrieves IBM Cloud Internet Services (CIS) service ID
+//  2. Gets the DNS zone CRN and zone ID for the domain
+//  3. Initializes the DNS service API client
+//  4. Retrieves all servers from OpenStack
+//  5. On first run: Creates DNS records for bastion servers (api, api-int, *.apps)
+//  6. Creates DNS records for newly added servers
+//  7. Deletes DNS records for removed servers
+//
+// DNS records created include:
+//   - A records for api.<cluster>.<domain> pointing to bastion
+//   - A records for api-int.<cluster>.<domain> pointing to bastion
+//   - CNAME records for *.apps.<cluster>.<domain> pointing to bastion
+//   - A records for each cluster node (bootstrap, master, worker)
 func dnsRecords(ctx context.Context, cloud string, apiKey string, domainName string, bastionInformations []bastionInformation, knownServers sets.Set[string], addedServerSet sets.Set[string], deletedServerSet sets.Set[string]) error {
 	var (
 		dnsService   *dnsrecordsv1.DnsRecordsV1
@@ -1165,7 +1194,6 @@ func dnsRecords(ctx context.Context, cloud string, apiKey string, domainName str
 	if err != nil {
 		return err
 	}
-//	log.Debugf("dnsRecords: allServers = %+v", allServers)
 
 	clusterName = getClusterName(allServers)
 	log.Debugf("dnsRecords: clusterName = %s", clusterName)
@@ -1329,7 +1357,22 @@ func loadDnsServiceAPI(apiKey string, crnstr string, zoneID string)(service *dns
 	return
 }
 
-// getServiceInfo retrieving id info of given service and service plan
+// getServiceInfo retrieves service ID and service plan ID from IBM Cloud Global Catalog.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - apiKey: IBM Cloud API key for authentication
+//   - service: Name of the service to look up (e.g., "internet-svcs")
+//   - servicePlan: Name of the service plan (optional, empty string to skip plan lookup)
+//
+// Returns:
+//   - serviceID: The unique identifier for the service
+//   - servicePlanID: The unique identifier for the service plan (empty if servicePlan is empty)
+//   - error: Any error encountered during catalog lookup
+//
+// The function queries the IBM Cloud Global Catalog to find the service by name
+// and optionally retrieves the service plan ID. If servicePlan is empty, only
+// the service ID is returned.
 func getServiceInfo(ctx context.Context, apiKey string, service string, servicePlan string) (string, string, error) {
 	var (
 		serviceID     string
@@ -1398,6 +1441,28 @@ func getServiceInfo(ctx context.Context, apiKey string, service string, serviceP
 	return "", "", err
 }
 
+// getDomainCrn retrieves the Cloud Resource Name (CRN) and zone ID for a DNS domain.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - apiKey: IBM Cloud API key for authentication
+//   - cisServiceID: Cloud Internet Services (CIS) service ID
+//   - baseDomain: Base domain name to search for (e.g., "example.com")
+//
+// Returns:
+//   - crnstr: Cloud Resource Name for the CIS instance containing the domain
+//   - zoneID: DNS zone identifier for the domain
+//   - err: Any error encountered during lookup
+//
+// The function performs the following steps:
+//  1. Creates a Resource Controller API client
+//  2. Lists all CIS resource instances
+//  3. For each instance, creates a Zones API client
+//  4. Lists zones in the instance
+//  5. Searches for a zone matching the base domain
+//  6. Returns the CRN and zone ID when found
+//
+// The function supports pagination to handle large numbers of resource instances.
 func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseDomain string) (crnstr string, zoneID string, err error) {
 	var (
 		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L4525-L4534
@@ -1494,6 +1559,21 @@ func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseD
 	return
 }
 
+// findDNSRecord searches for a DNS record by name in IBM Cloud Internet Services.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - dnsService: Initialized DNS Records API client
+//   - cname: DNS record name to search for (e.g., "api.cluster.example.com")
+//
+// Returns:
+//   - foundID: The unique identifier of the DNS record if found
+//   - content: The content/value of the DNS record (IP address or target)
+//   - err: Any error encountered during the search
+//
+// The function queries the DNS service for records matching the specified name
+// and returns the ID and content of the first matching record. If no record
+// is found, empty strings are returned for foundID and content.
 func findDNSRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, cname string)(foundID string, content string, err error) {
 	var (
 		listOptions *dnsrecordsv1.ListAllDnsRecordsOptions
@@ -1505,14 +1585,12 @@ func findDNSRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, c
 
 	listOptions = dnsService.NewListAllDnsRecordsOptions()
 	listOptions.SetName(cname)
-//	log.Debugf("findDNSRecord: listOptions = %+v", listOptions)
 
 	records, response, err = listAllDnsRecords(ctx, dnsService, listOptions)
 	if err != nil {
 		err = fmt.Errorf("ListAllDnsRecordsWithContext response = %+v, err = %+v", response, err)
 		return
 	}
-//	log.Debugf("findDNSRecord: records = %+v", records)
 
 	log.Debugf("findDNSRecord: len(records.Result) = %d", len(records.Result))
 	for _, record := range records.Result {
@@ -1528,6 +1606,29 @@ func findDNSRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, c
 	return
 }
 
+// createOrDeletePublicDNSRecord creates or deletes a DNS record in IBM Cloud Internet Services.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - dnsRecordType: Type of DNS record (e.g., "A", "CNAME")
+//   - hostname: DNS record name/hostname (e.g., "api.cluster.example.com")
+//   - cname: DNS record content/value (IP address for A records, target for CNAME records)
+//   - shouldCreate: true to create/update the record, false to delete it
+//   - dnsService: Initialized DNS Records API client
+//
+// Returns:
+//   - error: Any error encountered during the operation
+//
+// The function performs the following logic:
+//  1. Searches for an existing DNS record with the specified hostname
+//  2. If the record exists:
+//     - For delete operations: Deletes the record
+//     - For create operations with different content: Deletes old record and creates new one
+//     - For create operations with same content: Returns success (no-op)
+//  3. If the record doesn't exist and shouldCreate is true: Creates the record
+//  4. If the record doesn't exist and shouldCreate is false: Returns success (no-op)
+//
+// The function uses a TTL of 60 seconds for all created DNS records.
 func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, hostname string, cname string, shouldCreate bool, dnsService *dnsrecordsv1.DnsRecordsV1) error {
 	var (
 		foundRecordID string
