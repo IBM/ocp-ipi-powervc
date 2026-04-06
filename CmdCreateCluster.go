@@ -38,12 +38,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -89,7 +85,6 @@ const (
 //   err := createClusterCommand(flagSet, []string{"-directory", "/path/to/install", "-shouldDebug", "true"})
 func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error {
 	var (
-		out            io.Writer
 		ptrDirectory   *string
 		ptrShouldDebug *string
 		functions      = []func(string) error{
@@ -122,27 +117,16 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixFlag, err)
 	}
 
-	// Parse and validate shouldDebug flag
-	switch strings.ToLower(*ptrShouldDebug) {
-	case boolTrue:
-		shouldDebug = true
-		log.Printf("[INFO] Debug mode enabled")
-	case boolFalse:
-		shouldDebug = false
-	default:
-		return fmt.Errorf("%sshouldDebug must be 'true' or 'false', got '%s'", errPrefixFlag, *ptrShouldDebug)
+	// Parse debug flag
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagCheckAliveShouldDebug)
+	if err != nil {
+		return fmt.Errorf("%s%w", errPrefixFlag, err)
 	}
 
-	// Configure logging based on debug flag
+	// Initialize logger (using utility function to avoid duplication)
+	log = initLogger(shouldDebug)
 	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
-	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+		log.Debugf("Debug mode enabled")
 	}
 
 	// Validate directory flag

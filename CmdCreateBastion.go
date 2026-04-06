@@ -614,6 +614,9 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 
 	// Initialize logger
 	log = initLogger(config.ShouldDebug)
+	if shouldDebug {
+		log.Debugf("Debug mode enabled")
+	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)

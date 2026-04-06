@@ -38,13 +38,11 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -124,7 +122,7 @@ const (
 //   })
 func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
 	var (
-		out                io.Writer
+		preLog             strings.Builder
 		apiKey             string
 		ptrCloud           *string
 		ptrMetadata        *string
@@ -164,27 +162,23 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixWatchCreate, err)
 	}
 
-	// Parse and validate shouldDebug flag
-	switch strings.ToLower(*ptrShouldDebug) {
-	case boolTrue:
-		shouldDebug = true
-		fmt.Println("[INFO] Debug mode enabled")
-	case boolFalse:
-		shouldDebug = false
-	default:
-		return fmt.Errorf("%sshouldDebug must be 'true' or 'false', got '%s'", errPrefixWatchCreate, *ptrShouldDebug)
+	// Parse debug flag
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagWatchCreateShouldDebug)
+	if err != nil {
+		return fmt.Errorf("%s%w", errPrefixWatchCreate, err)
 	}
 
-	// Configure logging based on debug flag
+	// Initialize logger
+	log = initLogger(shouldDebug)
 	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
+		log.Debugf("Debug mode enabled")
 	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+
+	// Dump the prelogged lines now that log has been initialized!
+	scanner := bufio.NewScanner(strings.NewReader(preLog.String()))
+	for scanner.Scan() {
+		line := scanner.Text() // Each line as a string
+		log.Println(line)
 	}
 
 	// IBM Cloud API key is optional

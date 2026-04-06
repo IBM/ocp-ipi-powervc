@@ -105,16 +105,16 @@ const (
 //	    log.Fatalf("Check-alive failed: %v", err)
 //	}
 func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
-	// Validate input parameters
-	if checkAliveFlags == nil {
-		return fmt.Errorf("%sflag set cannot be nil", errPrefixCheckAlive)
-	}
-
 	var (
 		ptrServerIP    *string
 		ptrShouldDebug *string
 		err            error
 	)
+
+	// Validate input parameters
+	if checkAliveFlags == nil {
+		return fmt.Errorf("%sflag set cannot be nil", errPrefixCheckAlive)
+	}
 
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
@@ -153,6 +153,9 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 
 	// Initialize logger (using utility function to avoid duplication)
 	log = initLogger(shouldDebug)
+	if shouldDebug {
+		log.Debugf("Debug mode enabled")
+	}
 
 	// Log operation start
 	log.Infof("Starting check-alive command")

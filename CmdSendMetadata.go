@@ -145,7 +145,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	// Initialize logger
 	log = initLogger(shouldDebug)
 	if shouldDebug {
-		log.Printf("[INFO] Debug mode enabled")
+		log.Debugf("Debug mode enabled")
 	}
 
 	// Determine which file to use and operation type

@@ -241,6 +241,9 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 
 	// Initialize logger
 	log = initLogger(config.ShouldDebug)
+	if config.ShouldDebug {
+		log.Debugf("Debug mode enabled")
+	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), rhcosDefaultTimeout)

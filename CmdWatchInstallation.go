@@ -54,7 +54,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -72,8 +71,6 @@ import (
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
-
-	"github.com/sirupsen/logrus"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -224,7 +221,6 @@ type bastionInformation struct {
 func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
 		preLog              strings.Builder
-		out                 io.Writer
 		apiKey              string
 		ptrCloud            *string
 		ptrDomainName       *string
@@ -337,29 +333,24 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		return fmt.Errorf("%s%s must be 'true' or 'false', got '%s'", errPrefixWatchInstallation, flagWatchInstallationEnableDhcpd, *ptrEnableDhcpd)
 	}
 
-	// Parse and validate shouldDebug flag
-	switch strings.ToLower(*ptrShouldDebug) {
-	case boolTrue:
-		shouldDebug = true
-		fmt.Fprintf(&preLog, "[INFO] Debug mode enabled\n")
-	case boolFalse:
-		shouldDebug = false
-	default:
-		return fmt.Errorf("%s%s must be 'true' or 'false', got '%s'", errPrefixWatchInstallation, flagWatchInstallationShouldDebug, *ptrShouldDebug)
+	// Parse debug flag
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagWatchInstallationShouldDebug)
+	if err != nil {
+		return fmt.Errorf("%s%w", errPrefixWatchInstallation, err)
 	}
 
-	// Configure logging based on debug flag
+	// Initialize logger
+	log = initLogger(shouldDebug)
 	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
+		log.Debugf("Debug mode enabled")
 	}
-	log = &logrus.Logger{
-		Out:       out,
-		Formatter: new(logrus.TextFormatter),
-		Level:     logrus.DebugLevel,
+
+	// Dump the prelogged lines now that log has been initialized!
+	scanner := bufio.NewScanner(strings.NewReader(preLog.String()))
+	for scanner.Scan() {
+		line := scanner.Text() // Each line as a string
+		log.Println(line)
 	}
-	log.Printf("%s", preLog.String())
 
 	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
