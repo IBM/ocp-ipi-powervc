@@ -511,6 +511,21 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	return nil
 }
 
+// gatherBastionInformations walks a directory tree to find all metadata.json files
+// and creates bastionInformation entries for each cluster installation found.
+//
+// Parameters:
+//   - rootPath: Root directory to search for cluster installations
+//   - username: SSH username for bastion servers
+//   - installerRsa: Path to RSA key for installer access
+//
+// Returns:
+//   - bastionInformations: Slice of bastion information for each found cluster
+//   - err: Any error encountered during directory walk
+//
+// The function searches for files matching the pattern "*/metadata.json" and creates
+// a bastionInformation entry for each one found. Errors accessing individual paths
+// are logged but do not stop the walk.
 func gatherBastionInformations(rootPath string, username string, installerRsa string) (bastionInformations []bastionInformation, err error) {
 	bastionInformations = make([]bastionInformation, 0)
 
@@ -541,12 +556,26 @@ func gatherBastionInformations(rootPath string, username string, installerRsa st
 	return
 }
 
+// MinimalMetadata represents the essential cluster metadata fields needed
+// for cluster identification and management.
 type MinimalMetadata struct {
-	ClusterName string `json:"clusterName"`
-	ClusterID   string `json:"clusterID"`
-	InfraID     string `json:"infraID"`
+	ClusterName string `json:"clusterName"` // Name of the OpenShift cluster
+	ClusterID   string `json:"clusterID"`   // Unique cluster identifier
+	InfraID     string `json:"infraID"`     // Infrastructure ID for the cluster
 }
 
+// getMetadataClusterName reads a metadata.json file and extracts the cluster name and infrastructure ID.
+//
+// Parameters:
+//   - filename: Path to the metadata.json file
+//
+// Returns:
+//   - clusterName: Name of the cluster from metadata
+//   - infraID: Infrastructure ID from metadata
+//   - err: Any error encountered reading or parsing the file
+//
+// The function reads the JSON file, unmarshals it into MinimalMetadata structure,
+// and returns the cluster name and infrastructure ID fields.
 func getMetadataClusterName(filename string) (clusterName string, infraID string, err error) {
 	var (
 		content  []byte
@@ -662,6 +691,17 @@ func updateBastionInformations(ctx context.Context, cloud string, bastionInforma
 	return
 }
 
+// getServerSet creates a set of server names from a list of OpenStack servers.
+//
+// Parameters:
+//   - allServers: List of all servers from OpenStack
+//
+// Returns:
+//   - Set of server names that match cluster node types (bootstrap, master, worker)
+//
+// The function filters servers to include only those whose names contain
+// "bootstrap", "master", or "worker", and that have valid IP addresses.
+// Servers without IP addresses are excluded from the set.
 func getServerSet(allServers []servers.Server) sets.Set[string] {
 	var (
 		knownServers = sets.Set[string]{}
@@ -672,7 +712,6 @@ func getServerSet(allServers []servers.Server) sets.Set[string] {
 		if !slices.ContainsFunc(
 			[]string{"bootstrap", "master", "worker"},
 			func(s string) bool {
-//				log.Debugf("strings.Contains(%s, %s) = %v", server.Name, s, strings.Contains(server.Name, s))
 				return strings.Contains(server.Name, s)
 			}) {
 			continue
@@ -683,13 +722,25 @@ func getServerSet(allServers []servers.Server) sets.Set[string] {
 			continue
 		}
 
-//		log.Debugf("Found new server %s", server.Name)
 		knownServers.Insert(server.Name)
 	}
 
 	return knownServers
 }
 
+// findIpAddress extracts the IP address from a server's network information.
+//
+// Parameters:
+//   - server: OpenStack server object
+//
+// Returns:
+//   - networkName: Name of the network (first return value, often unused)
+//   - ipAddress: IP address of the server
+//   - error: Any error encountered extracting the IP address
+//
+// The function searches through the server's addresses to find a valid IP address.
+// It looks for addresses in the server's network configuration and returns the
+// first valid IP address found.
 func findIpAddress(server servers.Server) (string, string, error) {
 	var (
 		subnetContents []interface {}
@@ -1475,20 +1526,37 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 	return nil
 }
 
+// listenForCommands starts a TCP server that listens for incoming command connections.
+//
+// Parameters:
+//   - cloud: The cloud name to pass to connection handlers
+//
+// Returns:
+//   - error: Any error encountered starting the listener or accepting connections
+//
+// The function listens on the configured port (listenPort constant) and spawns
+// a new goroutine to handle each incoming connection. It runs indefinitely until
+// an error occurs.
+//
+// Supported commands include:
+//   - check-alive: Health check command
+//   - create-metadata: Create cluster metadata
+//   - delete-metadata: Delete cluster metadata
+//   - create-bastion: Create bastion server
 func listenForCommands(cloud string) error {
 	log.Debugf("listenForCommands")
 
-	// Listen for incoming connections on port 8080
-	ln, err := net.Listen("tcp", ":8080")
+	// Listen for incoming connections on configured port
+	ln, err := net.Listen("tcp", listenPort)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to start listener on %s: %w", listenPort, err)
 	}
 
 	// Accept incoming connections and handle them
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to accept connection: %w", err)
 		}
 
 		// Handle the connection in a new goroutine
@@ -1496,6 +1564,21 @@ func listenForCommands(cloud string) error {
 	}
 }
 
+// handleConnection processes a single client connection and dispatches commands.
+//
+// Parameters:
+//   - conn: Network connection to the client
+//   - cloud: The cloud name for command execution
+//
+// Returns:
+//   - error: Any error encountered reading or processing commands
+//
+// The function reads JSON-formatted commands from the connection, parses the
+// command header to determine the command type, and dispatches to the appropriate
+// handler function. It continues reading commands until the connection is closed
+// or an error occurs.
+//
+// Command format: JSON object with "command" field indicating the operation type.
 func handleConnection(conn net.Conn, cloud string) error {
 	var (
 		data      string
