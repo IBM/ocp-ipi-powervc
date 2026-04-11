@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 )
 
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
@@ -165,7 +166,7 @@ func sendCheckAlive(serverIP string) error {
 	log.Debugf("sendCheckAlive: Connecting to server at %s", serverIP)
 
 	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.Dial("tcp", net.JoinHostPort(serverIP, serverPort))
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
@@ -246,7 +247,7 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	log.Debugf("sendCreateBastion: Creating bastion %s in cloud %s with domain %s", serverName, cloudName, domainName)
 
 	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.Dial("tcp", net.JoinHostPort(serverIP, serverPort))
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
@@ -312,7 +313,7 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	log.Debugf("sendMetadata: Reading metadata from %s", metadataFile)
 
 	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.Dial("tcp", net.JoinHostPort(serverIP, serverPort))
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
