@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -116,12 +117,13 @@ func validateServerIP(ip string) error {
 	}
 
 	// Try to parse as IP address first
-	if net.ParseIP(ip) != nil {
-		return nil
+	_, err := netip.ParseAddr(ip)
+	if err != nil {
+		return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
 	}
 
 	// If not a valid IP, check if it's a valid hostname
-	if _, err := net.LookupHost(ip); err != nil {
+	if _, err = net.LookupHost(ip); err != nil {
 		return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
 	}
 

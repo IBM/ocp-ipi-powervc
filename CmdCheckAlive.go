@@ -49,6 +49,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -135,8 +137,12 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixCheckAlive, err)
 	}
 
+	if ptrServerIP != nil {
+		ptrServerIP = ptr.To(strings.TrimSpace(*ptrServerIP))
+	}
+
 	// Validate required flags
-	if ptrServerIP == nil || strings.TrimSpace(*ptrServerIP) == "" {
+	if ptrServerIP == nil || *ptrServerIP == "" {
 		return fmt.Errorf("%srequired flag --%s not specified", errPrefixCheckAlive, flagCheckAliveServerIP)
 	}
 
