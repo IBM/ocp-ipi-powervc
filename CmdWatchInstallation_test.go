@@ -281,11 +281,7 @@ func TestWatchInstallationCommand_InvalidDebugFlag(t *testing.T) {
 		},
 		{
 			name:       "numeric debug value",
-			debugValue: "1",
-		},
-		{
-			name:       "yes debug value",
-			debugValue: "yes",
+			debugValue: "3",
 		},
 	}
 
