@@ -1,4 +1,4 @@
-module example/user/PowerVC-Tool
+module example/user/PowerVS-Check
 
 go 1.25.0
 
@@ -6,12 +6,12 @@ require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20251202072808-6f9778680861
 	github.com/IBM/go-sdk-core/v5 v5.21.2
 	github.com/IBM/networking-go-sdk v0.52.0
-	github.com/IBM/platform-services-go-sdk v0.96.0
+	github.com/IBM/platform-services-go-sdk v0.97.1
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
-	github.com/gophercloud/gophercloud/v2 v2.11.1
-	github.com/gophercloud/utils/v2 v2.0.0-20260107124036-1d7954eb9711
-	github.com/openshift/api v0.0.0-20260402111718-ad9eb11110b6
+	github.com/gophercloud/gophercloud/v2 v2.12.0
+	github.com/gophercloud/utils/v2 v2.0.0-20260409164906-cd2167a8681a
+	github.com/openshift/api v0.0.0-20260408160412-464776f95207
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.35.3
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
@@ -45,10 +45,10 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.6 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.35.1 // indirect
