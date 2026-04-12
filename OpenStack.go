@@ -23,6 +23,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
@@ -69,6 +70,12 @@ func getServiceClient(ctx context.Context, serviceType string, cloud string) (cl
 	}
 	if cloud == "" {
 		return nil, fmt.Errorf("cloud name cannot be empty")
+	}
+
+	// Test for the existence of the cloud name in clouds.yaml
+	_, _, _, err = clouds.Parse(clouds.WithCloudName(cloud))
+	if err != nil {
+		return nil, err
 	}
 
 	backoff := createDefaultBackoff(ctx)
