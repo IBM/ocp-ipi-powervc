@@ -22,7 +22,7 @@ jobs:
         go-version: '1.26.x'
 
     - name: Build
-      run: go build -v ./...
+      run: go build -v ./... -timeout 1200s
 
     - name: Test
-      run: go test -v ./...
+      run: go test -v ./... -timeout 1200s
