@@ -47,7 +47,7 @@ jobs:
       run: go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "$BINARY_NAME" *.go
 
     - name: Release binaries
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       # https://github.com/softprops/action-gh-release
       with:
         files: |
@@ -56,7 +56,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
     - name: Release scripts
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       # https://github.com/softprops/action-gh-release
       if: ${{ env.GOARCH == 'amd64' }}
       # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
