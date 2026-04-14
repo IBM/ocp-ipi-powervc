@@ -49,8 +49,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -107,78 +105,54 @@ const (
 //	    log.Fatalf("Check-alive failed: %v", err)
 //	}
 func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
-	var (
-		ptrServerIP    *string
-		ptrShouldDebug *string
-		err            error
-	)
-
 	// Validate input parameters
 	if checkAliveFlags == nil {
 		return fmt.Errorf("%sflag set cannot be nil", errPrefixCheckAlive)
 	}
 
+	// Display version information early for user feedback
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
-	// Define command-line flags
-	ptrServerIP = checkAliveFlags.String(
-		flagCheckAliveServerIP,
-		defaultCheckAliveServerIP,
-		usageCheckAliveServerIP,
-	)
-	ptrShouldDebug = checkAliveFlags.String(
-		flagCheckAliveShouldDebug,
-		defaultCheckAliveShouldDebug,
-		usageCheckAliveShouldDebug,
-	)
+	// Define and parse command-line flags
+	serverIPFlag := checkAliveFlags.String(flagCheckAliveServerIP, defaultCheckAliveServerIP, usageCheckAliveServerIP)
+	debugFlag := checkAliveFlags.String(flagCheckAliveShouldDebug, defaultCheckAliveShouldDebug, usageCheckAliveShouldDebug)
 
-	// Parse flags
-	if err = checkAliveFlags.Parse(args); err != nil {
+	if err := checkAliveFlags.Parse(args); err != nil {
 		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixCheckAlive, err)
 	}
 
-	if ptrServerIP != nil {
-		ptrServerIP = ptr.To(strings.TrimSpace(*ptrServerIP))
-	}
-
-	// Validate required flags
-	if ptrServerIP == nil || *ptrServerIP == "" {
+	// Validate and prepare server IP
+	serverIP := strings.TrimSpace(*serverIPFlag)
+	if serverIP == "" {
 		return fmt.Errorf("%srequired flag --%s not specified", errPrefixCheckAlive, flagCheckAliveServerIP)
 	}
 
-	// Validate server IP format
-	if err = validateServerIP(*ptrServerIP); err != nil {
+	if err := validateServerIP(serverIP); err != nil {
 		return fmt.Errorf("%sinvalid server IP: %w", errPrefixCheckAlive, err)
 	}
 
 	// Parse debug flag
-	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagCheckAliveShouldDebug)
+	shouldDebug, err := parseBoolFlag(*debugFlag, flagCheckAliveShouldDebug)
 	if err != nil {
 		return fmt.Errorf("%s%w", errPrefixCheckAlive, err)
 	}
 
-	// Initialize logger (using utility function to avoid duplication)
+	// Initialize logger and log operation start
 	log = initLogger(shouldDebug)
-	if shouldDebug {
-		log.Debugf("Debug mode enabled")
-	}
-
-	// Log operation start
 	log.Infof("Starting check-alive command")
 	log.Infof("Program version: %v, release: %v", version, release)
-	log.Infof("Validating required flags")
-	log.Infof("Server IP: %s", *ptrServerIP)
+	log.Infof("Server IP: %s", serverIP)
 	log.Infof("Debug mode: %v", shouldDebug)
 
-	// Send check-alive command to server
-	log.Infof("Sending check-alive command to server %s", *ptrServerIP)
-	if err = sendCheckAlive(*ptrServerIP); err != nil {
+	// Execute check-alive command
+	log.Infof("Sending check-alive command to server %s", serverIP)
+	if err := sendCheckAlive(serverIP); err != nil {
 		return fmt.Errorf("%scheck-alive command failed: %w", errPrefixCheckAlive, err)
 	}
 
-	// Log and report success
-	log.Infof("Server %s is alive and responding", *ptrServerIP)
-	fmt.Printf("[SUCCESS] Server %s is alive and responding (check-alive command completed successfully)\n", *ptrServerIP)
+	// Report success
+	log.Infof("Server %s is alive and responding", serverIP)
+	fmt.Printf("[SUCCESS] Server %s is alive and responding\n", serverIP)
 
 	return nil
 }
