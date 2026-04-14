@@ -732,4 +732,459 @@ func TestWatchCreateClusterCommand_IBMCloudAPIKey(t *testing.T) {
 	}
 }
 
+// TestParseWatchCreateFlags tests the parseWatchCreateFlags helper function
+func TestParseWatchCreateFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		expectError bool
+		errorMsg    string
+		validate    func(*testing.T, *watchCreateConfig)
+	}{
+		{
+			name:        "valid minimal flags",
+			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key"},
+			expectError: false,
+			validate: func(t *testing.T, cfg *watchCreateConfig) {
+				if cfg.cloud != "mycloud" {
+					t.Errorf("Expected cloud 'mycloud', got %q", cfg.cloud)
+				}
+				if cfg.metadata != "/tmp/meta.json" {
+					t.Errorf("Expected metadata '/tmp/meta.json', got %q", cfg.metadata)
+				}
+				if cfg.bastionUsername != "core" {
+					t.Errorf("Expected bastionUsername 'core', got %q", cfg.bastionUsername)
+				}
+				if cfg.bastionRsa != "/tmp/key" {
+					t.Errorf("Expected bastionRsa '/tmp/key', got %q", cfg.bastionRsa)
+				}
+				if cfg.shouldDebug {
+					t.Error("Expected shouldDebug to be false")
+				}
+			},
+		},
+		{
+			name: "with optional flags",
+			args: []string{
+				"--cloud", "mycloud",
+				"--metadata", "/tmp/meta.json",
+				"--bastionUsername", "core",
+				"--bastionRsa", "/tmp/key",
+				"--kubeconfig", "/tmp/kubeconfig",
+				"--baseDomain", "example.com",
+				"--shouldDebug", "true",
+			},
+			expectError: false,
+			validate: func(t *testing.T, cfg *watchCreateConfig) {
+				if cfg.kubeConfig != "/tmp/kubeconfig" {
+					t.Errorf("Expected kubeConfig '/tmp/kubeconfig', got %q", cfg.kubeConfig)
+				}
+				if cfg.baseDomain != "example.com" {
+					t.Errorf("Expected baseDomain 'example.com', got %q", cfg.baseDomain)
+				}
+				if !cfg.shouldDebug {
+					t.Error("Expected shouldDebug to be true")
+				}
+			},
+		},
+		{
+			name:        "missing cloud",
+			args:        []string{"--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key"},
+			expectError: true,
+			errorMsg:    "cloud name is required",
+		},
+		{
+			name:        "invalid debug flag",
+			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key", "--shouldDebug", "invalid"},
+			expectError: true,
+			errorMsg:    "shouldDebug",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var preLog strings.Builder
+			flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
+			config, err := parseWatchCreateFlags(preLog, flagSet, tt.args)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Expected no error, got: %v", err)
+				}
+				if config == nil {
+					t.Fatal("Expected config, got nil")
+				}
+				if tt.validate != nil {
+					tt.validate(t, config)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateRequiredFlags tests the validateRequiredFlags helper function
+func TestValidateRequiredFlags(t *testing.T) {
+	tests := []struct {
+		name             string
+		cloud            string
+		metadata         string
+		bastionUsername  string
+		bastionRsa       string
+		expectError      bool
+		errorMsg         string
+	}{
+		{
+			name:            "all flags valid",
+			cloud:           "mycloud",
+			metadata:        "/tmp/metadata.json",
+			bastionUsername: "core",
+			bastionRsa:      "/tmp/key.rsa",
+			expectError:     false,
+		},
+		{
+			name:            "empty cloud",
+			cloud:           "",
+			metadata:        "/tmp/metadata.json",
+			bastionUsername: "core",
+			bastionRsa:      "/tmp/key.rsa",
+			expectError:     true,
+			errorMsg:        "cloud name is required",
+		},
+		{
+			name:            "empty metadata",
+			cloud:           "mycloud",
+			metadata:        "",
+			bastionUsername: "core",
+			bastionRsa:      "/tmp/key.rsa",
+			expectError:     true,
+			errorMsg:        "metadata file location is required",
+		},
+		{
+			name:            "empty bastionUsername",
+			cloud:           "mycloud",
+			metadata:        "/tmp/metadata.json",
+			bastionUsername: "",
+			bastionRsa:      "/tmp/key.rsa",
+			expectError:     true,
+			errorMsg:        "bastion username is required",
+		},
+		{
+			name:            "empty bastionRsa",
+			cloud:           "mycloud",
+			metadata:        "/tmp/metadata.json",
+			bastionUsername: "core",
+			bastionRsa:      "",
+			expectError:     true,
+			errorMsg:        "bastion RSA key is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var preLog strings.Builder
+			err := validateRequiredFlags(preLog, tt.cloud, tt.metadata, tt.bastionUsername, tt.bastionRsa)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateMetadataFile tests the validateMetadataFile helper function
+func TestValidateMetadataFile(t *testing.T) {
+	// Initialize logger for tests
+	log = initLogger(false)
+
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		name         string
+		setupFile    func() string
+		expectError  bool
+		errorMsg     string
+	}{
+		{
+			name: "valid file",
+			setupFile: func() string {
+				path := filepath.Join(tempDir, "valid.json")
+				if err := os.WriteFile(path, []byte(`{"infraID":"test"}`), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				return path
+			},
+			expectError: false,
+		},
+		{
+			name: "non-existent file",
+			setupFile: func() string {
+				return filepath.Join(tempDir, "nonexistent.json")
+			},
+			expectError: true,
+			errorMsg:    "failed to read metadata file",
+		},
+		{
+			name: "directory instead of file",
+			setupFile: func() string {
+				return tempDir
+			},
+			expectError: true,
+			errorMsg:    "failed to read metadata file",
+		},
+		{
+			name: "empty path",
+			setupFile: func() string {
+				return ""
+			},
+			expectError: true,
+			errorMsg:    "failed to read metadata file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setupFile()
+			err := validateMetadataFile(path)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildComponentList tests the buildComponentList helper function
+func TestBuildComponentList(t *testing.T) {
+	// Initialize logger for tests
+	log = initLogger(false)
+
+	tests := []struct {
+		name          string
+		config        *watchCreateConfig
+		expectedCount int
+		checkComponents func(*testing.T, []NewRunnableObjectsEntry)
+	}{
+		{
+			name: "minimal components (VMs and LB only)",
+			config: &watchCreateConfig{
+				cloud:           "mycloud",
+				metadata:        "/tmp/meta.json",
+				bastionUsername: "core",
+				bastionRsa:      "/tmp/key",
+			},
+			expectedCount: 2,
+			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
+				names := make(map[string]bool)
+				for _, c := range components {
+					names[c.Name] = true
+				}
+				if !names[componentVMs] {
+					t.Errorf("Expected %s component", componentVMs)
+				}
+				if !names[componentLB] {
+					t.Errorf("Expected %s component", componentLB)
+				}
+			},
+		},
+		{
+			name: "with kubeconfig",
+			config: &watchCreateConfig{
+				cloud:           "mycloud",
+				metadata:        "/tmp/meta.json",
+				bastionUsername: "core",
+				bastionRsa:      "/tmp/key",
+				kubeConfig:      "/tmp/kubeconfig",
+			},
+			expectedCount: 3,
+			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
+				names := make(map[string]bool)
+				for _, c := range components {
+					names[c.Name] = true
+				}
+				if !names[componentOpenShift] {
+					t.Errorf("Expected %s component", componentOpenShift)
+				}
+			},
+		},
+		{
+			name: "with baseDomain",
+			config: &watchCreateConfig{
+				cloud:           "mycloud",
+				metadata:        "/tmp/meta.json",
+				bastionUsername: "core",
+				bastionRsa:      "/tmp/key",
+				baseDomain:      "example.com",
+			},
+			expectedCount: 3,
+			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
+				names := make(map[string]bool)
+				for _, c := range components {
+					names[c.Name] = true
+				}
+				if !names[componentDNS] {
+					t.Errorf("Expected %s component", componentDNS)
+				}
+			},
+		},
+		{
+			name: "all components",
+			config: &watchCreateConfig{
+				cloud:           "mycloud",
+				metadata:        "/tmp/meta.json",
+				bastionUsername: "core",
+				bastionRsa:      "/tmp/key",
+				kubeConfig:      "/tmp/kubeconfig",
+				baseDomain:      "example.com",
+			},
+			expectedCount: 4,
+			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
+				names := make(map[string]bool)
+				for _, c := range components {
+					names[c.Name] = true
+				}
+				if !names[componentOpenShift] {
+					t.Errorf("Expected %s component", componentOpenShift)
+				}
+				if !names[componentVMs] {
+					t.Errorf("Expected %s component", componentVMs)
+				}
+				if !names[componentLB] {
+					t.Errorf("Expected %s component", componentLB)
+				}
+				if !names[componentDNS] {
+					t.Errorf("Expected %s component", componentDNS)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			components := buildComponentList(tt.config)
+
+			if len(components) != tt.expectedCount {
+				t.Errorf("Expected %d components, got %d", tt.expectedCount, len(components))
+			}
+
+			if tt.checkComponents != nil {
+				tt.checkComponents(t, components)
+			}
+
+			// Verify all components have non-nil constructors and names
+			for i, c := range components {
+				if c.NRO == nil {
+					t.Errorf("Component %d has nil constructor", i)
+				}
+				if c.Name == "" {
+					t.Errorf("Component %d has empty name", i)
+				}
+			}
+		})
+	}
+}
+
+// TestQueryComponentStatus tests the queryComponentStatus helper function
+func TestQueryComponentStatus(t *testing.T) {
+	// Initialize logger for tests
+	log = initLogger(false)
+
+	tests := []struct {
+		name        string
+		objects     []RunnableObject
+		expectError bool
+	}{
+		{
+			name:        "empty list",
+			objects:     []RunnableObject{},
+			expectError: false,
+		},
+		{
+			name:        "nil list",
+			objects:     nil,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := queryComponentStatus(tt.objects)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestWatchCreateConfig tests the watchCreateConfig structure
+func TestWatchCreateConfig(t *testing.T) {
+	config := &watchCreateConfig{
+		cloud:           "testcloud",
+		metadata:        "/path/to/metadata.json",
+		kubeConfig:      "/path/to/kubeconfig",
+		bastionUsername: "testuser",
+		bastionRsa:      "/path/to/key.rsa",
+		baseDomain:      "test.example.com",
+		apiKey:          "test-api-key",
+		shouldDebug:     true,
+	}
+
+	// Verify all fields are accessible
+	if config.cloud != "testcloud" {
+		t.Errorf("Expected cloud 'testcloud', got %q", config.cloud)
+	}
+	if config.metadata != "/path/to/metadata.json" {
+		t.Errorf("Expected metadata '/path/to/metadata.json', got %q", config.metadata)
+	}
+	if config.kubeConfig != "/path/to/kubeconfig" {
+		t.Errorf("Expected kubeConfig '/path/to/kubeconfig', got %q", config.kubeConfig)
+	}
+	if config.bastionUsername != "testuser" {
+		t.Errorf("Expected bastionUsername 'testuser', got %q", config.bastionUsername)
+	}
+	if config.bastionRsa != "/path/to/key.rsa" {
+		t.Errorf("Expected bastionRsa '/path/to/key.rsa', got %q", config.bastionRsa)
+	}
+	if config.baseDomain != "test.example.com" {
+		t.Errorf("Expected baseDomain 'test.example.com', got %q", config.baseDomain)
+	}
+	if config.apiKey != "test-api-key" {
+		t.Errorf("Expected apiKey 'test-api-key', got %q", config.apiKey)
+	}
+	if !config.shouldDebug {
+		t.Error("Expected shouldDebug to be true")
+	}
+}
+
 // Made with Bob
