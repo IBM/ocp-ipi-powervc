@@ -64,12 +64,50 @@ const (
 	sshDirPerms               = 0700
 
 	// Error message patterns
-	serverNotFoundPrefix = "Could not find server named"
+	serverNotFoundPrefix = "could not find server named"
 
 	// SSH key validation
-	minSSHKeyLength = 100  // Minimum reasonable SSH public key length
-	minPasswordHashLength = 13 // Minimum crypt hash length
+	minSSHKeyLength       = 100 // Minimum reasonable SSH public key length
+	minPasswordHashLength = 13  // Minimum crypt hash length
+
+	// Retry configuration
+	maxRetryAttempts     = 3
+	retryInitialDelay    = 2 * time.Second
+	retryMaxDelay        = 30 * time.Second
+	retryBackoffMultiplier = 2.0
+
+	// Progress tracking
+	progressStepParsing    = "Parsing configuration"
+	progressStepIgnition   = "Generating Ignition config"
+	progressStepFinding    = "Finding or creating server"
+	progressStepSetup      = "Setting up server"
+	progressStepDNS        = "Configuring DNS"
+	progressStepComplete   = "Complete"
 )
+
+// ValidationError represents a configuration validation error
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
+}
+
+// RetryableError indicates an operation that can be retried
+type RetryableError struct {
+	Err     error
+	Attempt int
+}
+
+func (e *RetryableError) Error() string {
+	return fmt.Sprintf("retryable error (attempt %d): %v", e.Attempt, e.Err)
+}
+
+func (e *RetryableError) Unwrap() error {
+	return e.Err
+}
 
 // rhcosConfig holds all configuration parameters required for RHCOS server creation.
 // This struct encapsulates both required and optional settings for provisioning
@@ -111,50 +149,91 @@ type rhcosConfig struct {
 // validate performs comprehensive validation of the RHCOS configuration.
 // It checks for required fields, validates formats, and ensures security requirements.
 //
-// Returns an error if any validation check fails, with a descriptive message
+// Returns a ValidationError if any validation check fails, with a descriptive message
 // indicating which field failed validation and why.
 func (c *rhcosConfig) validate() error {
-	if c.Cloud == "" {
-		return fmt.Errorf("cloud name is required")
+	// Validate required string fields
+	requiredFields := map[string]string{
+		"Cloud":       c.Cloud,
+		"RhcosName":   c.RhcosName,
+		"FlavorName":  c.FlavorName,
+		"ImageName":   c.ImageName,
+		"NetworkName": c.NetworkName,
 	}
-	if c.RhcosName == "" {
-		return fmt.Errorf("RHCOS name is required")
+
+	for field, value := range requiredFields {
+		if value == "" {
+			return &ValidationError{
+				Field:   field,
+				Message: "is required",
+			}
+		}
 	}
+
+	// Validate RHCOS name format
 	if !isValidResourceName(c.RhcosName) {
-		return fmt.Errorf("RHCOS name contains invalid characters: %s", c.RhcosName)
-	}
-	if c.FlavorName == "" {
-		return fmt.Errorf("flavor name is required")
-	}
-	if c.ImageName == "" {
-		return fmt.Errorf("image name is required")
-	}
-	if c.NetworkName == "" {
-		return fmt.Errorf("network name is required")
+		return &ValidationError{
+			Field:   "RhcosName",
+			Message: fmt.Sprintf("contains invalid characters: %s", c.RhcosName),
+		}
 	}
 
 	// Validate SSH public key
-	if c.SshPublicKey == "" {
-		return fmt.Errorf("SSH public key is required")
-	}
-	if len(c.SshPublicKey) < minSSHKeyLength {
-		return fmt.Errorf("SSH public key appears invalid (too short)")
-	}
-	if !strings.HasPrefix(c.SshPublicKey, "ssh-") && !strings.HasPrefix(c.SshPublicKey, "ecdsa-") {
-		return fmt.Errorf("SSH public key must start with 'ssh-' or 'ecdsa-'")
+	if err := c.validateSSHKey(); err != nil {
+		return err
 	}
 
 	// Validate password hash
-	if c.PasswdHash == "" {
-		return fmt.Errorf("password hash is required")
-	}
-	if len(c.PasswdHash) < minPasswordHashLength {
-		return fmt.Errorf("password hash appears invalid (too short)")
-	}
-	if !strings.HasPrefix(c.PasswdHash, "$") {
-		return fmt.Errorf("password hash must be in crypt format (starting with $)")
+	if err := c.validatePasswordHash(); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// validateSSHKey validates the SSH public key format and length
+func (c *rhcosConfig) validateSSHKey() error {
+	if c.SshPublicKey == "" {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: "is required",
+		}
+	}
+	if len(c.SshPublicKey) < minSSHKeyLength {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: fmt.Sprintf("appears invalid (too short, minimum %d characters)", minSSHKeyLength),
+		}
+	}
+	if !strings.HasPrefix(c.SshPublicKey, "ssh-") && !strings.HasPrefix(c.SshPublicKey, "ecdsa-") {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: "must start with 'ssh-' or 'ecdsa-'",
+		}
+	}
+	return nil
+}
+
+// validatePasswordHash validates the password hash format and length
+func (c *rhcosConfig) validatePasswordHash() error {
+	if c.PasswdHash == "" {
+		return &ValidationError{
+			Field:   "PasswdHash",
+			Message: "is required",
+		}
+	}
+	if len(c.PasswdHash) < minPasswordHashLength {
+		return &ValidationError{
+			Field:   "PasswdHash",
+			Message: fmt.Sprintf("appears invalid (too short, minimum %d characters)", minPasswordHashLength),
+		}
+	}
+	if !strings.HasPrefix(c.PasswdHash, "$") {
+		return &ValidationError{
+			Field:   "PasswdHash",
+			Message: "must be in crypt format (starting with $)",
+		}
+	}
 	return nil
 }
 
@@ -233,7 +312,8 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
-	// Parse and validate configuration
+	// Step 1: Parse and validate configuration
+	printProgress(progressStepParsing)
 	config, err := parseRhcosFlags(createRhcosFlags, args)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
@@ -243,35 +323,50 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	log = initLogger(config.ShouldDebug)
 	if config.ShouldDebug {
 		log.Debugf("Debug mode enabled")
+		log.Debugf("Configuration: Cloud=%s, RhcosName=%s, Flavor=%s, Image=%s, Network=%s",
+			config.Cloud, config.RhcosName, config.FlavorName, config.ImageName, config.NetworkName)
 	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), rhcosDefaultTimeout)
 	defer cancel()
 
-	// Generate ignition user data
+	// Step 2: Generate ignition user data
+	printProgress(progressStepIgnition)
 	userData, err := createBootstrapIgnition(config.PasswdHash, config.SshPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to create bootstrap ignition: %w", err)
 	}
+	log.Debugf("Ignition configuration generated successfully (%d bytes)", len(userData))
 
-	// Find or create the server
-	foundServer, err := findOrCreateRhcosServer(ctx, config, userData)
+	// Step 3: Find or create the server
+	printProgress(progressStepFinding)
+	foundServer, err := findOrCreateRhcosServerWithRetry(ctx, config, userData)
 	if err != nil {
 		return fmt.Errorf("failed to find or create server: %w", err)
 	}
+	log.Debugf("Server ready: %s (ID: %s, Status: %s)", foundServer.Name, foundServer.ID, foundServer.Status)
 
-	// Setup the server (SSH keys, etc.)
-	if err := setupRhcosServer(ctx, config.Cloud, foundServer); err != nil {
+	// Step 4: Setup the server (SSH keys, etc.)
+	printProgress(progressStepSetup)
+	if err := setupRhcosServerWithRetry(ctx, config.Cloud, foundServer); err != nil {
 		return fmt.Errorf("failed to setup server: %w", err)
 	}
 
-	// Configure DNS if API key is available
+	// Step 5: Configure DNS if API key is available
+	printProgress(progressStepDNS)
 	if err := configureDNS(ctx, config); err != nil {
 		return fmt.Errorf("failed to configure DNS: %w", err)
 	}
 
+	printProgress(progressStepComplete)
+	fmt.Printf("\n✓ RHCOS server '%s' is ready!\n", config.RhcosName)
 	return nil
+}
+
+// printProgress prints a progress message to stderr
+func printProgress(step string) {
+	fmt.Fprintf(os.Stderr, "\n==> %s...\n", step)
 }
 
 // findOrCreateRhcosServer attempts to find an existing RHCOS server by name,
@@ -329,6 +424,23 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 	return foundServer, nil
 }
 
+// findOrCreateRhcosServerWithRetry wraps findOrCreateRhcosServer with retry logic
+// for handling transient failures in server operations.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - config: RHCOS configuration containing server details
+//   - userData: Ignition configuration data for server bootstrap
+//
+// Returns:
+//   - servers.Server: The found or newly created server
+//   - error: Any error encountered during search or creation after all retries
+func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
+	return retryOperation(ctx, "find or create server", func() (servers.Server, error) {
+		return findOrCreateRhcosServer(ctx, config, userData)
+	})
+}
+
 // isServerNotFoundError determines if an error indicates a server was not found.
 // This helper function provides consistent error detection across the codebase.
 //
@@ -338,6 +450,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 // Returns:
 //   - bool: true if the error indicates server not found, false otherwise
 func isServerNotFoundError(err error) bool {
+	log.Debugf("HAMZY: err = %+v\n", err)
 	if err == nil {
 		return false
 	}
@@ -402,6 +515,117 @@ func setupRhcosServer(ctx context.Context, cloudName string, server servers.Serv
 
 	fmt.Printf("Server %s setup completed successfully\n", server.Name)
 	return nil
+}
+
+// setupRhcosServerWithRetry wraps setupRhcosServer with retry logic
+// for handling transient failures in SSH operations.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - cloudName: Name of the cloud configuration to use
+//   - server: The server object to set up
+//
+// Returns:
+//   - error: Any error encountered during setup after all retries
+func setupRhcosServerWithRetry(ctx context.Context, cloudName string, server servers.Server) error {
+	_, err := retryOperation(ctx, "setup server", func() (servers.Server, error) {
+		if err := setupRhcosServer(ctx, cloudName, server); err != nil {
+			return servers.Server{}, err
+		}
+		return server, nil
+	})
+	return err
+}
+
+// retryOperation performs an operation with exponential backoff retry logic.
+// It retries transient failures up to maxRetryAttempts times.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - operationName: Name of the operation for logging
+//   - operation: The operation to retry
+//
+// Returns:
+//   - servers.Server: The result of the operation
+//   - error: Any error encountered after all retries
+func retryOperation(ctx context.Context, operationName string, operation func() (servers.Server, error)) (servers.Server, error) {
+	var lastErr error
+	delay := retryInitialDelay
+
+	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+		result, err := operation()
+		if err == nil {
+			if attempt > 1 {
+				log.Debugf("Operation '%s' succeeded on attempt %d", operationName, attempt)
+			}
+			return result, nil
+		}
+
+		lastErr = err
+		
+		// Check if we should retry
+		if attempt < maxRetryAttempts && isRetryableError(err) {
+			log.Debugf("Operation '%s' failed (attempt %d/%d): %v. Retrying in %v...",
+				operationName, attempt, maxRetryAttempts, err, delay)
+			
+			// Wait with exponential backoff
+			select {
+			case <-time.After(delay):
+				// Calculate next delay with exponential backoff
+				delay = time.Duration(float64(delay) * retryBackoffMultiplier)
+				if delay > retryMaxDelay {
+					delay = retryMaxDelay
+				}
+			case <-ctx.Done():
+				return servers.Server{}, fmt.Errorf("operation '%s' cancelled: %w", operationName, ctx.Err())
+			}
+		} else {
+			break
+		}
+	}
+
+	return servers.Server{}, fmt.Errorf("operation '%s' failed after %d attempts: %w", operationName, maxRetryAttempts, lastErr)
+}
+
+// isRetryableError determines if an error is transient and can be retried.
+// Network errors, timeouts, and temporary failures are considered retryable.
+//
+// Parameters:
+//   - err: The error to check
+//
+// Returns:
+//   - bool: true if the error is retryable, false otherwise
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for explicit RetryableError type
+	var retryErr *RetryableError
+	if errors.As(err, &retryErr) {
+		return true
+	}
+
+	// Check error message for common retryable patterns
+	errMsg := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"temporary failure",
+		"try again",
+		"no route to host",
+		"network is unreachable",
+		"i/o timeout",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errMsg, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ensureSSHHostKey ensures the server's SSH host key is present in the user's
@@ -531,10 +755,16 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 
 	// Validate inputs
 	if passwdHash == "" {
-		return nil, fmt.Errorf("password hash cannot be empty")
+		return nil, &ValidationError{
+			Field:   "passwdHash",
+			Message: "cannot be empty",
+		}
 	}
 	if sshKey == "" {
-		return nil, fmt.Errorf("SSH key cannot be empty")
+		return nil, &ValidationError{
+			Field:   "sshKey",
+			Message: "cannot be empty",
+		}
 	}
 
 	// Build Ignition v3.2 configuration with user credentials
@@ -566,20 +796,43 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 
 	log.Debugf("Ignition config JSON size: %d bytes", len(byteData))
 
+	// Validate size before encoding
+	if err := validateIgnitionSize(byteData); err != nil {
+		return nil, err
+	}
+
+	return byteData, nil
+}
+
+// validateIgnitionSize validates that the ignition configuration fits within
+// OpenStack nova user data size limits when base64 encoded.
+//
+// Parameters:
+//   - data: The JSON-encoded ignition configuration
+//
+// Returns:
+//   - error: An error if the size exceeds limits, nil otherwise
+func validateIgnitionSize(data []byte) error {
 	// Encode to base64 for OpenStack nova user data format
-	strData := base64.StdEncoding.EncodeToString(byteData)
+	strData := base64.StdEncoding.EncodeToString(data)
 	encodedSize := len(strData)
 
 	// Validate size constraint for OpenStack nova user data
 	// Reference: https://docs.openstack.org/nova/latest/user/metadata.html#user-data
 	if encodedSize > novaUserDataMaxSize {
-		return nil, fmt.Errorf("ignition config exceeds nova user data limit: %d > %d bytes (%.1f%% over)",
-			encodedSize, novaUserDataMaxSize, float64(encodedSize-novaUserDataMaxSize)/float64(novaUserDataMaxSize)*100)
+		overagePercent := float64(encodedSize-novaUserDataMaxSize) / float64(novaUserDataMaxSize) * 100
+		return fmt.Errorf("ignition config exceeds nova user data limit: %d > %d bytes (%.1f%% over)",
+			encodedSize, novaUserDataMaxSize, overagePercent)
 	}
 
 	utilizationPercent := float64(encodedSize) / float64(novaUserDataMaxSize) * 100
 	log.Debugf("Base64 encoded ignition size: %d bytes (%.1f%% of %d byte limit)",
 		encodedSize, utilizationPercent, novaUserDataMaxSize)
 
-	return byteData, nil
+	// Warn if approaching limit (>80%)
+	if utilizationPercent > 80.0 {
+		log.Warnf("Ignition config is using %.1f%% of nova user data limit. Consider optimizing.", utilizationPercent)
+	}
+
+	return nil
 }
