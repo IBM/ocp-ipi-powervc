@@ -258,6 +258,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 
 	// Retrieve IBM Cloud API key from environment
 	apiKey = os.Getenv("IBMCLOUD_API_KEY")
+
+	// Create a pre-debug log before we know that debugging is enabled
 	fmt.Fprintf(&preLog, "[INFO] Starting watch-installation command\n")
 
 	// Define command-line flags
