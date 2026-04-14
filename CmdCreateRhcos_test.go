@@ -363,7 +363,7 @@ func TestParseRhcosFlags(t *testing.T) {
 				"--sshPublicKey", validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "cloud name is required",
+			errorMsg:    "validation error for field 'Cloud': is required",
 		},
 		{
 			name: "invalid debug flag",
@@ -514,21 +514,21 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 			passwdHash:  "",
 			sshKey:      validSSHKey,
 			expectError: true,
-			errorMsg:    "password hash cannot be empty",
+			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
 		},
 		{
 			name:        "empty ssh key",
 			passwdHash:  validPasswdHash,
 			sshKey:      "",
 			expectError: true,
-			errorMsg:    "SSH key cannot be empty",
+			errorMsg:    "validation error for field 'sshKey': cannot be empty",
 		},
 		{
 			name:        "both empty",
 			passwdHash:  "",
 			sshKey:      "",
 			expectError: true,
-			errorMsg:    "password hash cannot be empty",
+			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
 		},
 	}
 
