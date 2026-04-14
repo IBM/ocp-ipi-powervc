@@ -61,7 +61,8 @@ type sshConfig struct {
 	RetryDelay time.Duration
 }
 
-// newSSHConfig creates SSH configuration with defaults
+// newSSHConfig creates SSH configuration with defaults.
+// It sets the user to "cloud-user" and configures retry parameters.
 func newSSHConfig(host, keyPath string) *sshConfig {
 	return &sshConfig{
 		Host:       host,
@@ -72,7 +73,9 @@ func newSSHConfig(host, keyPath string) *sshConfig {
 	}
 }
 
-// waitForSSHReady waits for SSH to become available on the server
+// waitForSSHReady waits for SSH to become available on the server.
+// It retries up to MaxRetries times with RetryDelay between attempts.
+// Returns an error if SSH doesn't become ready or if permission is denied.
 func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	log.Debugf("Waiting for SSH to be ready on %s", cfg.Host)
 
@@ -110,7 +113,8 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	return fmt.Errorf("SSH not ready after %d attempts on %s", cfg.MaxRetries, cfg.Host)
 }
 
-// execSSHCommand executes a command via SSH
+// execSSHCommand executes a command via SSH.
+// It returns the trimmed output and any error encountered.
 func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
 	args := []string{
 		"ssh",
@@ -123,7 +127,8 @@ func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
 	return strings.TrimSpace(string(outb)), err
 }
 
-// execSSHSudoCommand executes a command with sudo via SSH
+// execSSHSudoCommand executes a command with sudo via SSH.
+// The command is prefixed with "sudo" automatically.
 func execSSHSudoCommand(cfg *sshConfig, command []string) (string, error) {
 	sudoCmd := append([]string{"sudo"}, command...)
 	return execSSHCommand(cfg, sudoCmd)
@@ -133,7 +138,8 @@ func execSSHSudoCommand(cfg *sshConfig, command []string) (string, error) {
 // HAProxy Package Management
 // ============================================================================
 
-// isHAProxyInstalled checks if HAProxy is installed on the remote server
+// isHAProxyInstalled checks if HAProxy is installed on the remote server.
+// It uses rpm -q to query the package database.
 func isHAProxyInstalled(cfg *sshConfig) (bool, error) {
 	log.Debugf("Checking if HAProxy is installed on %s", cfg.Host)
 
@@ -156,7 +162,7 @@ func isHAProxyInstalled(cfg *sshConfig) (bool, error) {
 	return true, nil
 }
 
-// installHAProxy installs HAProxy package on the remote server
+// installHAProxy installs HAProxy package on the remote server using dnf.
 func installHAProxy(cfg *sshConfig) error {
 	log.Debugf("Installing HAProxy on %s", cfg.Host)
 
@@ -172,7 +178,8 @@ func installHAProxy(cfg *sshConfig) error {
 	return nil
 }
 
-// ensureHAProxyInstalled ensures HAProxy is installed, installing if necessary
+// ensureHAProxyInstalled ensures HAProxy is installed, installing if necessary.
+// It checks if HAProxy is installed and installs it if not found.
 func ensureHAProxyInstalled(cfg *sshConfig) error {
 	installed, err := isHAProxyInstalled(cfg)
 	if err != nil {
@@ -190,7 +197,8 @@ func ensureHAProxyInstalled(cfg *sshConfig) error {
 // HAProxy Configuration Management
 // ============================================================================
 
-// getFilePermissions retrieves file permissions in octal format
+// getFilePermissions retrieves file permissions in octal format using stat.
+// Returns a string like "644" or "755".
 func getFilePermissions(cfg *sshConfig, filePath string) (string, error) {
 	output, err := execSSHSudoCommand(cfg, []string{
 		"stat", "-c", "%a", filePath,
@@ -203,7 +211,8 @@ func getFilePermissions(cfg *sshConfig, filePath string) (string, error) {
 	return output, nil
 }
 
-// setFilePermissions sets file permissions
+// setFilePermissions sets file permissions using chmod.
+// The perms parameter should be in octal format (e.g., "644", "755").
 func setFilePermissions(cfg *sshConfig, filePath, perms string) error {
 	log.Debugf("Setting permissions %s on %s", perms, filePath)
 
@@ -218,7 +227,8 @@ func setFilePermissions(cfg *sshConfig, filePath, perms string) error {
 	return nil
 }
 
-// ensureHAProxyConfigPermissions ensures HAProxy config has correct permissions
+// ensureHAProxyConfigPermissions ensures HAProxy config has correct permissions.
+// It checks current permissions and updates them if they don't match the expected value.
 func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
 	currentPerms, err := getFilePermissions(cfg, haproxyConfigPath)
 	if err != nil {
@@ -241,7 +251,8 @@ func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
 // SELinux Configuration
 // ============================================================================
 
-// getSELinuxBool retrieves the value of an SELinux boolean
+// getSELinuxBool retrieves the value of an SELinux boolean.
+// It parses the output format: "boolean_name --> on" or "boolean_name --> off".
 func getSELinuxBool(cfg *sshConfig, boolName string) (bool, error) {
 	output, err := execSSHSudoCommand(cfg, []string{
 		"getsebool", boolName,
@@ -258,7 +269,8 @@ func getSELinuxBool(cfg *sshConfig, boolName string) (bool, error) {
 	return isOn, nil
 }
 
-// setSELinuxBool sets an SELinux boolean persistently
+// setSELinuxBool sets an SELinux boolean persistently (-P flag).
+// The value is set to "1" for true and "0" for false.
 func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
 	valueStr := "0"
 	if value {
@@ -278,7 +290,8 @@ func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
 	return nil
 }
 
-// ensureHAProxySELinux ensures HAProxy SELinux settings are correct
+// ensureHAProxySELinux ensures HAProxy SELinux settings are correct.
+// It enables the haproxy_connect_any boolean if not already enabled.
 func ensureHAProxySELinux(cfg *sshConfig) error {
 	isEnabled, err := getSELinuxBool(cfg, haproxySelinuxSetting)
 	if err != nil {
@@ -298,7 +311,8 @@ func ensureHAProxySELinux(cfg *sshConfig) error {
 // Systemd Service Management
 // ============================================================================
 
-// systemctlCommand executes a systemctl command
+// systemctlCommand executes a systemctl command via SSH.
+// Common actions include: enable, disable, start, stop, restart, status.
 func systemctlCommand(cfg *sshConfig, action, service string) error {
 	log.Debugf("Executing systemctl %s %s", action, service)
 
@@ -313,17 +327,18 @@ func systemctlCommand(cfg *sshConfig, action, service string) error {
 	return nil
 }
 
-// enableService enables a systemd service
+// enableService enables a systemd service to start on boot.
 func enableService(cfg *sshConfig, service string) error {
 	return systemctlCommand(cfg, "enable", service)
 }
 
-// startService starts a systemd service
+// startService starts a systemd service immediately.
 func startService(cfg *sshConfig, service string) error {
 	return systemctlCommand(cfg, "start", service)
 }
 
-// enableAndStartHAProxy enables and starts the HAProxy service
+// enableAndStartHAProxy enables and starts the HAProxy service.
+// It first enables the service to start on boot, then starts it immediately.
 func enableAndStartHAProxy(cfg *sshConfig) error {
 	if err := enableService(cfg, haproxyServiceName); err != nil {
 		return err
@@ -336,7 +351,14 @@ func enableAndStartHAProxy(cfg *sshConfig) error {
 // HAProxy Setup Orchestration
 // ============================================================================
 
-// setupHAProxyOnServer performs complete HAProxy setup on the bastion server
+// setupHAProxyOnServer performs complete HAProxy setup on the bastion server.
+// It executes the following steps in order:
+//  1. Add server to known_hosts
+//  2. Wait for SSH to be ready
+//  3. Ensure HAProxy is installed
+//  4. Configure HAProxy file permissions
+//  5. Configure SELinux for HAProxy
+//  6. Enable and start HAProxy service
 func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) error {
 	cfg := newSSHConfig(ipAddress, bastionRsa)
 
@@ -374,7 +396,8 @@ func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) err
 	return nil
 }
 
-// getServerIPAddress extracts and validates the IP address from a server
+// getServerIPAddress extracts and validates the IP address from a server.
+// It returns an error if the IP address cannot be found or is empty.
 func getServerIPAddress(server servers.Server) (string, error) {
 	_, ipAddress, err := findIpAddress(server)
 	if err != nil {
@@ -549,9 +572,11 @@ func NewBastionConfigWithDefaults(enableHAProxy, shouldDebug bool) *BastionConfi
 	}
 }
 
-// parseBastionFlags extracts and validates flags into a BastionConfig
+// parseBastionFlags extracts and validates flags into a BastionConfig.
+// It parses command-line flags, populates the configuration, and validates it.
+// Returns an error if flag parsing fails or configuration is invalid.
 func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, error) {
-	config := NewBastionConfig()  // Use constructor with defaults
+	config := NewBastionConfig() // Use constructor with defaults
 
 	// Define flags
 	cloud := flags.String("cloud", "", "The cloud to use in clouds.yaml")
@@ -602,6 +627,14 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	return config, nil
 }
 
+// createBastionCommand is the main entry point for the create-bastion command.
+// It orchestrates the entire bastion creation process:
+//  1. Parse and validate configuration
+//  2. Initialize logging
+//  3. Clean up previous bastion IP file
+//  4. Ensure server exists (create if needed)
+//  5. Setup bastion server (HAProxy, DNS)
+//  6. Write bastion IP to file
 func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
 	// Print version info
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
@@ -614,7 +647,7 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 
 	// Initialize logger
 	log = initLogger(config.ShouldDebug)
-	if shouldDebug {
+	if config.ShouldDebug {
 		log.Debugf("Debug mode enabled")
 	}
 
@@ -645,7 +678,8 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 	return nil
 }
 
-// cleanupBastionIPFile removes the bastion IP file if it exists
+// cleanupBastionIPFile removes the bastion IP file if it exists.
+// It returns an error only if the file exists but cannot be removed.
 func cleanupBastionIPFile() error {
 	err := os.Remove(bastionIpFilename)
 	if err != nil && !os.IsNotExist(err) {
@@ -654,7 +688,9 @@ func cleanupBastionIPFile() error {
 	return nil
 }
 
-// ensureServerExists checks if server exists and creates it if needed
+// ensureServerExists checks if server exists and creates it if needed.
+// If the server already exists, it returns immediately.
+// If the server doesn't exist, it creates it and verifies the creation.
 func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	_, err := findServer(ctx, config.Cloud, config.BastionName)
 	if err == nil {
@@ -662,10 +698,9 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 		return nil
 	}
 
-	// This does not work!
-	// if !errors.Is(err, ErrServerNotFound) {
-	// This does
-	if !strings.HasPrefix(strings.ToLower(err.Error()), strings.ToLower("Could not find server named")) {
+	// Check if error is "server not found" - using string prefix check as errors.Is doesn't work
+	// with the current error wrapping in findServer
+	if !strings.HasPrefix(strings.ToLower(err.Error()), "could not find server named") {
 		return fmt.Errorf("failed to find server: %w", err)
 	}
 
@@ -694,7 +729,10 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	return nil
 }
 
-// setupBastion configures the bastion server either remotely or locally
+// setupBastion configures the bastion server either remotely or locally.
+// The setup mode is determined by the BastionConfig:
+//  - Remote setup: delegates to another server via sendCreateBastion
+//  - Local setup: performs setup directly via SSH
 func setupBastion(ctx context.Context, config *BastionConfig) error {
 	if config.IsRemoteSetup() {
 		fmt.Println("Setting up bastion remotely...")
@@ -772,7 +810,8 @@ func createServer(ctx context.Context, cloudName, flavorName, imageName, network
 	return nil
 }
 
-// createNetworkPort creates a network port for the server
+// createNetworkPort creates a network port for the server.
+// The port is named "<bastionName>-port" and attached to the specified network.
 func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID string) (*ports.Port, error) {
 	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
 	if err != nil {
@@ -793,7 +832,8 @@ func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID st
 	return port, nil
 }
 
-// createServerInstance creates the actual server instance
+// createServerInstance creates the actual server instance.
+// If sshKeyName is empty, the server is created without an SSH key.
 func createServerInstance(ctx context.Context, cloudName, bastionName, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
 	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
 	if err != nil {
@@ -829,7 +869,8 @@ func createServerInstance(ctx context.Context, cloudName, bastionName, flavorID,
 	return newServer, nil
 }
 
-// addServerKnownHosts adds the server's SSH host keys to known_hosts file
+// addServerKnownHosts adds the server's SSH host keys to known_hosts file.
+// It removes any existing host keys for the IP address before adding new ones.
 func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -859,7 +900,8 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 	return nil
 }
 
-// removeHostKey removes a host's key from known_hosts file
+// removeHostKey removes a host's key from known_hosts file.
+// This function intentionally ignores errors as the host key may not exist.
 func removeHostKey(knownHostsPath, ipAddress string) error {
 	outb, _ := runSplitCommand2([]string{
 		"ssh-keygen",
@@ -870,7 +912,8 @@ func removeHostKey(knownHostsPath, ipAddress string) error {
 	return nil
 }
 
-// appendToFile appends data to a file
+// appendToFile appends data to a file.
+// It returns an error if the file cannot be opened, written to, or if the write is incomplete.
 func appendToFile(filePath string, data []byte) error {
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_RDWR, filePermReadWrite)
 	if err != nil {
@@ -890,8 +933,12 @@ func appendToFile(filePath string, data []byte) error {
 	return nil
 }
 
-// setupBastionServer orchestrates bastion server configuration
-// This is the refactored main function - much cleaner and easier to understand
+// setupBastionServer orchestrates bastion server configuration.
+// It performs the following steps:
+//  1. Find the server in OpenStack
+//  2. Extract and validate the server's IP address
+//  3. Setup HAProxy if enabled
+//  4. Configure DNS records if IBM Cloud API key is available
 func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serverName, domainName, bastionRsa string) error {
 	// Step 1: Find the server
 	server, err := findServer(ctx, cloudName, serverName)
@@ -930,7 +977,8 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serv
 	return nil
 }
 
-// writeBastionIP writes the bastion server's IP address to a file
+// writeBastionIP writes the bastion server's IP address to a file.
+// The IP address is written to the file specified by bastionIpFilename constant.
 func writeBastionIP(ctx context.Context, cloudName, serverName string) error {
 	server, err := findServer(ctx, cloudName, serverName)
 	if err != nil {
@@ -951,15 +999,17 @@ func writeBastionIP(ctx context.Context, cloudName, serverName string) error {
 	return nil
 }
 
-// removeCommentLines filters out lines starting with '#' from input text
+// removeCommentLines filters out lines starting with '#' from input text.
+// Empty lines are also removed. The function pre-allocates capacity for efficiency.
 func removeCommentLines(input string) string {
 	var builder strings.Builder
 	builder.Grow(len(input)) // Pre-allocate capacity
 
 	lines := strings.Split(input, "\n")
-	for i, line := range lines {
-		if !strings.HasPrefix(strings.TrimSpace(line), "#") && line != "" {
-			if i > 0 && builder.Len() > 0 {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if builder.Len() > 0 {
 				builder.WriteByte('\n')
 			}
 			builder.WriteString(line)
@@ -976,7 +1026,11 @@ type dnsRecord struct {
 	content    string
 }
 
-// dnsForServer configures DNS records for the bastion server
+// dnsForServer configures DNS records for the bastion server.
+// It creates three DNS records:
+//  1. A record for api.<bastionName>.<domainName>
+//  2. A record for api-int.<bastionName>.<domainName>
+//  3. CNAME record for *.apps.<bastionName>.<domainName> pointing to api
 func dnsForServer(ctx context.Context, cloudName, apiKey, bastionName, domainName string) error {
 	// Step 1: Get server IP address
 	server, err := findServer(ctx, cloudName, bastionName)
