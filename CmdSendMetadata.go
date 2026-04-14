@@ -37,10 +37,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -70,13 +72,79 @@ const (
 
 	// Error message prefix
 	errPrefixSend = "Error: "
+
+	// Timeout for send metadata operation
+	sendMetadataTimeout = 5 * time.Minute
 )
+
+// operationType represents the type of metadata operation to perform
+type operationType int
+
+const (
+	// operationTypeCreate indicates a create operation
+	operationTypeCreate operationType = iota
+	// operationTypeDelete indicates a delete operation
+	operationTypeDelete
+)
+
+// String returns the string representation of the operation type
+func (o operationType) String() string {
+	switch o {
+	case operationTypeCreate:
+		return operationCreate
+	case operationTypeDelete:
+		return operationDelete
+	default:
+		return "unknown"
+	}
+}
+
+// pastTense returns the past tense form of the operation
+func (o operationType) pastTense() string {
+	switch o {
+	case operationTypeCreate:
+		return operationCreated
+	case operationTypeDelete:
+		return operationDeleted
+	default:
+		return "unknown"
+	}
+}
+
+// sendMetadataError represents a structured error for send-metadata operations
+type sendMetadataError struct {
+	operation string
+	phase     string
+	cause     error
+}
+
+// Error implements the error interface
+func (e *sendMetadataError) Error() string {
+	if e.cause != nil {
+		return fmt.Sprintf("%s%s failed during %s: %v", errPrefixSend, e.operation, e.phase, e.cause)
+	}
+	return fmt.Sprintf("%s%s failed during %s", errPrefixSend, e.operation, e.phase)
+}
+
+// Unwrap returns the underlying error
+func (e *sendMetadataError) Unwrap() error {
+	return e.cause
+}
+
+// newSendMetadataError creates a new structured error
+func newSendMetadataError(operation, phase string, cause error) error {
+	return &sendMetadataError{
+		operation: operation,
+		phase:     phase,
+		cause:     cause,
+	}
+}
 
 // sendMetadataCommand executes the send-metadata command with the given flags and arguments.
 //
 // This function handles both metadata creation and deletion operations. It validates
 // that exactly one operation is specified, validates the metadata file and server IP,
-// and sends the metadata to the remote server.
+// and sends the metadata to the remote server with timeout support.
 //
 // Parameters:
 //   - sendMetadataFlags: The FlagSet containing command-line flags (must not be nil)
@@ -93,8 +161,9 @@ const (
 //  5. Validates metadata file existence and readability
 //  6. Validates server IP address format
 //  7. Initializes logger based on debug flag
-//  8. Sends metadata to remote server
-//  9. Provides user feedback on success
+//  8. Creates context with timeout for operation
+//  9. Sends metadata to remote server
+//  10. Provides user feedback on success
 //
 // Example usage:
 //   err := sendMetadataCommand(flagSet, []string{
@@ -104,7 +173,7 @@ const (
 func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	// Validate input parameters
 	if sendMetadataFlags == nil {
-		return fmt.Errorf("%sflag set cannot be nil", errPrefixSend)
+		return newSendMetadataError("send-metadata", "initialization", fmt.Errorf("flag set cannot be nil"))
 	}
 
 	// Display version information
@@ -118,7 +187,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 
 	// Parse flags
 	if err := sendMetadataFlags.Parse(args); err != nil {
-		return fmt.Errorf("%sfailed to parse flags: %w", errPrefixSend, err)
+		return newSendMetadataError("send-metadata", "flag parsing", err)
 	}
 
 	// Parse and validate operation flags
@@ -130,16 +199,18 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 
 	// Ensure exactly one operation is specified
 	if shouldCreateMetadata && shouldDeleteMetadata {
-		return fmt.Errorf("%scannot specify both --%s and --%s", errPrefixSend, flagSendCreateMetadata, flagSendDeleteMetadata)
+		return newSendMetadataError("send-metadata", "flag validation",
+			fmt.Errorf("cannot specify both --%s and --%s", flagSendCreateMetadata, flagSendDeleteMetadata))
 	}
 	if !shouldCreateMetadata && !shouldDeleteMetadata {
-		return fmt.Errorf("%srequired flag --%s or --%s must be specified", errPrefixSend, flagSendCreateMetadata, flagSendDeleteMetadata)
+		return newSendMetadataError("send-metadata", "flag validation",
+			fmt.Errorf("required flag --%s or --%s must be specified", flagSendCreateMetadata, flagSendDeleteMetadata))
 	}
 
 	// Parse debug flag
 	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagSendShouldDebug)
 	if err != nil {
-		return fmt.Errorf("%s%w", errPrefixSend, err)
+		return newSendMetadataError("send-metadata", "debug flag parsing", err)
 	}
 
 	// Initialize logger
@@ -149,56 +220,84 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	}
 
 	// Determine which file to use and operation type
-	metadataFile := createFile
-	operationType := operationCreate
-	if shouldDeleteMetadata {
+	var metadataFile string
+	var opType operationType
+	if shouldCreateMetadata {
+		metadataFile = createFile
+		opType = operationTypeCreate
+	} else {
 		metadataFile = deleteFile
-		operationType = operationDelete
+		opType = operationTypeDelete
 	}
+
 	log.Printf("[INFO] Starting send-metadata command")
-	log.Printf("[INFO] Operation: %s", operationType)
+	log.Printf("[INFO] Operation: %s", opType)
 	log.Printf("[INFO] Metadata file: %s", metadataFile)
 
 	// Validate metadata file exists and is readable
 	log.Printf("[INFO] Validating metadata file...")
 	if err := validateFileExists(metadataFile); err != nil {
-		return fmt.Errorf("%smetadata file validation failed: %w", errPrefixSend, err)
+		return newSendMetadataError(opType.String(), "file validation", err)
 	}
 	log.Printf("[INFO] Metadata file validated successfully")
 
 	// Validate required server IP flag
 	serverIP := strings.TrimSpace(*ptrServerIP)
 	if serverIP == "" {
-		return fmt.Errorf("%srequired flag --%s not specified", errPrefixSend, flagSendServerIP)
+		return newSendMetadataError(opType.String(), "server IP validation",
+			fmt.Errorf("required flag --%s not specified", flagSendServerIP))
 	}
 	log.Printf("[INFO] Server IP: %s", serverIP)
 
 	// Validate server IP format
 	log.Printf("[INFO] Validating server IP format...")
 	if err := validateServerIP(serverIP); err != nil {
-		return fmt.Errorf("%sinvalid server IP: %w", errPrefixSend, err)
+		return newSendMetadataError(opType.String(), "server IP validation", err)
 	}
 	log.Printf("[INFO] Server IP validated successfully")
 
 	log.Debugf("sendMetadataCommand: operation=%s, file=%s, server=%s",
-		operationType,
+		opType,
 		metadataFile,
 		serverIP)
 
-	// Send metadata command to server
-	log.Printf("[INFO] Sending metadata to server...")
-	if err := sendMetadata(metadataFile, serverIP, shouldCreateMetadata); err != nil {
-		return fmt.Errorf("%ssend metadata command failed: %w", errPrefixSend, err)
+	// Create context with timeout for the operation
+	ctx, cancel := context.WithTimeout(context.Background(), sendMetadataTimeout)
+	defer cancel()
+
+	log.Printf("[INFO] Sending metadata to server (timeout: %v)...", sendMetadataTimeout)
+	startTime := time.Now()
+
+	// Send metadata command to server with context
+	if err := sendMetadataWithContext(ctx, metadataFile, serverIP, shouldCreateMetadata); err != nil {
+		return newSendMetadataError(opType.String(), "metadata transmission", err)
 	}
-	log.Printf("[INFO] Metadata sent successfully")
+
+	duration := time.Since(startTime)
+	log.Printf("[INFO] Metadata sent successfully (took %v)", duration)
 
 	// Provide user feedback
-	operation := operationCreated
-	if !shouldCreateMetadata {
-		operation = operationDeleted
-	}
-	fmt.Printf("Metadata successfully %s from file: %s\n", operation, metadataFile)
+	fmt.Printf("Metadata successfully %s from file: %s\n", opType.pastTense(), metadataFile)
 	log.Printf("[INFO] Send-metadata command completed successfully")
 
 	return nil
+}
+
+// sendMetadataWithContext sends metadata with context support for cancellation
+func sendMetadataWithContext(ctx context.Context, metadataFile, serverIP string, shouldCreate bool) error {
+	// Create a channel to receive the result
+	errChan := make(chan error, 1)
+
+	// Run the operation in a goroutine
+	go func() {
+		errChan <- sendMetadata(metadataFile, serverIP, shouldCreate)
+	}()
+
+	// Wait for either completion or context cancellation
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled or timed out: %w", ctx.Err())
+	}
 }

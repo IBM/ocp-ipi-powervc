@@ -71,7 +71,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "send metadata command failed",
+			errorMsg:    "create failed during metadata transmission: failed to connect to server",
 		},
 		{
 			name: "only delete specified",
@@ -80,7 +80,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "send metadata command failed",
+			errorMsg:    "delete failed during metadata transmission: failed to connect to server",
 		},
 	}
 	
@@ -191,7 +191,7 @@ func TestSendMetadataCommand_InvalidServerIP(t *testing.T) {
 				t.Fatalf("Expected error for invalid serverIP %q, got nil", tt.serverIP)
 			}
 			
-			expectedMsg := "invalid server IP"
+			expectedMsg := "invalid IP address or hostname"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
 			}
@@ -215,7 +215,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			},
 			cleanupFile: func(s string) {},
 			expectError: true,
-			errorMsg:    "metadata file validation failed",
+			errorMsg:    "create failed during file validation: file does not exist",
 		},
 		{
 			name: "valid file",
@@ -224,7 +224,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			},
 			cleanupFile: func(s string) { os.Remove(s) },
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "send metadata command failed",
+			errorMsg:    "create failed during metadata transmission: failed to connect to server",
 		},
 		{
 			name: "empty filename",
