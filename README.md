@@ -197,7 +197,9 @@ args:
 
 # Useful scripts
 
-`scripts/create-cluster.sh`
+## scripts/create-cluster.sh
+
+This script will create an OpenShift cluster using the IPI installer.
 
 Required environment variables before running this script:
 
@@ -206,6 +208,8 @@ Required environment variables before running this script:
 - `BASTION_IMAGE_NAME` the OpenStack image name for the HAProxy VM.
 
 - `BASTION_USERNAME` the default username for the HAProxy VM.
+
+- `BASTION_RSA` the ssh private key for the bastion node.
 
 - `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
 
@@ -217,11 +221,13 @@ Required environment variables before running this script:
 
 - `FLAVOR_NAME` the OpenStack flavor name to use for OpenShift VMs.
 
+- `INSTALLER_SSHKEY` the ssh public key for access to the bootstrap and master nodes.  Usually named `~/.ssh/id_installer_rsa.pub`.
+
 - `MACHINE_TYPE` the PowerPC machine type to use for OpenShift VMs.
 
 - `NETWORK_NAME` the OpenStack network name to use for OpenShift VMs.
 
-- `RHCOS_IMAGE_NAME` the OpenStack image name to use for OpenShift VMs.
+- `PULLSECRET_FILE` the filename containing the pull secrets for the OpenShift containers. Usually named `~/.pullSecretCompact`.
 
 - `SSHKEY_NAME` the OpenStack ssh keyname to use for the HAProxy VM.
 
@@ -235,6 +241,74 @@ Required existing binaries before running this script:
 
 - `openshift-install` The OpenShift IPI installer.
 
+- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
+
 - `openstack` The OpenStack CLI tool existing on Fedora/RHEL/CentOS repositories.
 
 - `jq` The JSON query CLI tool found at https://jqlang.org/download/ and existing on Fedora/RHEL/CentOS repositories.
+
+## scripts/delete-cluster.sh
+
+This script will delete an OpenShift cluster using the IPI installer.
+
+Required environment variables before running this script:
+
+- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
+
+- `CONTROLLER_IP` the IP address of the controller.
+
+Required existing binaries before running this script:
+
+- `openshift-install` The OpenShift IPI installer.
+
+- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
+
+- `ping` a Linux admin tool.
+
+## scripts/check-alive.sh
+
+This script will check if this repo tool is running on the controller IP address.  If it is not, then it will start it up inside of the tmux window number 0.
+
+Required environment variables before running this script:
+
+- `BASEDOMAIN` the domain name to use for the OpenShift cluster.
+
+- `BASTION_USERNAME` the default username for the HAProxy VM.
+
+- `BASTION_RSA` the ssh private key for the bastion node.
+
+- `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
+
+- `CONTROLLER_IP` the IP address of the controller.
+
+- `DHCP_DNS_SERVERS` a list of DNS servers.
+
+- `DHCP_NETMASK` the netmask used for a DHCP request.
+
+- `DHCP_ROUTER` the router used for a DHCP request.
+
+- `DHCP_SERVER_ID` the DHCP server ID used for a DHCP request.
+
+- `DHCP_SUBNET` the DHCP subnet used for a DHCP request.
+
+Required existing binaries before running this script:
+
+- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
+
+- `awk` a Linux admin tool.
+
+- `cut` a Linux admin tool.
+
+- `ip` a Linux admin tool.
+
+- `tmux` a linux shell windowing tool.
+
+- `tr` a Linux admin tool.
+
+## scripts/console.sh
+
+This script will output the ssh command needed to access the console for a VM or OpenShift node name.
+
+## scripts/ssh.sh
+
+This script will output the ssh command needed to access a specific OpenShift node.
