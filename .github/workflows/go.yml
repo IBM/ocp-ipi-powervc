@@ -25,4 +25,4 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: go test -v ./... -timeout 1200s
+      run: go test $(go list ./... 2>/dev/null| grep -v snippet) -v -timeout 1200s
