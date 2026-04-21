@@ -82,7 +82,7 @@ func main() {
 	// Create first command
 	cmd1, err := createCommand(ctx, acmdline1)
 	if err != nil {
-		log.Errorf("failed to create first command: %w", err)
+		log.Errorf("failed to create first command: %v", err)
 	}
 
 	cmd1.Env = append(
@@ -93,13 +93,13 @@ func main() {
 	// Create second command
 	cmd2, err := createCommand(ctx, acmdline2)
 	if err != nil {
-		log.Errorf("failed to create second command: %w", err)
+		log.Errorf("failed to create second command: %v", err)
 	}
 
 	// Create pipe to connect commands
 	readPipe, writePipe, err := os.Pipe()
 	if err != nil {
-		log.Errorf("failed to create pipe: %w", err)
+		log.Errorf("failed to create pipe: %v", err)
 	}
 	defer readPipe.Close()
 
@@ -112,7 +112,7 @@ func main() {
 	log.Debugf("runTwoCommands: Starting first command: %v", acmdline1)
 	if err := cmd1.Start(); err != nil {
 		writePipe.Close()
-		log.Errorf("failed to start first command: %w", err)
+		log.Errorf("failed to start first command: %v", err)
 	}
 
 	// Close write end of pipe after starting cmd1
@@ -128,13 +128,13 @@ func main() {
 	log.Debugf("runTwoCommands: Running second command: %v", acmdline2)
 	if err := cmd2.Run(); err != nil {
 		cmd1.Wait() // Wait for first command to finish
-		log.Errorf("failed to run second command: %w", err)
+		log.Errorf("failed to run second command: %v", err)
 	}
 
 	// Wait for first command to complete
 	if err := cmd1.Wait(); err != nil {
 		log.Debugf("runTwoCommands: First command failed: %v", err)
-		log.Errorf("first command failed: %w", err)
+		log.Errorf("first command failed: %v", err)
 	}
 
 	out := buffer.Bytes()
