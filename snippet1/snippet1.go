@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// (cd test1/; /bin/rm go.*; go mod init example/user/test1; go mod tidy; /bin/rm /tmp/test_file; for I in {1..10}; do echo "line $I" >> /tmp/test_file; echo "skip $I" >> /tmp/test_file; done; go run test1.go)
-// (cd test1/; /bin/rm go.*; go mod init example/user/test1; go mod tidy; /bin/rm /tmp/test_file; for I in {1..1000}; do echo "Running $I" >> /tmp/test_file; echo "Error $I" >> /tmp/test_file; done; go run test1.go)
+// (cd snippet1/; /bin/rm go.*; go mod init example/user/snippet1; go mod tidy; /bin/rm /tmp/test_file; for I in {1..10}; do echo "line $I" >> /tmp/test_file; echo "skip $I" >> /tmp/test_file; done; go run snippet1.go)
+// (cd snippet1/; /bin/rm go.*; go mod init example/user/snippet1; go mod tidy; /bin/rm /tmp/test_file; for I in {1..1000}; do echo "Running $I" >> /tmp/test_file; echo "Error $I" >> /tmp/test_file; done; go run snippet1.go)
+// (cd snippet1/; /bin/rm go.*)
 
 package main
 
