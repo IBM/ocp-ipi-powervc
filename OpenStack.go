@@ -30,6 +30,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/pagination"
+	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -52,6 +53,24 @@ const (
 	// Error message prefixes
 	errMsgServerNotFound = "Could not find server named"
 )
+
+// NewServiceClient is a wrapper around Gophercloud's NewServiceClient that
+// ensures we consistently set a user-agent.
+func NewServiceClient(ctx context.Context, service string, opts *clientconfig.ClientOpts) (*gophercloud.ServiceClient, error) {
+	ua, err := getUserAgent()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := clientconfig.NewServiceClient(ctx, service, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	client.UserAgent = ua
+
+	return client, nil
+}
 
 // getServiceClient creates and returns an OpenStack service client with retry logic.
 // It uses exponential backoff to handle transient failures when connecting to OpenStack services.

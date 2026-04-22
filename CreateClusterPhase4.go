@@ -45,24 +45,6 @@ func DefaultClientOpts(cloudName string) *clientconfig.ClientOpts {
 	return opts
 }
 
-// NewServiceClient is a wrapper around Gophercloud's NewServiceClient that
-// ensures we consistently set a user-agent.
-func NewServiceClient(ctx context.Context, service string, opts *clientconfig.ClientOpts) (*gophercloud.ServiceClient, error) {
-	ua, err := getUserAgent()
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := clientconfig.NewServiceClient(ctx, service, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	client.UserAgent = ua
-
-	return client, nil
-}
-
 //
 // Upload the bootstrap igniton file to Swift.
 //
