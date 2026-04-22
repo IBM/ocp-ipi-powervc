@@ -36,7 +36,7 @@ import (
 )
 
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
-// and the leftInContext, NewServiceClient, and DefaultClientOpts functions.
+// and the leftInContext, and DefaultClientOpts functions.
 
 const (
 	// Backoff configuration constants for retry logic
@@ -53,6 +53,26 @@ const (
 	// Error message prefixes
 	errMsgServerNotFound = "Could not find server named"
 )
+
+// getUserAgent generates a Gophercloud UserAgent to help cloud operators
+// disambiguate openshift-installer requests.
+func getUserAgent() (gophercloud.UserAgent, error) {
+	ua := gophercloud.UserAgent{}
+
+	ua.Prepend(fmt.Sprintf("openshift-installer/%s", "1.0"))
+	return ua, nil
+}
+
+// DefaultClientOpts generates default client opts based on cloud name
+func DefaultClientOpts(cloudName string) *clientconfig.ClientOpts {
+	opts := new(clientconfig.ClientOpts)
+	opts.Cloud = cloudName
+	// We explicitly disable reading auth data from env variables by setting an invalid EnvPrefix.
+	// By doing this, we make sure that the data from clouds.yaml is enough to authenticate.
+	// For more information: https://github.com/gophercloud/utils/blob/8677e053dcf1f05d0fa0a616094aace04690eb94/openstack/clientconfig/requests.go#L508
+	opts.EnvPrefix = "NO_ENV_VARIABLES_"
+	return opts
+}
 
 // NewServiceClient is a wrapper around Gophercloud's NewServiceClient that
 // ensures we consistently set a user-agent.

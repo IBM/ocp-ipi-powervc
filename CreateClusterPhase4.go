@@ -20,30 +20,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/objectstorage/v1/objects"
-	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 )
-
-// getUserAgent generates a Gophercloud UserAgent to help cloud operators
-// disambiguate openshift-installer requests.
-func getUserAgent() (gophercloud.UserAgent, error) {
-	ua := gophercloud.UserAgent{}
-
-	ua.Prepend(fmt.Sprintf("openshift-installer/%s", "1.0"))
-	return ua, nil
-}
-
-// DefaultClientOpts generates default client opts based on cloud name
-func DefaultClientOpts(cloudName string) *clientconfig.ClientOpts {
-	opts := new(clientconfig.ClientOpts)
-	opts.Cloud = cloudName
-	// We explicitly disable reading auth data from env variables by setting an invalid EnvPrefix.
-	// By doing this, we make sure that the data from clouds.yaml is enough to authenticate.
-	// For more information: https://github.com/gophercloud/utils/blob/8677e053dcf1f05d0fa0a616094aace04690eb94/openstack/clientconfig/requests.go#L508
-	opts.EnvPrefix = "NO_ENV_VARIABLES_"
-	return opts
-}
 
 //
 // Upload the bootstrap igniton file to Swift.
