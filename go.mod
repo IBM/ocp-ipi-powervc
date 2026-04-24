@@ -3,7 +3,7 @@ module example/user/OcpIpiPowerVC
 go 1.25.0
 
 require (
-	github.com/IBM-Cloud/bluemix-go v0.0.0-20251202072808-6f9778680861
+	github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb
 	github.com/IBM/go-sdk-core/v5 v5.21.2
 	github.com/IBM/networking-go-sdk v0.52.0
 	github.com/IBM/platform-services-go-sdk v0.97.2
