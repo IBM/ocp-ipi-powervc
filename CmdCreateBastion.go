@@ -417,8 +417,8 @@ func getServerIPAddress(server servers.Server) (string, error) {
 //   2. Remote setup: Requires ServerIP to delegate setup to another server
 type BastionConfig struct {
 	// OpenStack Configuration
-	Cloud       string // OpenStack cloud name from clouds.yaml (required)
-	NetworkName string // OpenStack network name for bastion VM (required)
+	Clouds      cloudFlags // OpenStack cloud name from clouds.yaml (required only 1 entry allowed)
+	NetworkName string     // OpenStack network name for bastion VM (required)
 
 	// Bastion VM Specification
 	BastionName string // Name of the bastion VM (required, alphanumeric/hyphens/underscores only)
@@ -454,7 +454,13 @@ func (c *BastionConfig) Validate() error {
 	var validationErrors []error
 
 	// Required fields validation
-	if c.Cloud == "" {
+	if len(c.Clouds) == 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("cloud: field is required"))
+	}
+	if len(c.Clouds) > 1 {
+		validationErrors = append(validationErrors, fmt.Errorf("cloud: only one cloud is allowed"))
+	}
+	if len(c.Clouds) == 1 && c.Clouds[0] == "" {
 		validationErrors = append(validationErrors, fmt.Errorf("cloud: field is required"))
 	}
 	if c.BastionName == "" {
@@ -545,9 +551,9 @@ func (c *BastionConfig) String() string {
 		rsaPath = "<redacted>"
 	}
 
-	return fmt.Sprintf("BastionConfig{Cloud=%q, Name=%q, Flavor=%q, Image=%q, "+
+	return fmt.Sprintf("BastionConfig{Clouds=%q, Name=%q, Flavor=%q, Image=%q, "+
 		"Network=%q, SSHKey=%q, Domain=%q, HAProxy=%v, ServerIP=%q, RSA=%s, Debug=%v}",
-		c.Cloud, c.BastionName, c.FlavorName, c.ImageName,
+		c.Clouds, c.BastionName, c.FlavorName, c.ImageName,
 		c.NetworkName, c.SshKeyName, c.DomainName, c.EnableHAProxy,
 		c.ServerIP, rsaPath, c.ShouldDebug)
 }
@@ -579,7 +585,8 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	config := NewBastionConfig() // Use constructor with defaults
 
 	// Define flags
-	cloud := flags.String("cloud", "", "The cloud to use in clouds.yaml")
+	var clouds cloudFlags
+	flags.Var(&clouds, "cloud", "Cloud name to use in clouds.yaml")
 	bastionName := flags.String("bastionName", "", "The name of the bastion VM")
 	bastionRsa := flags.String("bastionRsa", "", "The RSA filename for the bastion VM")
 	flavorName := flags.String("flavorName", "", "The name of the flavor")
@@ -597,7 +604,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	}
 
 	// Populate config
-	config.Cloud = *cloud
+	config.Clouds = clouds
 	config.BastionName = *bastionName
 	config.BastionRsa = *bastionRsa
 	config.FlavorName = *flavorName
@@ -671,7 +678,7 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 	}
 
 	// Write bastion IP to file
-	if err := writeBastionIP(ctx, config.Cloud, config.BastionName); err != nil {
+	if err := writeBastionIP(ctx, config, config.BastionName); err != nil {
 		return fmt.Errorf("failed to write bastion IP: %w", err)
 	}
 
@@ -692,7 +699,7 @@ func cleanupBastionIPFile() error {
 // If the server already exists, it returns immediately.
 // If the server doesn't exist, it creates it and verifies the creation.
 func ensureServerExists(ctx context.Context, config *BastionConfig) error {
-	_, err := findServer(ctx, config.Cloud, config.BastionName)
+	_, err := findServer(ctx, config.Clouds, config.BastionName)
 	if err == nil {
 		log.Debugf("Server %s already exists", config.BastionName)
 		return nil
@@ -708,7 +715,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	fmt.Printf("Server %s not found, creating...\n", config.BastionName)
 
 	if err := createServer(ctx,
-		config.Cloud,
+		config.Clouds[0],
 		config.FlavorName,
 		config.ImageName,
 		config.NetworkName,
@@ -722,7 +729,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	fmt.Println("Server created successfully!")
 
 	// Verify server was created
-	if _, err := findServer(ctx, config.Cloud, config.BastionName); err != nil {
+	if _, err := findServer(ctx, config.Clouds, config.BastionName); err != nil {
 		return fmt.Errorf("server verification failed after creation: %w", err)
 	}
 
@@ -736,14 +743,14 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 func setupBastion(ctx context.Context, config *BastionConfig) error {
 	if config.IsRemoteSetup() {
 		fmt.Println("Setting up bastion remotely...")
-		if err := sendCreateBastion(config.ServerIP, config.Cloud, config.BastionName, config.DomainName); err != nil {
+		if err := sendCreateBastion(config.ServerIP, config.Clouds[0], config.BastionName, config.DomainName); err != nil {
 			return fmt.Errorf("remote setup failed: %w", err)
 		}
 		return nil
 	}
 
 	fmt.Println("Setting up bastion locally...")
-	if err := setupBastionServer(ctx, config.EnableHAProxy, config.Cloud, config.BastionName, config.DomainName, config.BastionRsa); err != nil {
+	if err := setupBastionServer(ctx, config.EnableHAProxy, config.Clouds, config.BastionName, config.DomainName, config.BastionRsa); err != nil {
 		return fmt.Errorf("local setup failed: %w", err)
 	}
 	return nil
@@ -939,9 +946,9 @@ func appendToFile(filePath string, data []byte) error {
 //  2. Extract and validate the server's IP address
 //  3. Setup HAProxy if enabled
 //  4. Configure DNS records if IBM Cloud API key is available
-func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serverName, domainName, bastionRsa string) error {
+func setupBastionServer(ctx context.Context, enableHAProxy bool, clouds cloudFlags, serverName, domainName, bastionRsa string) error {
 	// Step 1: Find the server
-	server, err := findServer(ctx, cloudName, serverName)
+	server, err := findServer(ctx, clouds, serverName)
 	if err != nil {
 		return fmt.Errorf("failed to find server: %w", err)
 	}
@@ -967,7 +974,7 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serv
 	// Step 4: Setup DNS if API key is available
 	apiKey := os.Getenv("IBMCLOUD_API_KEY")
 	if apiKey != "" {
-		if err := dnsForServer(ctx, cloudName, apiKey, serverName, domainName); err != nil {
+		if err := dnsForServer(ctx, clouds, apiKey, serverName, domainName); err != nil {
 			return fmt.Errorf("failed to setup DNS: %w", err)
 		}
 	} else {
@@ -979,8 +986,8 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, cloudName, serv
 
 // writeBastionIP writes the bastion server's IP address to a file.
 // The IP address is written to the file specified by bastionIpFilename constant.
-func writeBastionIP(ctx context.Context, cloudName, serverName string) error {
-	server, err := findServer(ctx, cloudName, serverName)
+func writeBastionIP(ctx context.Context, config *BastionConfig, serverName string) error {
+	server, err := findServer(ctx, config.Clouds, serverName)
 	if err != nil {
 		return fmt.Errorf("failed to find server %q: %w", serverName, err)
 	}
@@ -1031,9 +1038,9 @@ type dnsRecord struct {
 //  1. A record for api.<bastionName>.<domainName>
 //  2. A record for api-int.<bastionName>.<domainName>
 //  3. CNAME record for *.apps.<bastionName>.<domainName> pointing to api
-func dnsForServer(ctx context.Context, cloudName, apiKey, bastionName, domainName string) error {
+func dnsForServer(ctx context.Context, clouds cloudFlags, apiKey, bastionName, domainName string) error {
 	// Step 1: Get server IP address
-	server, err := findServer(ctx, cloudName, bastionName)
+	server, err := findServer(ctx, clouds, bastionName)
 	if err != nil {
 		return fmt.Errorf("failed to find server %q: %w", bastionName, err)
 	}

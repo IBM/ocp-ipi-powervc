@@ -257,7 +257,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	}
 
 	log.Printf("[INFO] Finding bastion server for cluster '%s'", clusterName)
-	server, err = findServer(ctx, cloud, clusterName)
+	server, err = findServer(ctx, []string{ cloud }, clusterName)
 	if err != nil {
 		fmt.Printf("%s: Error: failed to find bastion server: %v\n", LoadBalancerName, err)
 		return

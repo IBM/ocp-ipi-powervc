@@ -55,7 +55,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 		{
 			name:     "empty cloud",
 			args:     []string{"--cloud", ""},
-			errorMsg: "--cloud not specified",
+			errorMsg: "--cloud is empty",
 		},
 		{
 			name:     "missing domainName",

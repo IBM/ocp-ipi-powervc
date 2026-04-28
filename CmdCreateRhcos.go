@@ -113,8 +113,8 @@ func (e *RetryableError) Unwrap() error {
 // This struct encapsulates both required and optional settings for provisioning
 // a Red Hat CoreOS virtual machine on OpenStack/PowerVC.
 type rhcosConfig struct {
-	// Cloud specifies the cloud name from clouds.yaml to use for OpenStack authentication
-	Cloud string
+	// Clouds specifies the cloud name from clouds.yaml to use for OpenStack authentication
+	Clouds cloudFlags
 
 	// RhcosName is the name to assign to the RHCOS virtual machine
 	RhcosName string
@@ -154,11 +154,24 @@ type rhcosConfig struct {
 func (c *rhcosConfig) validate() error {
 	// Validate required string fields
 	requiredFields := map[string]string{
-		"Cloud":       c.Cloud,
 		"RhcosName":   c.RhcosName,
 		"FlavorName":  c.FlavorName,
 		"ImageName":   c.ImageName,
 		"NetworkName": c.NetworkName,
+	}
+
+	if len(c.Clouds) != 1 {
+		return &ValidationError{
+			Field:   "Cloud",
+			Message: fmt.Sprintf("should only have one element: %d", len(c.Clouds)),
+		}
+	}
+
+	if c.Clouds[0] == "" {
+		return &ValidationError{
+			Field:   "Cloud",
+			Message: "is required",
+		}
 	}
 
 	for field, value := range requiredFields {
@@ -266,7 +279,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	}
 
 	// Populate config from parsed flags
-	config.Cloud = *ptrCloud
+	config.Clouds = []string{ *ptrCloud }
 	config.RhcosName = *ptrRhcosName
 	config.FlavorName = *ptrFlavorName
 	config.ImageName = *ptrImageName
@@ -323,8 +336,8 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	log = initLogger(config.ShouldDebug)
 	if config.ShouldDebug {
 		log.Debugf("Debug mode enabled")
-		log.Debugf("Configuration: Cloud=%s, RhcosName=%s, Flavor=%s, Image=%s, Network=%s",
-			config.Cloud, config.RhcosName, config.FlavorName, config.ImageName, config.NetworkName)
+		log.Debugf("Configuration: Clouds=%s, RhcosName=%s, Flavor=%s, Image=%s, Network=%s",
+			config.Clouds, config.RhcosName, config.FlavorName, config.ImageName, config.NetworkName)
 	}
 
 	// Create context with timeout
@@ -349,7 +362,7 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 
 	// Step 4: Setup the server (SSH keys, etc.)
 	printProgress(progressStepSetup)
-	if err := setupRhcosServerWithRetry(ctx, config.Cloud, foundServer); err != nil {
+	if err := setupRhcosServerWithRetry(ctx, foundServer); err != nil {
 		return fmt.Errorf("failed to setup server: %w", err)
 	}
 
@@ -384,7 +397,7 @@ func printProgress(step string) {
 func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
 	log.Debugf("Looking for existing server: %s", config.RhcosName)
 
-	foundServer, err := findServer(ctx, config.Cloud, config.RhcosName)
+	foundServer, err := findServer(ctx, config.Clouds, config.RhcosName)
 	if err != nil {
 		// Check if error is due to server not found
 		if !isServerNotFoundError(err) {
@@ -396,7 +409,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 		fmt.Printf("Server %s not found, creating...\n", config.RhcosName)
 
 		if err := createServer(ctx,
-			config.Cloud,
+			config.Clouds[0],
 			config.FlavorName,
 			config.ImageName,
 			config.NetworkName,
@@ -411,7 +424,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 
 		// Retrieve the newly created server with retry
 		log.Debugf("Retrieving newly created server: %s", config.RhcosName)
-		foundServer, err = findServer(ctx, config.Cloud, config.RhcosName)
+		foundServer, err = findServer(ctx, config.Clouds, config.RhcosName)
 		if err != nil {
 			return servers.Server{}, fmt.Errorf("failed to find newly created server: %w", err)
 		}
@@ -450,7 +463,7 @@ func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig, 
 // Returns:
 //   - bool: true if the error indicates server not found, false otherwise
 func isServerNotFoundError(err error) bool {
-	log.Debugf("HAMZY: err = %+v\n", err)
+	log.Debugf("isServerNotFoundError: err = %+v\n", err)
 	if err == nil {
 		return false
 	}
@@ -475,7 +488,7 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 	}
 
 	log.Debugf("Configuring DNS for server %s", config.RhcosName)
-	if err := dnsForServer(ctx, config.Cloud, config.APIKey, config.RhcosName, config.DomainName); err != nil {
+	if err := dnsForServer(ctx, config.Clouds, config.APIKey, config.RhcosName, config.DomainName); err != nil {
 		return fmt.Errorf("DNS configuration failed: %w", err)
 	}
 
@@ -489,12 +502,11 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
-//   - cloudName: Name of the cloud configuration to use
 //   - server: The server object to set up
 //
 // Returns:
 //   - error: Any error encountered during setup, nil on success
-func setupRhcosServer(ctx context.Context, cloudName string, server servers.Server) error {
+func setupRhcosServer(ctx context.Context, server servers.Server) error {
 	log.Debugf("Setting up RHCOS server: %s (ID: %s)", server.Name, server.ID)
 
 	// Get server IP address
@@ -522,14 +534,13 @@ func setupRhcosServer(ctx context.Context, cloudName string, server servers.Serv
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
-//   - cloudName: Name of the cloud configuration to use
 //   - server: The server object to set up
 //
 // Returns:
 //   - error: Any error encountered during setup after all retries
-func setupRhcosServerWithRetry(ctx context.Context, cloudName string, server servers.Server) error {
+func setupRhcosServerWithRetry(ctx context.Context, server servers.Server) error {
 	_, err := retryOperation(ctx, "setup server", func() (servers.Server, error) {
-		if err := setupRhcosServer(ctx, cloudName, server); err != nil {
+		if err := setupRhcosServer(ctx, server); err != nil {
 			return servers.Server{}, err
 		}
 		return server, nil

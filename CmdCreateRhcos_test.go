@@ -43,7 +43,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "valid configuration",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -56,7 +56,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing cloud",
 			config: rhcosConfig{
-				Cloud:        "",
+				Clouds:       []string{ "", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -70,7 +70,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing rhcos name",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -84,7 +84,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "invalid rhcos name characters",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test@rhcos!",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -98,7 +98,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing flavor name",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "",
 				ImageName:    "rhcos-4.12",
@@ -112,7 +112,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing image name",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "",
@@ -126,7 +126,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing network name",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -140,7 +140,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing ssh public key",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -154,7 +154,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "ssh key too short",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -168,7 +168,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "ssh key invalid prefix",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -182,7 +182,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "valid ecdsa key",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -195,7 +195,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "missing password hash",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -209,7 +209,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "password hash too short",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -223,7 +223,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 		{
 			name: "password hash invalid format",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -287,8 +287,8 @@ func TestParseRhcosFlags(t *testing.T) {
 			},
 			expectError: false,
 			checkConfig: func(t *testing.T, c *rhcosConfig) {
-				if c.Cloud != "mycloud" {
-					t.Errorf("Expected cloud 'mycloud', got %q", c.Cloud)
+				if c.Clouds[0] != "mycloud" {
+					t.Errorf("Expected cloud 'mycloud', got %q", c.Clouds)
 				}
 				if c.RhcosName != "test-rhcos" {
 					t.Errorf("Expected rhcosName 'test-rhcos', got %q", c.RhcosName)
@@ -704,7 +704,7 @@ func TestConfigureDNS(t *testing.T) {
 		{
 			name: "no API key - should skip",
 			config: &rhcosConfig{
-				Cloud:      "mycloud",
+				Clouds:     []string{ "mycloud", },
 				RhcosName:  "test-rhcos",
 				DomainName: "example.com",
 				APIKey:     "",
@@ -791,7 +791,7 @@ func TestSetupRhcosServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			err := setupRhcosServer(ctx, "mycloud", tt.server)
+			err := setupRhcosServer(ctx, tt.server)
 
 			if tt.expectError {
 				if err == nil {
@@ -822,7 +822,7 @@ func TestRhcosConfig_EdgeCases(t *testing.T) {
 		{
 			name: "very long rhcos name",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    strings.Repeat("a", 255),
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -835,7 +835,7 @@ func TestRhcosConfig_EdgeCases(t *testing.T) {
 		{
 			name: "rhcos name with hyphens and numbers",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos-123-server",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",
@@ -848,7 +848,7 @@ func TestRhcosConfig_EdgeCases(t *testing.T) {
 		{
 			name: "optional domain name empty",
 			config: rhcosConfig{
-				Cloud:        "mycloud",
+				Clouds:       []string{ "mycloud", },
 				RhcosName:    "test-rhcos",
 				FlavorName:   "medium",
 				ImageName:    "rhcos-4.12",

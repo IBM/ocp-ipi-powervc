@@ -385,15 +385,15 @@ func findNetwork(ctx context.Context, cloudName string, name string) (foundNetwo
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - cloudName: Name of the cloud configuration
+//   - clouds: Names of the cloud configuration
 //   - name: Name of the server to find
 //
 // Returns:
 //   - servers.Server: The found server
 //   - error: Error if server not found or API call fails
-func findServer(ctx context.Context, cloudName string, name string) (foundServer servers.Server, err error) {
-	if cloudName == "" {
-		return servers.Server{}, fmt.Errorf("cloud name cannot be empty")
+func findServer(ctx context.Context, clouds []string, name string) (foundServer servers.Server, err error) {
+	if len(clouds) == 0 {
+		return servers.Server{}, fmt.Errorf("cloud names cannot be empty")
 	}
 	if name == "" {
 		return servers.Server{}, fmt.Errorf("server name cannot be empty")
@@ -404,7 +404,7 @@ func findServer(ctx context.Context, cloudName string, name string) (foundServer
 		server     servers.Server
 	)
 
-	allServers, err = getAllServers(ctx, cloudName)
+	allServers, err = getAllServers(ctx, clouds)
 	if err != nil {
 		return servers.Server{}, fmt.Errorf("failed to get all servers: %w", err)
 	}
@@ -449,7 +449,7 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 		)
 
 		// Check server status
-		foundServer, err2 = findServer(ctx, cloudName, name)
+		foundServer, err2 = findServer(ctx, []string{ cloudName }, name)
 		if err2 != nil {
 			log.Debugf("waitForServer: findServer returned %v", err2)
 
@@ -479,61 +479,88 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 	return nil
 }
 
-// getAllServers retrieves all servers from the specified cloud.
-// It uses exponential backoff to handle transient API failures.
-//
+// getAllServers retrieves all servers from the specified clouds.
+// It iterates through each cloud, retrieves the compute service client,
+// and lists all servers using pagination. The function handles errors
+// and retries the operation if necessary.
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - cloud: Name of the cloud configuration
-//
+//   - ctx: Context for the operation
+//   - clouds: List of cloud names to retrieve servers from
 // Returns:
-//   - []servers.Server: List of all servers
-//   - error: Error if API call fails
-func getAllServers(ctx context.Context, cloud string) (allServers []servers.Server, err error) {
-	if cloud == "" {
-		return nil, fmt.Errorf("cloud name cannot be empty")
-	}
+//   - allServers: Slice of all servers retrieved from all clouds
+//   - err: Error if any operation fails
+func getAllServers(ctx context.Context, clouds []string) (allServers []servers.Server, err error) {
+	log.Debugf("getAllServers: clouds = %+v", clouds)
 
-	var (
-		connCompute *gophercloud.ServiceClient
-		duration    time.Duration
-		pager       pagination.Page
-	)
+	// Map to track unique servers by ID
+	serverMap := make(map[string]servers.Server)
 
-	connCompute, err = getServiceClient(ctx, "compute", cloud)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get compute service client: %w", err)
-	}
+	for _, cloud := range clouds {
+		log.Debugf("getAllServers: cloud = %s", cloud)
 
-	backoff := createDefaultBackoff(ctx)
+		if cloud == "" {
+			return nil, fmt.Errorf("cloud name cannot be empty")
+		}
 
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		var (
-			err2 error
+			connCompute  *gophercloud.ServiceClient
+			duration     time.Duration
+			pager        pagination.Page
+			cloudServers []servers.Server
 		)
 
-		duration = leftInContext(ctx)
-		log.Debugf("getAllServers: duration = %v, calling servers.List", duration)
-		pager, err2 = servers.List(connCompute, nil).AllPages(ctx)
-		if err2 != nil {
-			log.Debugf("getAllServers: servers.List returned error %v", err2)
-			return false, nil
+		connCompute, err = getServiceClient(ctx, "compute", cloud)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get compute service client: %w", err)
 		}
 
-		allServers, err2 = servers.ExtractServers(pager)
-		if err2 != nil {
-			log.Debugf("getAllServers: servers.ExtractServers returned error %v", err2)
-			return false, nil
+		backoff := createDefaultBackoff(ctx)
+
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			var (
+				err2 error
+			)
+
+			duration = leftInContext(ctx)
+			log.Debugf("getAllServers: duration = %v, calling servers.List", duration)
+
+			pager, err2 = servers.List(connCompute, nil).AllPages(ctx)
+			if err2 != nil {
+				log.Debugf("getAllServers: servers.List returned error %v", err2)
+				return false, nil
+			}
+
+			cloudServers, err2 = servers.ExtractServers(pager)
+			if err2 != nil {
+				log.Debugf("getAllServers: servers.ExtractServers returned error %v", err2)
+				return false, nil
+			}
+
+			return true, nil
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to list servers: %w", err)
 		}
 
-		return true, nil
-	})
+		log.Debugf("getAllServers: retrieved %d servers", len(cloudServers))
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to list servers: %w", err)
+		// Merge cloudServers into serverMap, ensuring uniqueness by ID
+		for _, cloudServer := range cloudServers {
+			log.Debugf("getAllServers: %v", cloudServer.Name)
+			// Only add if not already present (first occurrence wins)
+			if _, exists := serverMap[cloudServer.ID]; !exists {
+				serverMap[cloudServer.ID] = cloudServer
+			}
+		}
 	}
 
-	log.Debugf("getAllServers: retrieved %d servers", len(allServers))
+	// Convert map to slice
+	allServers = make([]servers.Server, 0, len(serverMap))
+	for _, server := range serverMap {
+		allServers = append(allServers, server)
+	}
+
 	return allServers, nil
 }
 

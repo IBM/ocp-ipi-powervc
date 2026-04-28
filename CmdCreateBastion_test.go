@@ -64,7 +64,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "valid local setup",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				BastionRsa:  validKeyPath,
 				FlavorName:  "m1.small",
@@ -77,7 +77,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "valid remote setup",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion_1",
 				ServerIP:    "192.168.122.10",
 				FlavorName:  "m1.small",
@@ -86,6 +86,22 @@ func TestBastionConfigValidate(t *testing.T) {
 				SshKeyName:  "mykey",
 			},
 			expectError: false,
+		},
+		{
+			name: "cloud empty",
+			config: &BastionConfig{
+				Clouds:      []string{ "", },
+			},
+			expectError: true,
+			errorMsg:    "cloud: field is required",
+		},
+		{
+			name: "extra cloud",
+			config: &BastionConfig{
+				Clouds:      []string{ "mycloud1", "mycloud2" },
+			},
+			expectError: true,
+			errorMsg:    "cloud: only one cloud is allowed",
 		},
 		{
 			name: "missing required fields and setup mode",
@@ -98,7 +114,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "invalid bastion name",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion@1",
 				ServerIP:    "192.168.122.10",
 				FlavorName:  "m1.small",
@@ -112,7 +128,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "missing both setup modes",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				FlavorName:  "m1.small",
 				ImageName:   "rhel-8",
@@ -125,7 +141,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "both setup modes specified",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				BastionRsa:  validKeyPath,
 				ServerIP:    "192.168.122.10",
@@ -140,7 +156,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "missing bastion rsa file",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				BastionRsa:  filepath.Join(tempKeyDir, "missing-key"),
 				FlavorName:  "m1.small",
@@ -154,7 +170,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "invalid server ip",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				ServerIP:    "not-an-ip",
 				FlavorName:  "m1.small",
@@ -168,7 +184,7 @@ func TestBastionConfigValidate(t *testing.T) {
 		{
 			name: "missing openstack fields",
 			config: &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				ServerIP:    "192.168.122.10",
 			},
@@ -203,7 +219,7 @@ func TestBastionConfigValidate_CachesSuccess(t *testing.T) {
 	}
 
 	config := &BastionConfig{
-		Cloud:       "mycloud",
+		Clouds:      []string{ "mycloud", },
 		BastionName: "bastion-1",
 		BastionRsa:  validKeyPath,
 		FlavorName:  "m1.small",
@@ -240,7 +256,7 @@ func TestBastionConfigHelpers(t *testing.T) {
 
 	t.Run("local setup and string redaction", func(t *testing.T) {
 		config := &BastionConfig{
-			Cloud:         "mycloud",
+			Clouds:        []string{ "mycloud", },
 			BastionName:   "bastion-1",
 			BastionRsa:    "/secret/id_rsa",
 			FlavorName:    "m1.small",
@@ -270,7 +286,7 @@ func TestBastionConfigHelpers(t *testing.T) {
 
 	t.Run("remote setup and dns config", func(t *testing.T) {
 		config := &BastionConfig{
-			Cloud:       "mycloud",
+			Clouds:      []string{ "mycloud", },
 			BastionName: "bastion-1",
 			ServerIP:    "192.168.122.10",
 			FlavorName:  "m1.small",
@@ -635,7 +651,7 @@ func TestSSHConfig_Struct(t *testing.T) {
 
 func TestBastionConfig_String_NoRSA(t *testing.T) {
 	config := &BastionConfig{
-		Cloud:         "mycloud",
+		Clouds:        []string{ "mycloud", },
 		BastionName:   "bastion-1",
 		FlavorName:    "m1.small",
 		ImageName:     "rhel-8",
@@ -664,7 +680,7 @@ func TestBastionConfig_ValidationCaching(t *testing.T) {
 	}
 
 	config := &BastionConfig{
-		Cloud:       "mycloud",
+		Clouds:      []string{ "mycloud", },
 		BastionName: "bastion-1",
 		BastionRsa:  validKeyPath,
 		FlavorName:  "m1.small",
@@ -714,7 +730,7 @@ func TestBastionConfig_MultipleValidationErrors(t *testing.T) {
 func TestBastionConfig_EdgeCases(t *testing.T) {
 	t.Run("bastion name with valid special characters", func(t *testing.T) {
 		config := &BastionConfig{
-			Cloud:       "mycloud",
+			Clouds:      []string{ "mycloud", },
 			BastionName: "bastion-1_test",
 			ServerIP:    "192.168.1.100",
 			FlavorName:  "m1.small",
@@ -739,7 +755,7 @@ func TestBastionConfig_EdgeCases(t *testing.T) {
 
 		for _, name := range invalidNames {
 			config := &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: name,
 				ServerIP:    "192.168.1.100",
 				FlavorName:  "m1.small",
@@ -769,7 +785,7 @@ func TestBastionConfig_EdgeCases(t *testing.T) {
 
 		for _, ip := range validIPs {
 			config := &BastionConfig{
-				Cloud:       "mycloud",
+				Clouds:      []string{ "mycloud", },
 				BastionName: "bastion-1",
 				ServerIP:    ip,
 				FlavorName:  "m1.small",

@@ -65,6 +65,18 @@ var (
 	validResourceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
+// cloudFlags is a custom flag type that allows multiple cloud names
+type cloudFlags []string
+
+func (c *cloudFlags) String() string {
+	return strings.Join(*c, ",")
+}
+
+func (c *cloudFlags) Set(value string) error {
+	*c = append(*c, value)
+	return nil
+}
+
 // initLogger creates a configured logger based on debug flag.
 // When debug is true, logs are written to stderr; otherwise, they are discarded.
 func initLogger(debug bool) *logrus.Logger {

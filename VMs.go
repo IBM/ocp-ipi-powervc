@@ -204,7 +204,7 @@ func (vms *VMs) ClusterStatus() {
 	}
 	log.Debugf("ClusterStatus: infraID = %s", infraID)
 
-	allServers, err = getAllServers(ctx, cloud)
+	allServers, err = getAllServers(ctx, []string{ cloud })
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to get servers: %v\n", VMsName, err)
 		log.Debugf("ClusterStatus: getAllServers returned error: %v", err)
