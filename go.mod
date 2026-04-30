@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb
 	github.com/IBM/go-sdk-core/v5 v5.21.2
-	github.com/IBM/networking-go-sdk v0.53.3
+	github.com/IBM/networking-go-sdk v0.53.4
 	github.com/IBM/platform-services-go-sdk v0.97.2
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
