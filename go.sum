@@ -2,8 +2,8 @@ github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb h1:yUd2PlJTtU
 github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb/go.mod h1:S4FkCceVf+RgMsWU0mT1Khg8/fGFGGX95E+kbuxcMLQ=
 github.com/IBM/go-sdk-core/v5 v5.21.2 h1:mJ5QbLPOm4g5qhZiVB6wbSllfpeUExftGoyPek2hk4M=
 github.com/IBM/go-sdk-core/v5 v5.21.2/go.mod h1:ngpMgwkjur1VNUjqn11LPk3o5eCyOCRbcfg/0YAY7Hc=
-github.com/IBM/networking-go-sdk v0.53.3 h1:SLlfeQPH9YAT6C7NsbZpNJZUDXAv+NY6+BCq8HFRQ3c=
-github.com/IBM/networking-go-sdk v0.53.3/go.mod h1:TAXWyBUk3C3R7aS1m84EfKdnDcBMZMAClwLfDj/SYZc=
+github.com/IBM/networking-go-sdk v0.53.4 h1:XDGOhavZocjVfItgcaT7/SFqB8zT2kznYuJ9LXkz/ug=
+github.com/IBM/networking-go-sdk v0.53.4/go.mod h1:TAXWyBUk3C3R7aS1m84EfKdnDcBMZMAClwLfDj/SYZc=
 github.com/IBM/platform-services-go-sdk v0.97.2 h1:CdiLSFB0+oaAsucgVnpwn31YTAr47qFROPes4zXJalk=
 github.com/IBM/platform-services-go-sdk v0.97.2/go.mod h1:t93mozFmKrxexnKNdx2gNOtEI9Wd62dKAVffQYm0vRM=
 github.com/coreos/go-semver v0.3.1 h1:yi21YpKnrx1gt5R+la8n5WgS0kCrsPp33dmEyHReZr4=
