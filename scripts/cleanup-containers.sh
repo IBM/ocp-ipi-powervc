@@ -38,7 +38,7 @@ set -euo pipefail
 while read CONTAINER
 do
 	echo "CONTAINER=${CONTAINER}"
-	
+
 	while read OBJECT
 	do
 		echo "OBJECT=${OBJECT}"
