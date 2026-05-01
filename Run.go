@@ -285,7 +285,9 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	defer readPipe.Close()
 
 	// Connect first command's stdout to pipe
+	cmd1.Stdin  = os.Stdin
 	cmd1.Stdout = writePipe
+	cmd1.Stderr = os.Stderr
 
 	// Start first command
 	log.Debugf("runTwoCommands: Starting first command: %v", acmdline1)
