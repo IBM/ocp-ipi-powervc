@@ -1,17 +1,17 @@
-module example/user/OcpIpiPowerVC
+module example/user/PowerVC-Tool
 
 go 1.26.0
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb
 	github.com/IBM/go-sdk-core/v5 v5.21.2
-	github.com/IBM/networking-go-sdk v0.53.3
-	github.com/IBM/platform-services-go-sdk v0.97.2
+	github.com/IBM/networking-go-sdk v0.53.4
+	github.com/IBM/platform-services-go-sdk v0.97.4
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260424174501-4f63a40a2970
+	github.com/openshift/api v0.0.0-20260504142306-00d9d554030a
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.36.0
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
