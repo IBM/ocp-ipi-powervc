@@ -1,0 +1,26 @@
+# .coderabbit.yaml
+language: "en-US"
+tone_instructions: "Act as a Senior Go Engineer focusing on idiomatic code, performance, and concurrency safety."
+
+reviews:
+  profile: "comprehensive" # Options: chill, assertive, comprehensive
+  tools:
+    golangci-lint:
+      enabled: false
+      # enabled: true
+      # Optional: point to your existing lint config
+      # config_file: ".golangci.yml" 
+  
+  # Instructions for the AI reviewer
+  instructions: >
+    - Ensure all Go code follows effective Go idioms.
+    - Check for proper error handling and wrapping.
+    - Validate context usage (e.g., ensuring context cancellation is handled).
+    - Flag any global mutable state or lack of thread safety in shared resources.
+    - Ensure exported symbols are documented.
+
+# Exclude generated files from reviews
+path_filters:
+  - "**/vendor/**"
+  - "**/*.pb.go" # Protobuf generated files
+  - "**/mocks/**"
