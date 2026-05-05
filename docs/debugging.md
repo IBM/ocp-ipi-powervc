@@ -78,6 +78,9 @@ List the PowerVC servers via the following OpenStack CLI:
 $ openstack --os-cloud=${CLOUD} server list --format csv
 ```
 
+Make sure that the nodes are not in `ERROR` state.
+Make sure that there is no resource limited by a quota.
+
 Or go to the UI (`Virtual Machines` -> `VM list`).  Make sure the state is `ACTIVE`.
 
 ## The bootstrap, master-0, master-1, and master-2 nodes should have received a DHCP IP
