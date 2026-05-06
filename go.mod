@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260504142306-00d9d554030a
+	github.com/openshift/api v0.0.0-20260506121621-4023bcf8ec0c
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.36.0
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
