@@ -133,11 +133,24 @@ SHUTDOWN_REQUESTED=false
 # Utility Functions
 #
 
-# log_message - Print timestamped log message
+#------------------------------------------------------------------------------
+# log_message - Print timestamped log message to stdout
+#
+# Formats and outputs a log message with timestamp, log level, and script name.
+# Debug messages are only printed when DEBUG environment variable is set to "true".
+#
 # Arguments:
 #   $1 - Log level (INFO, WARN, ERROR, DEBUG)
-#   $2 - Message to log
-log_message() {
+#   $@ - Message to log (all remaining arguments are concatenated)
+#
+# Output:
+#   Formatted log message: [YYYY-MM-DD HH:MM:SS] [LEVEL] [SCRIPT_NAME] message
+#
+# Examples:
+#   log_message "INFO" "Server is responding"
+#   log_message "ERROR" "Failed to connect to" "${SERVER_IP}"
+#------------------------------------------------------------------------------
+function log_message() {
 	local level="$1"
 	shift
 	local message="$*"
@@ -151,35 +164,107 @@ log_message() {
 	echo "[${timestamp}] [${level}] [${SCRIPT_NAME}] ${message}"
 }
 
+#------------------------------------------------------------------------------
 # log_info - Log informational message
-log_info() {
+#
+# Convenience wrapper for logging INFO level messages.
+#
+# Arguments:
+#   $@ - Message to log
+#
+# Examples:
+#   log_info "Starting validation"
+#   log_info "Server" "${SERVER_IP}" "is responding"
+#------------------------------------------------------------------------------
+function log_info() {
 	log_message "INFO" "$@"
 }
 
+#------------------------------------------------------------------------------
 # log_warn - Log warning message
-log_warn() {
+#
+# Convenience wrapper for logging WARN level messages.
+# Use for non-critical issues that should be noted.
+#
+# Arguments:
+#   $@ - Message to log
+#
+# Examples:
+#   log_warn "Server is not responding"
+#   log_warn "Retrying connection attempt"
+#------------------------------------------------------------------------------
+function log_warn() {
 	log_message "WARN" "$@"
 }
 
+#------------------------------------------------------------------------------
 # log_error - Log error message
-log_error() {
+#
+# Convenience wrapper for logging ERROR level messages.
+# Use for critical issues that may cause script failure.
+#
+# Arguments:
+#   $@ - Message to log
+#
+# Examples:
+#   log_error "Failed to detect network interface"
+#   log_error "Missing required environment variable: ${var}"
+#------------------------------------------------------------------------------
+function log_error() {
 	log_message "ERROR" "$@"
 }
 
+#------------------------------------------------------------------------------
 # log_debug - Log debug message (only if DEBUG=true)
-log_debug() {
+#
+# Convenience wrapper for logging DEBUG level messages.
+# Messages are only printed when DEBUG environment variable is set to "true".
+# Use for detailed diagnostic information.
+#
+# Arguments:
+#   $@ - Message to log
+#
+# Examples:
+#   log_debug "Detected architecture: ${ARCH}"
+#   log_debug "Command: ${POWERVC_CMD}"
+#------------------------------------------------------------------------------
+function log_debug() {
 	log_message "DEBUG" "$@"
 }
 
+#------------------------------------------------------------------------------
 # cleanup - Cleanup function called on exit
-cleanup() {
+#
+# Performs cleanup operations before script termination.
+# Sets the SHUTDOWN_REQUESTED flag to signal the monitoring loop to exit.
+#
+# Side Effects:
+#   Sets SHUTDOWN_REQUESTED=true
+#
+# Called By:
+#   signal_handler() - On SIGINT/SIGTERM
+#   main() - On normal exit
+#------------------------------------------------------------------------------
+function cleanup() {
 	log_info "Cleanup initiated"
 	SHUTDOWN_REQUESTED=true
 	log_info "Script terminated gracefully"
 }
 
-# signal_handler - Handle interrupt signals
-signal_handler() {
+#------------------------------------------------------------------------------
+# signal_handler - Handle interrupt signals (SIGINT/SIGTERM)
+#
+# Handles interrupt signals gracefully by initiating cleanup and exiting.
+# Allows the current operation to complete before shutting down.
+#
+# Signals Handled:
+#   SIGINT  - Ctrl+C from terminal
+#   SIGTERM - Termination request from system
+#
+# Exit Code:
+#   EXIT_SUCCESS (0) - Always exits successfully after cleanup
+#------------------------------------------------------------------------------
+function signal_handler() {
 	log_warn "Received interrupt signal, shutting down..."
 	cleanup
 	exit ${EXIT_SUCCESS}
@@ -189,11 +274,30 @@ signal_handler() {
 # Validation Functions
 #
 
+#------------------------------------------------------------------------------
 # validate_environment_variables - Check all required environment variables are set
+#
+# Validates that all required environment variables are defined and non-empty.
+# Collects all missing/empty variables before reporting errors, providing
+# complete feedback in a single run.
+#
+# Required Variables:
+#   BASEDOMAIN, BASTION_USERNAME, BASTION_RSA, CLOUD, CONTROLLER_IP,
+#   DHCP_DNS_SERVERS, DHCP_NETMASK, DHCP_ROUTER, DHCP_SERVER_ID, DHCP_SUBNET
+#
 # Returns:
-#   0 - All variables are set
-#   1 - One or more variables are missing
-validate_environment_variables() {
+#   0 - All required variables are set and non-empty
+#   1 - One or more variables are missing or empty
+#
+# Output:
+#   Logs validation progress and any errors found
+#
+# Examples:
+#   if validate_environment_variables; then
+#       echo "Environment is valid"
+#   fi
+#------------------------------------------------------------------------------
+function validate_environment_variables() {
 	local missing_vars=()
 
 	log_info "Validating required environment variables"
@@ -224,11 +328,33 @@ validate_environment_variables() {
 	return 0
 }
 
+#------------------------------------------------------------------------------
 # validate_programs - Check all required programs are available
+#
+# Validates that all required programs are installed and accessible in PATH.
+# Includes both standard utilities and the architecture-specific PowerVC tool.
+# Collects all missing programs before reporting errors.
+#
+# Required Programs:
+#   awk, cut, date, ip, tmux, tr, ocp-ipi-powervc-linux-{arch}
+#
+# Dependencies:
+#   POWERVC_TOOL - Must be set before calling this function
+#
 # Returns:
-#   0 - All programs are available
+#   0 - All required programs are available
 #   1 - One or more programs are missing
-validate_programs() {
+#
+# Output:
+#   Logs validation progress and any errors found
+#
+# Examples:
+#   detect_powervc_tool
+#   if validate_programs; then
+#       echo "All programs available"
+#   fi
+#------------------------------------------------------------------------------
+function validate_programs() {
 	local missing_programs=()
 
 	log_info "Validating required programs"
@@ -260,10 +386,28 @@ validate_programs() {
 # Detection Functions
 #
 
+#------------------------------------------------------------------------------
 # detect_architecture - Detect system architecture and set ARCH variable
-# Sets:
-#   ARCH - System architecture (amd64 or ppc64le)
-detect_architecture() {
+#
+# Detects the system architecture using uname and maps it to the format
+# used by the PowerVC tool binaries (amd64 or ppc64le).
+#
+# Supported Architectures:
+#   x86_64  -> amd64
+#   ppc64le -> ppc64le
+#   other   -> used as-is with warning
+#
+# Side Effects:
+#   Sets ARCH global variable
+#
+# Output:
+#   Logs detected architecture
+#
+# Examples:
+#   detect_architecture
+#   echo "Architecture: ${ARCH}"
+#------------------------------------------------------------------------------
+function detect_architecture() {
 	local uname_arch
 	uname_arch=$(uname -m)
 
@@ -285,21 +429,57 @@ detect_architecture() {
 	log_info "System architecture: ${ARCH}"
 }
 
+#------------------------------------------------------------------------------
 # detect_powervc_tool - Set PowerVC tool name based on architecture
-# Sets:
-#   POWERVC_TOOL - Name of the PowerVC tool binary
-detect_powervc_tool() {
+#
+# Constructs the PowerVC tool binary name using the detected architecture.
+# The tool name follows the pattern: ocp-ipi-powervc-linux-{arch}
+#
+# Dependencies:
+#   ARCH - Must be set before calling this function
+#
+# Side Effects:
+#   Sets POWERVC_TOOL global variable
+#
+# Output:
+#   Logs the PowerVC tool name
+#
+# Examples:
+#   detect_architecture
+#   detect_powervc_tool
+#   # POWERVC_TOOL is now "ocp-ipi-powervc-linux-amd64" or similar
+#------------------------------------------------------------------------------
+function detect_powervc_tool() {
 	POWERVC_TOOL="ocp-ipi-powervc-linux-${ARCH}"
 	log_info "PowerVC tool: ${POWERVC_TOOL}"
 }
 
+#------------------------------------------------------------------------------
 # detect_tmux_session - Detect active tmux session
-# Sets:
-#   TMUX_SESSION - Name of the tmux session
+#
+# Detects an active tmux session to use for running watch-installation.
+# If TMUX_SESSION_NAME is set, uses that; otherwise auto-detects the first
+# available session.
+#
+# Environment Variables:
+#   TMUX_SESSION_NAME - (optional) Override auto-detection
+#
+# Side Effects:
+#   Sets TMUX_SESSION global variable
+#
 # Returns:
 #   0 - Session detected successfully
-#   1 - Failed to detect session
-detect_tmux_session() {
+#   1 - No tmux sessions found or detection failed
+#
+# Output:
+#   Logs detected or specified session name
+#
+# Examples:
+#   if detect_tmux_session; then
+#       echo "Using session: ${TMUX_SESSION}"
+#   fi
+#------------------------------------------------------------------------------
+function detect_tmux_session() {
 	log_info "Detecting tmux session"
 
 	if [[ -n "${TMUX_SESSION_NAME:-}" ]]; then
@@ -329,16 +509,34 @@ detect_tmux_session() {
 	return 0
 }
 
+#------------------------------------------------------------------------------
 # detect_network_interface - Detect primary network interface
-# Sets:
-#   LINK - Name of the network interface
+#
+# Detects the primary network interface for DHCP configuration.
+# Excludes loopback (lo) and virtual (vir*) interfaces.
+# Uses 'ip link' command to find the first suitable interface.
+#
+# Side Effects:
+#   Sets LINK global variable
+#
 # Returns:
 #   0 - Interface detected successfully
 #   1 - Failed to detect interface
-detect_network_interface() {
+#
+# Output:
+#   Logs detected interface name
+#
+# Examples:
+#   if detect_network_interface; then
+#       echo "Using interface: ${LINK}"
+#   fi
+#------------------------------------------------------------------------------
+function detect_network_interface() {
 	log_info "Detecting network interface"
 
-	LINK=$(ip link | awk -F: '$0 !~ "lo|vir|^[^0-9]"{print $2;getline}' | tr -d '[:space:]')
+	LINK=$(ip link show | awk -F': ' '/^[0-9]+:/ && !/lo:|vir/ {print $2; exit}')
+	# Alternatively, if you want the first physical interface with an IP address:
+	# LINK=$(ip -o link show up | awk -F': ' '!/lo/ {print $2; exit}')
 
 	if [[ -z "${LINK}" ]]; then
 		log_error "Failed to detect network interface"
@@ -354,10 +552,28 @@ detect_network_interface() {
 # Command Building Functions
 #
 
+#------------------------------------------------------------------------------
 # build_powervc_command - Build the PowerVC watch-installation command
-# Sets:
-#   POWERVC_CMD - Complete command to execute in tmux
-build_powervc_command() {
+#
+# Constructs the complete watch-installation command with all required parameters.
+# Creates a timestamped output file for logging command output.
+# The command includes DHCP configuration and bastion host settings.
+#
+# Dependencies:
+#   POWERVC_TOOL, CLOUD, BASEDOMAIN, HOME, BASTION_USERNAME, BASTION_RSA,
+#   LINK, DHCP_SUBNET, DHCP_NETMASK, DHCP_ROUTER, DHCP_DNS_SERVERS, DHCP_SERVER_ID
+#
+# Side Effects:
+#   Sets POWERVC_CMD global variable
+#
+# Output:
+#   Logs the output filename that will be created
+#
+# Examples:
+#   build_powervc_command
+#   tmux send-keys -t session:0 "${POWERVC_CMD}" C-m
+#------------------------------------------------------------------------------
+function build_powervc_command() {
 	log_info "Building PowerVC watch-installation command"
 
 	local timestamp
@@ -391,11 +607,30 @@ build_powervc_command() {
 # Monitoring Functions
 #
 
+#------------------------------------------------------------------------------
 # check_server_alive - Check if controller server is responding
+#
+# Performs a health check on the controller server using the PowerVC tool's
+# check-alive command. Suppresses command output to avoid cluttering logs.
+#
+# Dependencies:
+#   POWERVC_TOOL, CONTROLLER_IP
+#
 # Returns:
-#   0 - Server is alive
+#   0 - Server is alive and responding
 #   1 - Server is not responding
-check_server_alive() {
+#
+# Output:
+#   Logs check result at DEBUG or WARN level
+#
+# Examples:
+#   if check_server_alive; then
+#       echo "Server is healthy"
+#   else
+#       echo "Server is down"
+#   fi
+#------------------------------------------------------------------------------
+function check_server_alive() {
 	log_debug "Checking if server ${CONTROLLER_IP} is alive"
 
 	if ${POWERVC_TOOL} check-alive --serverIP "${CONTROLLER_IP}" &>/dev/null; then
@@ -407,8 +642,22 @@ check_server_alive() {
 	fi
 }
 
+#------------------------------------------------------------------------------
 # restart_watch_installation - Send watch-installation command to tmux session
-restart_watch_installation() {
+#
+# Sends the pre-built PowerVC watch-installation command to the specified
+# tmux session. This restarts the monitoring process when the server recovers.
+#
+# Dependencies:
+#   TMUX_SESSION, POWERVC_CMD
+#
+# Output:
+#   Logs success or failure of command transmission
+#
+# Examples:
+#   restart_watch_installation
+#------------------------------------------------------------------------------
+function restart_watch_installation() {
 	log_warn "Restarting watch-installation in tmux session ${TMUX_SESSION}"
 
 	if tmux send-keys -t "${TMUX_SESSION}:0" "${POWERVC_CMD}" C-m; then
@@ -418,14 +667,35 @@ restart_watch_installation() {
 	fi
 }
 
+#------------------------------------------------------------------------------
 # monitor_loop - Main monitoring loop
-monitor_loop() {
+#
+# Continuously monitors the controller server's health at regular intervals.
+# When the server goes down, automatically restarts watch-installation.
+# Tracks check count and failure count for monitoring statistics.
+# Exits gracefully when SHUTDOWN_REQUESTED flag is set.
+#
+# Dependencies:
+#   CHECK_INTERVAL, CONTROLLER_IP, SHUTDOWN_REQUESTED
+#
+# Side Effects:
+#   Calls check_server_alive() and restart_watch_installation()
+#   Sleeps for CHECK_INTERVAL seconds between checks
+#
+# Output:
+#   Logs monitoring progress, health checks, failures, and recoveries
+#
+# Examples:
+#   monitor_loop  # Runs until interrupted
+#------------------------------------------------------------------------------
+function monitor_loop() {
 	log_info "Starting monitoring loop (check interval: ${CHECK_INTERVAL}s)"
 	log_info "Monitoring controller server: ${CONTROLLER_IP}"
 	log_info "Press Ctrl+C to stop monitoring"
 
 	local check_count=0
 	local failure_count=0
+	local restart_sent=false
 
 	while [[ "${SHUTDOWN_REQUESTED}" == "false" ]]; do
 		check_count=$((check_count + 1))
@@ -434,12 +704,18 @@ monitor_loop() {
 		if ! check_server_alive; then
 			failure_count=$((failure_count + 1))
 			log_error "Server is down! (failure #${failure_count})"
-			restart_watch_installation
+			if [[ "${restart_sent}" == "false" ]]; then
+				restart_watch_installation
+				restart_sent=true
+			else
+				log_debug "Restart already sent, waiting for recovery"
+			fi
 		else
 			log_info "Server is alive and responding"
 			if [[ ${failure_count} -gt 0 ]]; then
 				log_info "Server recovered after ${failure_count} failure(s)"
 				failure_count=0
+				restart_sent=false
 			fi
 		fi
 
@@ -454,7 +730,32 @@ monitor_loop() {
 # Main Function
 #
 
-main() {
+#------------------------------------------------------------------------------
+# main - Main entry point for the script
+#
+# Orchestrates the complete workflow:
+#   1. Sets up signal handlers for graceful shutdown
+#   2. Validates all required environment variables
+#   3. Detects system architecture and PowerVC tool
+#   4. Validates all required programs are available
+#   5. Detects tmux session and network interface
+#   6. Builds the PowerVC watch-installation command
+#   7. Starts the monitoring loop
+#
+# Exit Codes:
+#   EXIT_SUCCESS (0)                    - Normal exit after signal
+#   EXIT_MISSING_ENV_VAR (1)           - Missing environment variable
+#   EXIT_MISSING_PROGRAM (2)           - Missing required program
+#   EXIT_TMUX_DETECTION_FAILED (3)     - Failed to detect tmux session
+#   EXIT_INTERFACE_DETECTION_FAILED (4) - Failed to detect network interface
+#
+# Signal Handling:
+#   SIGINT, SIGTERM - Triggers graceful shutdown via signal_handler()
+#
+# Examples:
+#   main "$@"
+#------------------------------------------------------------------------------
+function main() {
 	log_info "=========================================="
 	log_info "${SCRIPT_NAME} v${SCRIPT_VERSION} starting"
 	log_info "=========================================="

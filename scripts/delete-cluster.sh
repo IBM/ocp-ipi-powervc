@@ -14,6 +14,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#==============================================================================
+# Script: delete-cluster.sh
+# Description: Comprehensive OpenShift cluster deletion script for PowerVC
+#              environments. Handles metadata cleanup, cluster destruction,
+#              and optional directory removal.
+#
+# Usage: ./delete-cluster.sh
+#
+# Environment Variables:
+#   CLOUD          - OpenStack cloud name from clouds.yaml (prompted if unset)
+#   CLUSTER_DIR    - Directory containing cluster installation files (prompted if unset)
+#   CONTROLLER_IP  - IP address of the PowerVC controller (prompted if unset)
+#
+# Prerequisites:
+#   - ocp-ipi-powervc-linux-{arch} tool must be in PATH
+#   - openshift-install must be in PATH
+#   - jq must be in PATH
+#   - openstack CLI must be in PATH
+#   - Valid OpenStack credentials configured in clouds.yaml
+#   - Cluster directory must contain metadata.json
+#
+# Exit Codes:
+#   0 - Success
+#   1 - Error (missing dependencies, invalid configuration, operation failure)
+#
+# Examples:
+#   # Interactive mode (prompts for all required information)
+#   ./delete-cluster.sh
+#
+#   # Non-interactive mode with environment variables
+#   CLOUD="mycloud" CLUSTER_DIR="test" CONTROLLER_IP="192.168.1.100" ./delete-cluster.sh
+#==============================================================================
+
 set -euo pipefail
 
 #==============================================================================
@@ -22,47 +55,97 @@ set -euo pipefail
 readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Color codes for output
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[1;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_RESET='\033[0m'
+# ANSI color codes for enhanced terminal output
+readonly COLOR_RED='\033[0;31m'      # Error messages
+readonly COLOR_GREEN='\033[0;32m'    # Success messages
+readonly COLOR_YELLOW='\033[1;33m'   # Warning messages
+readonly COLOR_BLUE='\033[0;34m'     # Info messages
+readonly COLOR_RESET='\033[0m'       # Reset to default
+
+# Temporary directory for metadata backup (initialized in display_cluster_info)
+TEMP_DIR=""
 
 #==============================================================================
 # Utility Functions
 #==============================================================================
 
-# Print colored messages
-log_info() {
+#------------------------------------------------------------------------------
+# Function: log_info
+# Description: Print informational messages in blue color
+# Arguments:
+#   $* - Message text to display
+# Output: Formatted message to stdout
+#------------------------------------------------------------------------------
+function log_info() {
 	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"
 }
 
-log_success() {
+#------------------------------------------------------------------------------
+# Function: log_success
+# Description: Print success messages in green color
+# Arguments:
+#   $* - Message text to display
+# Output: Formatted message to stdout
+#------------------------------------------------------------------------------
+function log_success() {
 	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"
 }
 
-log_warning() {
+#------------------------------------------------------------------------------
+# Function: log_warning
+# Description: Print warning messages in yellow color
+# Arguments:
+#   $* - Message text to display
+# Output: Formatted message to stdout
+#------------------------------------------------------------------------------
+function log_warning() {
 	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"
 }
 
-log_error() {
+#------------------------------------------------------------------------------
+# Function: log_error
+# Description: Print error messages in red color to stderr
+# Arguments:
+#   $* - Error message text to display
+# Output: Formatted error message to stderr
+#------------------------------------------------------------------------------
+function log_error() {
 	echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*" >&2
 }
 
-# Exit with error message
-die() {
+#------------------------------------------------------------------------------
+# Function: die
+# Description: Print error message and exit script with failure status
+# Arguments:
+#   $* - Error message to display before exiting
+# Exit Code: 1 (failure)
+#------------------------------------------------------------------------------
+function die() {
 	log_error "$*"
 	exit 1
 }
 
-# Check if a command exists
-command_exists() {
+#------------------------------------------------------------------------------
+# Function: command_exists
+# Description: Check if a command is available in the system PATH
+# Arguments:
+#   $1 - Command name to check
+# Returns:
+#   0 - Command exists
+#   1 - Command not found
+#------------------------------------------------------------------------------
+function command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
-# Validate non-empty variable
-validate_non_empty() {
+#------------------------------------------------------------------------------
+# Function: validate_non_empty
+# Description: Validate that a variable is set and contains a non-empty value
+# Arguments:
+#   $1 - Variable name to validate (not the value itself)
+# Exit: Terminates script if variable is empty or unset
+#------------------------------------------------------------------------------
+function validate_non_empty() {
 	local var_name="$1"
 	local var_value="${!var_name:-}"
 
@@ -71,8 +154,19 @@ validate_non_empty() {
 	fi
 }
 
-# Prompt for input with validation
-prompt_input() {
+#------------------------------------------------------------------------------
+# Function: prompt_input
+# Description: Prompt user for input with optional default value and validation
+# Arguments:
+#   $1 - Prompt text to display to user
+#   $2 - Variable name to store the input value
+#   $3 - Default value (optional, empty string if not provided)
+#   $4 - Allow empty input flag (optional, "false" by default)
+# Side Effects:
+#   - Sets and exports the variable specified in $2
+#   - Exits script if input is empty and allow_empty is false
+#------------------------------------------------------------------------------
+function prompt_input() {
 	local prompt_text="$1"
 	local var_name="$2"
 	local default_value="${3:-}"
@@ -91,27 +185,43 @@ prompt_input() {
 		die "You must enter a value for ${var_name}"
 	fi
 
-	eval "${var_name}='${input_value}'"
+	printf -v "${var_name}" '%s' "${input_value}"
 	export "${var_name}"
 }
 
-# Execute command with error handling
-execute_with_check() {
+#------------------------------------------------------------------------------
+# Function: execute_with_check
+# Description: Execute a command with error handling and status reporting
+# Arguments:
+#   $1 - Description of the operation being performed
+#   $@ - Command and arguments to execute (shift removes first arg)
+# Exit: Terminates script if command fails
+#------------------------------------------------------------------------------
+function execute_with_check() {
 	local description="$1"
 	shift
 
 	log_info "Executing: ${description}"
 
-	if ! "$@"; then
-		local rc=$?
+	local rc=0
+	"$@" || rc=$?
+	if [[ ${rc} -ne 0 ]]; then
 		die "${description} failed with exit code ${rc}"
 	fi
 
 	log_success "${description} completed successfully"
 }
 
-# Prompt for confirmation
-confirm_action() {
+#------------------------------------------------------------------------------
+# Function: confirm_action
+# Description: Prompt user for yes/no confirmation before proceeding
+# Arguments:
+#   $1 - Confirmation prompt text
+# Returns:
+#   0 - User confirmed (yes/y/YES/Y)
+#   1 - User declined or provided other input
+#------------------------------------------------------------------------------
+function confirm_action() {
 	local prompt_text="$1"
 	local response
 
@@ -123,7 +233,7 @@ confirm_action() {
 			;;
 		*)
 			log_info "Operation cancelled by user"
-			exit 0
+			return 1
 			;;
 	esac
 }
@@ -132,8 +242,16 @@ confirm_action() {
 # Main Functions
 #==============================================================================
 
-# Initialize architecture-specific tool name
-initialize_powervc_tool() {
+#------------------------------------------------------------------------------
+# Function: initialize_powervc_tool
+# Description: Determine the architecture-specific PowerVC tool name based on
+#              the system architecture. Sets the POWERVC_TOOL global variable.
+# Side Effects:
+#   - Sets and exports POWERVC_TOOL as readonly
+# Exit: Terminates script if architecture is unsupported
+# Supported Architectures: x86_64 (amd64), ppc64le, aarch64
+#------------------------------------------------------------------------------
+function initialize_powervc_tool() {
 	local arch
 	arch="$(uname -m)"
 
@@ -155,9 +273,15 @@ initialize_powervc_tool() {
 	log_info "Using PowerVC tool: ${POWERVC_TOOL}"
 }
 
-# Check all required programs are installed
-check_required_programs() {
-	local -a required_programs=("${POWERVC_TOOL}" "openshift-install" "jq")
+#------------------------------------------------------------------------------
+# Function: check_required_programs
+# Description: Verify that all required programs are installed and available
+#              in the system PATH. Checks for PowerVC tool, openshift-install,
+#              and jq.
+# Exit: Terminates script if any required program is missing
+#------------------------------------------------------------------------------
+function check_required_programs() {
+	local -a required_programs=("${POWERVC_TOOL}" "openshift-install" "jq" "openstack")
 	local missing_programs=()
 
 	log_info "Checking required programs..."
@@ -176,8 +300,35 @@ check_required_programs() {
 	log_success "All required programs are available"
 }
 
-# Collect cluster directory
-collect_cluster_directory() {
+#------------------------------------------------------------------------------
+# Function: collect_cloud_name
+# Description: Collect the OpenStack cloud name from environment or user input.
+#              The cloud name must match an entry in clouds.yaml.
+# Side Effects:
+#   - Sets and exports CLOUD variable if not already set
+# Exit: Terminates script if CLOUD is empty after collection
+#------------------------------------------------------------------------------
+function collect_cloud_name() {
+	log_info "Collecting OpenStack cloud name..."
+
+	if [[ ! -v CLOUD ]]; then
+		prompt_input "What is the OpenStack cloud name (from clouds.yaml)" "CLOUD"
+	fi
+
+	validate_non_empty "CLOUD"
+
+	log_success "Cloud name: ${CLOUD}"
+}
+
+#------------------------------------------------------------------------------
+# Function: collect_cluster_directory
+# Description: Collect the cluster installation directory path from environment
+#              or user input. Validates that the directory exists.
+# Side Effects:
+#   - Sets and exports CLUSTER_DIR variable if not already set
+# Exit: Terminates script if directory doesn't exist or CLUSTER_DIR is empty
+#------------------------------------------------------------------------------
+function collect_cluster_directory() {
 	log_info "Collecting cluster directory information..."
 
 	if [[ ! -v CLUSTER_DIR ]]; then
@@ -193,8 +344,14 @@ collect_cluster_directory() {
 	log_success "Cluster directory: ${CLUSTER_DIR}"
 }
 
-# Verify cluster directory contents
-verify_cluster_directory() {
+#------------------------------------------------------------------------------
+# Function: verify_cluster_directory
+# Description: Verify that the cluster directory contains expected files,
+#              particularly metadata.json. Prompts user to continue if files
+#              are missing.
+# Exit: Terminates script (status 0) if user declines to continue with missing files
+#------------------------------------------------------------------------------
+function verify_cluster_directory() {
 	log_info "Verifying cluster directory contents..."
 
 	local -a required_files=("metadata.json")
@@ -209,19 +366,21 @@ verify_cluster_directory() {
 	done
 
 	if [[ ${#missing_files[@]} -gt 0 ]]; then
-		log_warning "Some expected files are missing: ${missing_files[*]}"
-		log_warning "This may indicate the cluster was not fully created or already deleted"
-
-		if ! confirm_action "Do you want to continue anyway?"; then
-			exit 0
-		fi
+		die "Cannot proceed without required files: ${missing_files[*]}"
 	else
 		log_success "Cluster directory contains expected files"
 	fi
 }
 
-# Collect controller IP
-collect_controller_ip() {
+#------------------------------------------------------------------------------
+# Function: collect_controller_ip
+# Description: Collect the PowerVC controller IP address from environment or
+#              user input. This IP is used for metadata operations.
+# Side Effects:
+#   - Sets and exports CONTROLLER_IP variable if not already set
+# Exit: Terminates script if CONTROLLER_IP is empty after collection
+#------------------------------------------------------------------------------
+function collect_controller_ip() {
 	log_info "Collecting controller IP information..."
 
 	if [[ ! -v CONTROLLER_IP ]]; then
@@ -233,8 +392,13 @@ collect_controller_ip() {
 	log_success "Controller IP: ${CONTROLLER_IP}"
 }
 
-# Verify controller connectivity
-verify_controller() {
+#------------------------------------------------------------------------------
+# Function: verify_controller
+# Description: Verify network connectivity to the PowerVC controller using ping.
+#              Sends a single ping with 5-second timeout.
+# Exit: Terminates script if controller is not reachable
+#------------------------------------------------------------------------------
+function verify_controller() {
 	log_info "Verifying controller connectivity: ${CONTROLLER_IP}"
 
 	if ! ping -c1 -W5 "${CONTROLLER_IP}" >/dev/null 2>&1; then
@@ -244,9 +408,14 @@ verify_controller() {
 	log_success "Controller is reachable"
 }
 
-# Delete metadata from controller
-delete_metadata() {
-	local metadata_file="${CLUSTER_DIR}/metadata.json"
+#------------------------------------------------------------------------------
+# Function: delete_metadata
+# Description: Delete cluster metadata from the PowerVC controller using the
+#              send-metadata command. Skips if metadata.json is not found.
+# Exit: Terminates script if metadata deletion fails
+#------------------------------------------------------------------------------
+function delete_metadata() {
+	local metadata_file="${TEMP_DIR}/metadata.json"
 
 	if [[ ! -f "${metadata_file}" ]]; then
 		log_warning "Metadata file not found: ${metadata_file}"
@@ -264,8 +433,17 @@ delete_metadata() {
 		--shouldDebug true
 }
 
-# Destroy OpenShift cluster
-destroy_cluster() {
+#------------------------------------------------------------------------------
+# Function: destroy_cluster
+# Description: Destroy the OpenShift cluster using openshift-install. Prompts
+#              for confirmation before proceeding. Performs container cleanup
+#              before cluster destruction.
+# Side Effects:
+#   - Calls hack_cleanup_containers to remove OpenStack containers
+#   - Deletes all cluster resources via openshift-install
+# Exit: Terminates script if user declines or if destruction fails
+#------------------------------------------------------------------------------
+function destroy_cluster() {
 	log_info "Destroying OpenShift cluster..."
 	log_warning "This operation will delete all cluster resources"
 
@@ -284,13 +462,22 @@ destroy_cluster() {
 		--log-level=debug
 }
 
-# Display cluster information before deletion
-display_cluster_info() {
+#------------------------------------------------------------------------------
+# Function: display_cluster_info
+# Description: Display cluster information extracted from metadata.json before
+#              deletion. Shows cluster name, infrastructure ID, directory, and
+#              controller IP.
+# Side Effects:
+#   - Sets and exports INFRAID variable from metadata.json (REQUIRED by destroy_cluster)
+# Exit: Terminates script if metadata.json is missing or infrastructure ID is unknown
+#------------------------------------------------------------------------------
+function display_cluster_info() {
 	log_info "Cluster deletion information:"
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 	if [[ -f "${CLUSTER_DIR}/metadata.json" ]]; then
 		local cluster_name
+		local infra_id
 
 		cluster_name=$(jq -r '.clusterName // "unknown"' "${CLUSTER_DIR}/metadata.json" 2>/dev/null || echo "unknown")
 		infra_id=$(jq -r '.infraID // "unknown"' "${CLUSTER_DIR}/metadata.json" 2>/dev/null || echo "unknown")
@@ -298,11 +485,16 @@ display_cluster_info() {
 		echo "  Cluster Name:	  ${cluster_name}"
 		echo "  Infrastructure ID: ${infra_id}"
 
-	if [[ "${infra_id}" == "unknown" ]]; then
-		die "Infrastructure ID is unknown"
-	fi
+		if [[ "${infra_id}" == "unknown" ]]; then
+			die "Infrastructure ID is unknown"
+		fi
 
-	export INFRAID=${infra_id}
+		export INFRAID="${infra_id}"
+
+		TEMP_DIR=$(mktemp -d)
+		/bin/cp "${CLUSTER_DIR}/metadata.json" "${TEMP_DIR}"
+	else
+		die "metadata.json not found, cannot determine infrastructure ID"
 	fi
 
 	echo "  Cluster Directory: ${CLUSTER_DIR}"
@@ -310,23 +502,36 @@ display_cluster_info() {
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# Cleanup OpenStack containers and objects one at a time
-# This is a workaround for bulk deletion failures
-# Args:
-#   $1: Cloud name
-#   $2: Infrastructure ID to filter containers
-# Returns: 0 on success, 1 on failure
-hack_cleanup_containers() {
-	if [[ -z "${CLOUD}" ]] || [[ -z "${INFRAID}" ]]; then
+#------------------------------------------------------------------------------
+# Function: hack_cleanup_containers
+# Description: Cleanup OpenStack containers and objects one at a time. This is
+#              a workaround for bulk deletion failures in OpenStack. Filters
+#              containers by infrastructure ID and deletes all objects before
+#              removing the container itself.
+# Arguments:
+#   $1 - Cloud name (from clouds.yaml)
+#   $2 - Infrastructure ID to filter containers
+# Returns:
+#   0 - Success (all containers processed or none found)
+#   1 - Failure (missing required parameters)
+# Note: Individual object/container deletion failures are logged as warnings
+#       but don't cause the function to fail
+#------------------------------------------------------------------------------
+function hack_cleanup_containers() {
+	local cloud="${1:-}"
+	local infra_id="${2:-}"
+
+	if [[ -z "${cloud}" ]] || [[ -z "${infra_id}" ]]; then
 		log_error "hack_cleanup_containers requires cloud and infra_id parameters"
 		return 1
 	fi
 
-	log_info "Cleaning up OpenStack containers for infrastructure: ${INFRAID}"
+	log_info "Cleaning up OpenStack containers for infrastructure: ${infra_id}"
 
 	# List all containers
-	if ! openstack --os-cloud="${CLOUD}" container list --format csv &>/dev/null; then
-		log_warning "Failed to list containers or no containers found"
+	local container_list_output
+	if ! container_list_output=$(openstack --os-cloud="${cloud}" container list --format csv 2>&1); then
+		log_warning "Failed to list containers: ${container_list_output}"
 		return 0
 	fi
 
@@ -347,25 +552,46 @@ hack_cleanup_containers() {
 			object_count=$((object_count + 1))
 			log_info "Deleting object: ${object} from container: ${container}"
 
-			if ! openstack --os-cloud="${CLOUD}" object delete "${container}" "${object}"; then
+			if ! openstack --os-cloud="${cloud}" object delete "${container}" "${object}"; then
 				log_warning "Failed to delete object: ${object}"
 			fi
-		done < <(openstack --os-cloud="${CLOUD}" object list "${container}" --format csv 2>/dev/null | sed -e '/\(Name\)/d' -e 's,",,g')
+		done < <(openstack --os-cloud="${cloud}" object list "${container}" --format value -c Name 2>/dev/null)
 
 		# Delete the container itself
 		log_info "Deleting container: ${container}"
-		if ! openstack --os-cloud="${CLOUD}" container delete "${container}"; then
+		if ! openstack --os-cloud="${cloud}" container delete "${container}"; then
 			log_warning "Failed to delete container: ${container}"
 		fi
-	done < <(openstack --os-cloud="${CLOUD}" container list --format csv 2>/dev/null | sed -e '/\(Name\|container_name\)/d' -e 's,",,g' | grep -F -- "${INFRAID}" || true)
+	done < <(openstack --os-cloud="${cloud}" container list --format value -c Name 2>/dev/null | grep -F -- "${infra_id}" || true)
 
 	log_info "Container cleanup complete. Processed ${container_count} containers and ${object_count} objects"
 	return 0
 }
 
-# Cleanup cluster directory (optional)
-cleanup_cluster_directory() {
+#------------------------------------------------------------------------------
+# Function: cleanup_cluster_directory
+# Description: Optionally remove the cluster directory after successful deletion.
+#              Prompts user for confirmation before removing the directory.
+# Note: Failure to remove directory is logged but doesn't cause script failure
+#------------------------------------------------------------------------------
+function cleanup_cluster_directory() {
 	log_info "Cluster directory cleanup..."
+
+	# Check if directory still exists (may have been removed by openshift-install)
+	if [[ ! -d "${CLUSTER_DIR}" ]]; then
+		log_info "Cluster directory already removed: ${CLUSTER_DIR}"
+		return 0
+	fi
+
+	# Safety check: prevent deletion of critical directories
+	local resolved_dir
+	resolved_dir="$(cd "${CLUSTER_DIR}" && pwd)"
+	case "${resolved_dir}" in
+		/|/home|/root|/etc|/var|/usr|/tmp|/bin|/sbin|/lib|/opt|/boot)
+			log_error "Refusing to delete critical directory: ${resolved_dir}"
+			return 1
+		;;
+	esac
 
 	if confirm_action "Do you want to remove the cluster directory (${CLUSTER_DIR})?"; then
 		log_info "Removing cluster directory: ${CLUSTER_DIR}"
@@ -381,11 +607,63 @@ cleanup_cluster_directory() {
 	fi
 }
 
+################################################################################
+# cleanup_on_exit: Trap handler for script exit
+# Automatically cleans up resources on script failure
+# Registered via: trap cleanup_on_exit EXIT
+# Cleans up:
+#   - Temporary cluster metadata
+################################################################################
+function cleanup_on_exit() {
+	local exit_code=$?
+
+	if [[ ${exit_code} -ne 0 ]]; then
+		log_error "Script failed with exit code ${exit_code}"
+	fi
+
+	# If we have previously save the metadata
+	if [[ -n "${TEMP_DIR}" ]] && [[ -d "${TEMP_DIR}" ]]
+	then
+		# And the metadata is missing
+		if [[ ! -d "${CLUSTER_DIR}" ]]; then
+			# Then copy it back
+			mkdir -p "${CLUSTER_DIR}"
+			/bin/cp "${TEMP_DIR}/metadata.json" "${CLUSTER_DIR}"
+		fi
+
+		/bin/rm -rf "${TEMP_DIR}"
+	fi
+}
+
+trap cleanup_on_exit EXIT
+
 #==============================================================================
 # Main Execution
 #==============================================================================
 
-main() {
+#------------------------------------------------------------------------------
+# Function: main
+# Description: Main entry point for the cluster deletion script. Orchestrates
+#              the complete deletion workflow including:
+#              1. Initialization and prerequisite checks
+#              2. Information collection (directory, controller, cloud)
+#              3. Connectivity verification
+#              4. Cluster information display
+#              5. Cluster destruction
+#              6. Metadata cleanup
+#              7. Optional directory removal
+# Arguments:
+#   $@ - Command line arguments (currently unused, reserved for future use)
+# Exit Codes:
+#   0 - Successful deletion
+#   1 - Error during any phase (via die() calls in subfunctions)
+# Workflow:
+#   - Validates all prerequisites before making any changes
+#   - Prompts for user confirmation before destructive operations
+#   - Provides detailed logging throughout the process
+#   - Handles errors gracefully with informative messages
+#------------------------------------------------------------------------------
+function main() {
 	log_info "Starting OpenShift cluster deletion script"
 	log_info "Script: ${SCRIPT_NAME}"
 	log_info "Working directory: $(pwd)"
@@ -400,6 +678,7 @@ main() {
 	collect_cluster_directory
 	verify_cluster_directory
 	collect_controller_ip
+	collect_cloud_name
 	echo ""
 
 	# Verify connectivity
@@ -414,7 +693,7 @@ main() {
 	destroy_cluster
 	echo ""
 
-	# Delete metadata from controller
+	# Delete saved metadata from controller
 	delete_metadata
 	echo ""
 

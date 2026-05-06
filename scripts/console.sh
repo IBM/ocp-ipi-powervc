@@ -1,5 +1,51 @@
 #!/usr/bin/env bash
 
+#==============================================================================
+# console.sh - OpenShift Cluster Node Console Connection Script
+#==============================================================================
+#
+# Description:
+#   Connects to the console of an OpenShift cluster node via PowerVC/HMC.
+#   This script automates the process of obtaining console access to cluster
+#   nodes (bootstrap, masters, or custom servers) by:
+#   - Querying OpenStack/PowerVC for server information
+#   - Authenticating with PowerVC API
+#   - Retrieving hypervisor and console connection details
+#   - Generating the appropriate SSH command for console access
+#
+# Usage:
+#   ./console.sh <server-name>
+#
+# Arguments:
+#   server-name - Name of the server to connect to
+#                 Valid infra servers: bootstrap, master-0, master-1, master-2
+#                 Or any custom server name
+#
+# Environment Variables:
+#   CLOUD       - Cloud name from ~/.config/openstack/clouds.yaml (required)
+#   CLUSTER_DIR - Directory containing cluster metadata (default: test)
+#   DEBUG       - Enable debug output (true/false, default: false)
+#   TOKEN_ID    - Existing PowerVC authentication token (optional)
+#
+# Prerequisites:
+#   - OpenStack CLI tools (openstack command)
+#   - jq (JSON processor)
+#   - yq (YAML processor)
+#   - curl (HTTP client)
+#   - ping (network utility)
+#   - sshpass (for password-based SSH)
+#   - SSH_PASSWORDS array set in environment
+#
+# Examples:
+#   export CLOUD="mycloud"
+#   export SSH_PASSWORDS=("password1" "password2")
+#   ./console.sh bootstrap
+#   ./console.sh master-0
+#
+# Exit Codes:
+#   0 - Success
+#   1 - Error (various failure conditions)
+#
 # Copyright 2025 IBM Corp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +59,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#==============================================================================
 
 set -euo pipefail
 
@@ -23,56 +70,158 @@ readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly CLOUDS_YAML="${HOME}/.config/openstack/clouds.yaml"
 
-# Color codes for output
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[1;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_RESET='\033[0m'
+# ANSI color codes for enhanced terminal output
+readonly COLOR_RED='\033[0;31m'      # Error messages
+readonly COLOR_GREEN='\033[0;32m'    # Success messages
+readonly COLOR_YELLOW='\033[1;33m'   # Warning messages
+readonly COLOR_BLUE='\033[0;34m'     # Info messages
+readonly COLOR_RESET='\033[0m'       # Reset to default
 
 # Debug mode
 DEBUG="${DEBUG:-false}"
+# Normalize DEBUG to true/false
+[[ "${DEBUG}" == "true" ]] && DEBUG=true || DEBUG=false
 
 #==============================================================================
 # Utility Functions
 #==============================================================================
 
-# Print colored messages
-log_info() {
+#------------------------------------------------------------------------------
+# log_info - Print informational message with blue color
+#
+# Outputs an informational message to stdout with [INFO] prefix in blue.
+#
+# Arguments:
+#   $* - Message text to display
+#
+# Returns:
+#   0 - Always succeeds
+#------------------------------------------------------------------------------
+function log_info() {
 	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"
 }
 
-log_success() {
+#------------------------------------------------------------------------------
+# log_success - Print success message with green color
+#
+# Outputs a success message to stdout with [SUCCESS] prefix in green.
+#
+# Arguments:
+#   $* - Message text to display
+#
+# Returns:
+#   0 - Always succeeds
+#------------------------------------------------------------------------------
+function log_success() {
 	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"
 }
 
-log_warning() {
+#------------------------------------------------------------------------------
+# log_warning - Print warning message with yellow color
+#
+# Outputs a warning message to stdout with [WARNING] prefix in yellow.
+#
+# Arguments:
+#   $* - Message text to display
+#
+# Returns:
+#   0 - Always succeeds
+#------------------------------------------------------------------------------
+function log_warning() {
 	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"
 }
 
-log_error() {
+#------------------------------------------------------------------------------
+# log_error - Print error message with red color
+#
+# Outputs an error message to stderr with [ERROR] prefix in red.
+#
+# Arguments:
+#   $* - Message text to display
+#
+# Returns:
+#   0 - Always succeeds
+#------------------------------------------------------------------------------
+function log_error() {
 	echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*" >&2
 }
 
-log_debug() {
+#------------------------------------------------------------------------------
+# log_debug - Print debug message when DEBUG mode is enabled
+#
+# Outputs a debug message to stdout with [DEBUG] prefix in yellow, but only
+# when the DEBUG global variable is set to true.
+#
+# Arguments:
+#   $* - Message text to display
+#
+# Globals:
+#   DEBUG - Boolean flag controlling debug output
+#
+# Returns:
+#   0 - Always succeeds
+#------------------------------------------------------------------------------
+function log_debug() {
 	if ${DEBUG}; then
 		echo -e "${COLOR_YELLOW}[DEBUG]${COLOR_RESET} $*"
 	fi
 }
 
-# Exit with error message
-die() {
+#------------------------------------------------------------------------------
+# die - Exit script with error message
+#
+# Logs an error message and exits the script with status code 1.
+#
+# Arguments:
+#   $* - Error message to display
+#
+# Returns:
+#   Never returns (exits with code 1)
+#------------------------------------------------------------------------------
+function die() {
 	log_error "$*"
 	exit 1
 }
 
-# Check if a command exists
-command_exists() {
+#------------------------------------------------------------------------------
+# command_exists - Check if a command is available in PATH
+#
+# Tests whether a given command exists and is executable in the current PATH.
+#
+# Arguments:
+#   $1 - Command name to check
+#
+# Returns:
+#   0 - Command exists
+#   1 - Command not found
+#
+# Example:
+#   if command_exists "jq"; then
+#       echo "jq is installed"
+#   fi
+#------------------------------------------------------------------------------
+function command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
-# Validate non-empty variable
-validate_non_empty() {
+#------------------------------------------------------------------------------
+# validate_non_empty - Validate that a variable is set and non-empty
+#
+# Checks if a named variable is set and contains a non-empty value. Exits
+# the script with an error if the variable is empty or unset.
+#
+# Arguments:
+#   $1 - Name of the variable to validate
+#
+# Returns:
+#   0 - Variable is set and non-empty
+#   Never returns if validation fails (calls die)
+#
+# Example:
+#   CLOUD="mycloud"
+#   validate_non_empty "CLOUD"  # Succeeds
+#------------------------------------------------------------------------------
+function validate_non_empty() {
 	local var_name="$1"
 	local var_value="${!var_name:-}"
 
@@ -81,8 +230,27 @@ validate_non_empty() {
 	fi
 }
 
-# Prompt for input with validation
-prompt_input() {
+#------------------------------------------------------------------------------
+# prompt_input - Prompt user for input with optional default value
+#
+# Prompts the user for input, optionally providing a default value. The input
+# is stored in the specified variable and exported to the environment.
+#
+# Arguments:
+#   $1 - Prompt text to display
+#   $2 - Variable name to store the input
+#   $3 - Default value (optional)
+#   $4 - Allow empty input: "true" or "false" (optional, default: "false")
+#
+# Returns:
+#   0 - Input successfully collected
+#   Never returns if validation fails and allow_empty is false (calls die)
+#
+# Example:
+#   prompt_input "Enter cloud name" "CLOUD" "default-cloud"
+#   prompt_input "Enter optional value" "OPTIONAL" "" "true"
+#------------------------------------------------------------------------------
+function prompt_input() {
 	local prompt_text="$1"
 	local var_name="$2"
 	local default_value="${3:-}"
@@ -101,19 +269,36 @@ prompt_input() {
 		die "You must enter a value for ${var_name}"
 	fi
 
-	eval "${var_name}='${input_value}'"
+	printf -v "${var_name}" '%s' "${input_value}"
 	export "${var_name}"
 }
 
-# Execute command with error handling
-execute_with_check() {
+#------------------------------------------------------------------------------
+# execute_with_check - Execute command with error handling and logging
+#
+# Executes a command with automatic error checking and logging. Logs the
+# command description before execution and success/failure after completion.
+#
+# Arguments:
+#   $1 - Description of the command being executed
+#   $@ - Command and arguments to execute (shift applied to $1)
+#
+# Returns:
+#   0 - Command executed successfully
+#   Never returns if command fails (calls die)
+#
+# Example:
+#   execute_with_check "Installing packages" apt-get install -y jq
+#------------------------------------------------------------------------------
+function execute_with_check() {
 	local description="$1"
 	shift
 
 	log_info "Executing: ${description}"
 
-	if ! "$@"; then
-		local rc=$?
+	local rc=0
+	"$@" || rc=$?
+	if [[ ${rc} -ne 0 ]]; then
 		die "${description} failed with exit code ${rc}"
 	fi
 
@@ -124,8 +309,22 @@ execute_with_check() {
 # Main Functions
 #==============================================================================
 
-# Display usage information
-show_usage() {
+#------------------------------------------------------------------------------
+# show_usage - Display script usage information
+#
+# Prints comprehensive usage information including command syntax, arguments,
+# environment variables, examples, and prerequisites to stdout.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0 - Always succeeds
+#
+# Output:
+#   Formatted usage text to stdout
+#------------------------------------------------------------------------------
+function show_usage() {
 	cat <<EOF
 Usage: ${SCRIPT_NAME} <server-name>
 
@@ -151,8 +350,30 @@ Note: You must have SSH_PASSWORDS array set in your environment:
 EOF
 }
 
-# Parse command line arguments
-parse_arguments() {
+#------------------------------------------------------------------------------
+# parse_arguments - Parse and validate command line arguments
+#
+# Parses the server name argument and determines if it's a standard
+# infrastructure server (bootstrap, master-0, master-1, master-2) or a
+# custom server name. Sets global variables ARG, IS_INFRA, and SERVER.
+#
+# Arguments:
+#   $1 - Server name to connect to
+#
+# Globals Set:
+#   ARG      - The server name argument
+#   IS_INFRA - Boolean flag (true if standard infra server, false otherwise)
+#   SERVER   - The server name (set only for custom servers)
+#
+# Returns:
+#   0 - Valid argument provided
+#   1 - Invalid number of arguments (calls show_usage and exits)
+#
+# Example:
+#   parse_arguments "bootstrap"  # Sets IS_INFRA=true, ARG="bootstrap"
+#   parse_arguments "my-server"  # Sets IS_INFRA=false, SERVER="my-server"
+#------------------------------------------------------------------------------
+function parse_arguments() {
 	if [[ $# -ne 1 ]]; then
 		show_usage
 		exit 1
@@ -175,9 +396,24 @@ parse_arguments() {
 	esac
 }
 
-# Check all required programs are installed
-check_required_programs() {
-	local -a required_programs=("jq" "openstack" "yq" "curl" "ping")
+#------------------------------------------------------------------------------
+# check_required_programs - Verify all required programs are installed
+#
+# Checks that all required command-line tools are available in PATH.
+# Required programs: jq, openstack, yq, curl, ping
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0 - All required programs are available
+#   Never returns if any program is missing (calls die)
+#
+# Example:
+#   check_required_programs  # Verifies all tools are installed
+#------------------------------------------------------------------------------
+function check_required_programs() {
+	local -a required_programs=("jq" "openstack" "yq" "curl" "ping" "sshpass")
 	local missing_programs=()
 
 	log_info "Checking required programs..."
@@ -196,8 +432,31 @@ check_required_programs() {
 	log_success "All required programs are available"
 }
 
-# Collect cloud configuration
-collect_cloud_config() {
+#------------------------------------------------------------------------------
+# collect_cloud_config - Collect and validate cloud configuration
+#
+# Prompts for cloud name if not set in environment, validates it's non-empty,
+# and verifies the clouds.yaml file exists. The cloud name is used to access
+# OpenStack/PowerVC credentials.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   CLOUD       - Cloud name (optional, will prompt if not set)
+#   CLOUDS_YAML - Path to clouds.yaml file
+#
+# Globals Set:
+#   CLOUD - Cloud name (if prompted)
+#
+# Returns:
+#   0 - Cloud configuration collected successfully
+#   Never returns if validation fails (calls die)
+#
+# Example:
+#   collect_cloud_config  # Prompts for CLOUD if not set
+#------------------------------------------------------------------------------
+function collect_cloud_config() {
 	log_info "Collecting cloud configuration..."
 
 	if [[ ! -v CLOUD ]]; then
@@ -213,8 +472,30 @@ collect_cloud_config() {
 	log_success "Cloud: ${CLOUD}"
 }
 
-# Collect cluster directory
-collect_cluster_directory() {
+#------------------------------------------------------------------------------
+# collect_cluster_directory - Collect and validate cluster directory
+#
+# Prompts for cluster directory if not set in environment, validates it's
+# non-empty, and verifies the directory exists. The cluster directory
+# contains metadata.json needed for infrastructure servers.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   CLUSTER_DIR - Cluster directory path (optional, will prompt if not set)
+#
+# Globals Set:
+#   CLUSTER_DIR - Cluster directory path (if prompted)
+#
+# Returns:
+#   0 - Cluster directory collected and validated successfully
+#   Never returns if validation fails (calls die)
+#
+# Example:
+#   collect_cluster_directory  # Prompts for CLUSTER_DIR if not set
+#------------------------------------------------------------------------------
+function collect_cluster_directory() {
 	log_info "Collecting cluster directory information..."
 
 	if [[ ! -v CLUSTER_DIR ]]; then
@@ -230,8 +511,40 @@ collect_cluster_directory() {
 	log_success "Cluster directory: ${CLUSTER_DIR}"
 }
 
-# Extract cloud configuration from clouds.yaml
-extract_cloud_config() {
+#------------------------------------------------------------------------------
+# extract_cloud_config - Extract cloud configuration from clouds.yaml
+#
+# Parses the clouds.yaml file to extract authentication and connection
+# details for the specified cloud. Extracts:
+# - auth_url (PowerVC API endpoint)
+# - Server IP address
+# - project_id and project_name
+# - username and password
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   CLOUD       - Cloud name to extract configuration for
+#   CLOUDS_YAML - Path to clouds.yaml file
+#
+# Globals Set:
+#   SERVER_URL   - Full authentication URL
+#   HOSTNAME_URL - Hostname portion of auth_url
+#   SERVER_IP    - IP address of PowerVC server
+#   PROJECT_ID   - OpenStack project ID
+#   PROJECT_NAME - OpenStack project name
+#   USERNAME     - Authentication username
+#   PASSWORD     - Authentication password
+#
+# Returns:
+#   0 - Configuration extracted successfully
+#   Never returns if extraction fails (calls die)
+#
+# Security Note:
+#   Password is not logged for security reasons
+#------------------------------------------------------------------------------
+function extract_cloud_config() {
 	log_info "Extracting cloud configuration from ${CLOUDS_YAML}..."
 
 	# Extract auth_url
@@ -283,19 +596,72 @@ extract_cloud_config() {
 	log_success "Cloud configuration extracted successfully"
 }
 
-# Verify PowerVC server connectivity
-verify_server_connectivity() {
+#------------------------------------------------------------------------------
+# verify_server_connectivity - Verify PowerVC server is reachable
+#
+# Tests network connectivity to the PowerVC server using ping. Sends a
+# single ping with 5-second timeout to verify the server is accessible.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   SERVER_IP - IP address of PowerVC server to test
+#
+# Returns:
+#   0 - Server is reachable
+#   Never returns if server is unreachable (calls die)
+#
+# Example:
+#   verify_server_connectivity  # Pings SERVER_IP
+#------------------------------------------------------------------------------
+function verify_server_connectivity() {
 	log_info "Verifying PowerVC server connectivity: ${SERVER_IP}"
 
-	if ! ping -c1 -W5 "${SERVER_IP}" >/dev/null 2>&1; then
+	local timeout_flag="-W"
+	# macOS uses -t for timeout in seconds, Linux uses -W
+	if [[ "$(uname)" == "Darwin" ]]; then
+		timeout_flag="-t"
+	fi
+	if ! ping -c1 "${timeout_flag}" 5 "${SERVER_IP}" >/dev/null 2>&1; then
 		die "Cannot ping PowerVC server at ${SERVER_IP}"
 	fi
 
 	log_success "PowerVC server is reachable"
 }
 
-# Get server name from infra ID or use custom name
-get_server_name() {
+#------------------------------------------------------------------------------
+# get_server_name - Determine full server name
+#
+# For infrastructure servers (bootstrap, masters), constructs the full
+# server name by combining the infrastructure ID from metadata.json with
+# the server type. For custom servers, uses the name as-is.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   IS_INFRA    - Boolean flag indicating if this is an infra server
+#   ARG         - Server type (bootstrap, master-0, etc.)
+#   SERVER      - Custom server name (if IS_INFRA is false)
+#   CLUSTER_DIR - Directory containing metadata.json
+#
+# Globals Set:
+#   INFRA_ID - Infrastructure ID (only for infra servers)
+#   SERVER   - Full server name (for infra servers)
+#
+# Returns:
+#   0 - Server name determined successfully
+#   Never returns if metadata extraction fails (calls die)
+#
+# Example:
+#   # For infra server: INFRA_ID="test-abc123", ARG="bootstrap"
+#   get_server_name  # Sets SERVER="test-abc123-bootstrap"
+#
+#   # For custom server: SERVER="my-server"
+#   get_server_name  # SERVER remains "my-server"
+#------------------------------------------------------------------------------
+function get_server_name() {
 	if ${IS_INFRA}; then
 		log_info "Getting infrastructure ID from metadata..."
 
@@ -320,8 +686,38 @@ get_server_name() {
 	log_success "Server name: ${SERVER}"
 }
 
-# Query OpenStack server information
-query_server_info() {
+#------------------------------------------------------------------------------
+# query_server_info - Query OpenStack server information
+#
+# Queries OpenStack for detailed server information including hypervisor
+# hostname and instance name. Creates temporary files to store the query
+# results and sets up cleanup trap.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   CLOUD  - Cloud name for OpenStack authentication
+#   SERVER - Server name to query
+#
+# Globals Set:
+#   SERVER_FILE      - Path to temporary file containing server info (readonly)
+#   HYPERVISOR_FILE  - Path to temporary file for hypervisor info (readonly)
+#   HYPERVISOR       - Hypervisor hostname where server is running
+#   INSTANCE_NAME    - OpenStack instance name for the server
+#
+# Returns:
+#   0 - Server information retrieved successfully
+#   Never returns if query fails (calls die)
+#
+# Side Effects:
+#   - Creates temporary files (cleaned up via EXIT trap)
+#   - Sets EXIT trap for cleanup
+#
+# Example:
+#   query_server_info  # Queries server and extracts hypervisor details
+#------------------------------------------------------------------------------
+function query_server_info() {
 	log_info "Querying OpenStack server: ${SERVER}"
 
 	SERVER_FILE=$(mktemp)
@@ -353,8 +749,37 @@ query_server_info() {
 	log_success "Server information retrieved"
 }
 
-# Get authentication token from PowerVC
-get_auth_token() {
+#------------------------------------------------------------------------------
+# get_auth_token - Get authentication token from PowerVC
+#
+# Obtains an authentication token from PowerVC API using password-based
+# authentication. If TOKEN_ID is already set in the environment, reuses
+# the existing token. The token is required for subsequent API calls.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   TOKEN_ID     - Existing token (optional, checked first)
+#   SERVER_IP    - PowerVC server IP address
+#   PROJECT_NAME - OpenStack project name
+#   USERNAME     - Authentication username
+#   PASSWORD     - Authentication password
+#
+# Globals Set:
+#   TOKEN_ID - Authentication token for PowerVC API
+#
+# Returns:
+#   0 - Token obtained or existing token reused
+#   Never returns if authentication fails (calls die)
+#
+# Security Note:
+#   Uses HTTPS with TLS 1.0+ and insecure mode (skips certificate validation)
+#
+# Example:
+#   get_auth_token  # Obtains new token or reuses existing TOKEN_ID
+#------------------------------------------------------------------------------
+function get_auth_token() {
 	if [[ -v TOKEN_ID ]] && [[ -n "${TOKEN_ID}" ]]; then
 		log_info "Using existing authentication token"
 		return 0
@@ -363,9 +788,32 @@ get_auth_token() {
 	log_info "Obtaining authentication token from PowerVC..."
 
 	local auth_json
-	auth_json='{ "auth": { "scope": { "project": { "domain": { "name": "Default" }, "name": "'"${PROJECT_NAME}"'" } }, "identity": { "password": { "user": { "domain": { "name": "Default" }, "password": "'"${PASSWORD}"'", "name": "'"${USERNAME}"'" } }, "methods": [ "password" ] } } }'
+	auth_json=$(jq -n \
+		--arg project_name "${PROJECT_NAME}" \
+		--arg username "${USERNAME}" \
+		--arg password "${PASSWORD}" \
+		'{
+			auth: {
+				scope: {
+					project: {
+						domain: { name: "Default" },
+						name: $project_name
+					}
+				},
+				identity: {
+					password: {
+						user: {
+							domain: { name: "Default" },
+							password: $password,
+							name: $username
+						}
+					},
+					methods: ["password"]
+				}
+			}
+		}')
 
-	TOKEN_ID=$(curl --tlsv1 --insecure --silent -i \
+	TOKEN_ID=$(curl --tlsv1.2 --insecure --silent -i \
 		--request POST \
 		--header "Accept: application/json" \
 		--header "Content-Type: application/json" \
@@ -383,11 +831,37 @@ get_auth_token() {
 	log_success "Authentication successful"
 }
 
-# Query hypervisor information
-query_hypervisor_info() {
+#------------------------------------------------------------------------------
+# query_hypervisor_info - Query hypervisor information from PowerVC
+#
+# Queries PowerVC API for detailed hypervisor information including
+# registration details and manager type (HMC or PowerVM). The information
+# is stored in HYPERVISOR_FILE for subsequent processing.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   TOKEN_ID        - PowerVC authentication token
+#   SERVER_IP       - PowerVC server IP address
+#   PROJECT_ID      - OpenStack project ID
+#   HYPERVISOR      - Hypervisor hostname to query
+#   HYPERVISOR_FILE - Path to file for storing hypervisor info
+#
+# Globals Set:
+#   MANAGER_TYPE - Type of hypervisor manager (hmc or pvm)
+#
+# Returns:
+#   0 - Hypervisor information retrieved successfully
+#   Never returns if query fails (calls die)
+#
+# Example:
+#   query_hypervisor_info  # Queries hypervisor and extracts manager type
+#------------------------------------------------------------------------------
+function query_hypervisor_info() {
 	log_info "Querying hypervisor information..."
 
-	if ! curl --tlsv1 --insecure --silent \
+	if ! curl --tlsv1.2 --insecure --silent \
 		--request GET \
 		--header "X-Auth-Token:${TOKEN_ID}" \
 		"https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/os-hosts/${HYPERVISOR}" \
@@ -405,8 +879,35 @@ query_hypervisor_info() {
 	log_success "Hypervisor information retrieved"
 }
 
-# Get console connection details for HMC
-get_hmc_console_details() {
+#------------------------------------------------------------------------------
+# get_hmc_console_details - Get console connection details for HMC-managed systems
+#
+# Retrieves console connection details for systems managed by Hardware
+# Management Console (HMC). Extracts the primary HMC UUID from hypervisor
+# info, queries the HMC API for access details, and sets connection parameters.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   HYPERVISOR_FILE - Path to file containing hypervisor information
+#   TOKEN_ID        - PowerVC authentication token
+#   SERVER_IP       - PowerVC server IP address
+#   PROJECT_ID      - OpenStack project ID
+#
+# Globals Set:
+#   PRIMARY_HMC_UUID - UUID of the primary HMC managing the hypervisor
+#   SSH_IP           - IP address of the HMC for SSH connection
+#   USER_ID          - Username for HMC connection (always "hscroot")
+#
+# Returns:
+#   0 - HMC console details retrieved successfully
+#   Never returns if extraction fails (calls die)
+#
+# Example:
+#   get_hmc_console_details  # Retrieves HMC connection parameters
+#------------------------------------------------------------------------------
+function get_hmc_console_details() {
 	log_info "Getting HMC console details..."
 
 	# Extract primary HMC UUID
@@ -420,7 +921,7 @@ get_hmc_console_details() {
 
 	# Query HMC information
 	log_info "Querying HMC information..."
-	SSH_IP=$(curl --tlsv1 --insecure --silent \
+	SSH_IP=$(curl --tlsv1.2 --insecure --silent \
 		--request GET \
 		--header "X-Auth-Token:${TOKEN_ID}" \
 		"https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/ibm-hmcs/${PRIMARY_HMC_UUID}" 2>/dev/null | \
@@ -437,8 +938,31 @@ get_hmc_console_details() {
 	log_success "HMC console details retrieved"
 }
 
-# Get console connection details for PowerVM
-get_pvm_console_details() {
+#------------------------------------------------------------------------------
+# get_pvm_console_details - Get console connection details for PowerVM systems
+#
+# Retrieves console connection details for systems managed directly by
+# PowerVM (without HMC). Extracts user ID and access IP from hypervisor
+# registration information.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   HYPERVISOR_FILE - Path to file containing hypervisor information
+#
+# Globals Set:
+#   USER_ID - Username for PowerVM connection
+#   SSH_IP  - IP address of PowerVM host for SSH connection
+#
+# Returns:
+#   0 - PowerVM console details retrieved successfully
+#   Never returns if extraction fails (calls die)
+#
+# Example:
+#   get_pvm_console_details  # Retrieves PowerVM connection parameters
+#------------------------------------------------------------------------------
+function get_pvm_console_details() {
 	log_info "Getting PowerVM console details..."
 
 	# Extract user ID
@@ -458,8 +982,33 @@ get_pvm_console_details() {
 	log_success "PowerVM console details retrieved"
 }
 
-# Get console connection details based on manager type
-get_console_details() {
+#------------------------------------------------------------------------------
+# get_console_details - Get console connection details based on manager type
+#
+# Dispatches to the appropriate function (HMC or PowerVM) based on the
+# manager type, then extracts the host display name common to both types.
+# This is the main entry point for retrieving console connection details.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   MANAGER_TYPE    - Type of hypervisor manager (hmc or pvm)
+#   HYPERVISOR_FILE - Path to file containing hypervisor information
+#
+# Globals Set:
+#   HOST_DISPLAY_NAME - Display name of the host system
+#   SSH_IP            - IP address for SSH connection (via sub-functions)
+#   USER_ID           - Username for connection (via sub-functions)
+#
+# Returns:
+#   0 - Console details retrieved successfully
+#   Never returns if manager type is unknown or extraction fails (calls die)
+#
+# Example:
+#   get_console_details  # Calls appropriate function based on MANAGER_TYPE
+#------------------------------------------------------------------------------
+function get_console_details() {
 	case "${MANAGER_TYPE}" in
 		hmc)
 			get_hmc_console_details
@@ -480,14 +1029,39 @@ get_console_details() {
 	log_debug "HOST_DISPLAY_NAME=${HOST_DISPLAY_NAME}"
 }
 
-# Display console connection command
-display_console_command() {
+#------------------------------------------------------------------------------
+# display_console_command - Display console connection command
+#
+# Formats and displays the SSH command needed to connect to the server
+# console via mkvterm. The command uses sshpass for password authentication
+# and iterates through SSH_PASSWORDS array to handle multiple possible
+# passwords.
+#
+# Arguments:
+#   None
+#
+# Globals Read:
+#   USER_ID           - Username for SSH connection
+#   SSH_IP            - IP address for SSH connection
+#   HOST_DISPLAY_NAME - Display name of the host system
+#   INSTANCE_NAME     - OpenStack instance name
+#
+# Returns:
+#   0 - Always succeeds
+#
+# Output:
+#   Formatted console connection command to stdout
+#
+# Example:
+#   display_console_command  # Displays mkvterm SSH command
+#------------------------------------------------------------------------------
+function display_console_command() {
 	log_success "Console connection details retrieved successfully"
 	echo ""
 	log_info "To connect to the console, run the following command:"
 	echo ""
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p $SSH_PASSWORD ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"'; done'
+	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	echo ""
 	log_warning "Note: You must have SSH_PASSWORDS array set in your environment:"
@@ -498,7 +1072,27 @@ display_console_command() {
 # Main Execution
 #==============================================================================
 
-main() {
+#------------------------------------------------------------------------------
+# main - Main execution function
+#
+# Orchestrates the entire console connection process by calling functions
+# in the correct order to:
+# 1. Parse arguments
+# 2. Check requirements
+# 3. Collect configuration
+# 4. Extract cloud configuration
+# 5. Get server information
+# 6. Authenticate and query hypervisor
+# 7. Display connection command
+#
+# Arguments:
+#   $@ - Command line arguments (passed to parse_arguments)
+#
+# Returns:
+#   0 - Script completed successfully
+#   Never returns on error (sub-functions call die)
+#------------------------------------------------------------------------------
+function main() {
 	log_info "Starting console connection script"
 	log_info "Script: ${SCRIPT_NAME}"
 	echo ""

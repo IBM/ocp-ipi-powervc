@@ -48,13 +48,12 @@ QUIET=false
 OUTPUT_FORMAT="text"  # text, json, or csv
 RHEL_VERSION=""       # rhel9, rhel10, or empty (auto-detect)
 
-# Color codes for output
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[1;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_CYAN='\033[0;36m'
-readonly COLOR_RESET='\033[0m'
+# ANSI color codes for enhanced terminal output
+readonly COLOR_RED='\033[0;31m'      # Error messages
+readonly COLOR_GREEN='\033[0;32m'    # Success messages
+readonly COLOR_YELLOW='\033[1;33m'   # Warning messages
+readonly COLOR_BLUE='\033[0;34m'     # Info messages
+readonly COLOR_RESET='\033[0m'       # Reset to default
 
 #==============================================================================
 # Utility Functions
@@ -70,7 +69,7 @@ readonly COLOR_RESET='\033[0m'
 #   QUIET - If true, suppresses output
 # Example: log_info "Processing release 4.21"
 #------------------------------------------------------------------------------
-log_info() {
+function log_info() {
 	if [[ "${QUIET}" != "true" ]]; then
 		echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"
 	fi
@@ -86,7 +85,7 @@ log_info() {
 #   QUIET - If true, suppresses output
 # Example: log_success "All releases processed successfully"
 #------------------------------------------------------------------------------
-log_success() {
+function log_success() {
 	if [[ "${QUIET}" != "true" ]]; then
 		echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"
 	fi
@@ -102,7 +101,7 @@ log_success() {
 #   QUIET - If true, suppresses output
 # Example: log_warning "No release specified, using default"
 #------------------------------------------------------------------------------
-log_warning() {
+function log_warning() {
 	if [[ "${QUIET}" != "true" ]]; then
 		echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"
 	fi
@@ -110,14 +109,14 @@ log_warning() {
 
 #------------------------------------------------------------------------------
 # Function: log_error
-# Description: Print error message in red color to stderr (always shown, even in quiet mode)
+# Description: Print error message in red color to stderr unless quiet mode is enabled
 # Arguments:
 #   $* - Error message to display
 # Returns: None
-# Note: Errors are always displayed regardless of QUIET setting
+# Note: Errors are suppressed in QUIET mode; use die() for critical errors
 # Example: log_error "Failed to download file"
 #------------------------------------------------------------------------------
-log_error() {
+function log_error() {
 	if [[ "${QUIET}" != "true" ]]; then
 		echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*" >&2
 	fi
@@ -133,7 +132,7 @@ log_error() {
 #   VERBOSE - Controls whether debug messages are shown
 # Example: log_debug "HTTP status code: 200"
 #------------------------------------------------------------------------------
-log_debug() {
+function log_debug() {
 	if [[ "${VERBOSE}" == "true" ]]; then
 		echo -e "${COLOR_CYAN}[DEBUG]${COLOR_RESET} $*"
 	fi
@@ -147,7 +146,7 @@ log_debug() {
 # Returns: Never returns (exits script)
 # Example: die "Cannot connect to OpenStack"
 #------------------------------------------------------------------------------
-die() {
+function die() {
 	local save_quiet=${QUIET}
 	QUIET=false
 	log_error "$*"
@@ -165,7 +164,7 @@ die() {
 #   1 - Command not found
 # Example: command_exists "curl" && echo "curl is available"
 #------------------------------------------------------------------------------
-command_exists() {
+function command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
@@ -181,7 +180,7 @@ command_exists() {
 #   - jq: For JSON parsing
 # Example: check_required_programs
 #------------------------------------------------------------------------------
-check_required_programs() {
+function check_required_programs() {
 	local -a required_programs=("curl" "jq")
 	local missing_programs=()
 
@@ -202,6 +201,19 @@ check_required_programs() {
 }
 
 #------------------------------------------------------------------------------
+# Function: check_openstack_cli
+# Description: Checks for the existence of the OpenStack CLI
+# Example: check_openstack_cli
+#------------------------------------------------------------------------------
+function check_openstack_cli() {
+	if [[ "${DRY_RUN}" != "true" ]]; then
+		if ! command_exists "openstack"; then
+			die "Missing required program: openstack (required for verification, use --dry-run to skip)"
+		fi
+	fi
+}
+
+#------------------------------------------------------------------------------
 # Function: validate_non_empty
 # Description: Validate that a variable is set and non-empty
 # Arguments:
@@ -211,7 +223,7 @@ check_required_programs() {
 #   1 - Variable is empty or unset (exits via die)
 # Example: validate_non_empty "CLOUD"
 #------------------------------------------------------------------------------
-validate_non_empty() {
+function validate_non_empty() {
 	local var_name="$1"
 	local var_value="${!var_name:-}"
 
@@ -231,7 +243,7 @@ validate_non_empty() {
 #   CLOUD - OpenStack cloud name from clouds.yaml
 # Example: validate_environment_variables
 #------------------------------------------------------------------------------
-validate_environment_variables() {
+function validate_environment_variables() {
 	log_info "Validating environment variables..."
 
 	local -a required_vars=(
@@ -256,7 +268,7 @@ validate_environment_variables() {
 #   CLOUD - OpenStack cloud name to use
 # Example: verify_openstack_connectivity
 #------------------------------------------------------------------------------
-verify_openstack_connectivity() {
+function verify_openstack_connectivity() {
 	log_info "Verifying OpenStack connectivity..."
 
 	if ! openstack --os-cloud="${CLOUD}" image list >/dev/null 2>&1; then
@@ -281,7 +293,7 @@ verify_openstack_connectivity() {
 #   DRY_RUN - If true, skips actual verification
 # Example: verify_openstack_resource "image" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
-verify_openstack_resource() {
+function verify_openstack_resource() {
 	local resource_type="$1"
 	local resource_name="$2"
 	local cloud="${3:-${CLOUD}}"
@@ -327,7 +339,7 @@ verify_openstack_resource() {
 #   -h, --help - Show usage information
 # Example: parse_arguments "$@"
 #------------------------------------------------------------------------------
-parse_arguments() {
+function parse_arguments() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--release)
@@ -397,6 +409,12 @@ parse_arguments() {
 	if [[ "${VERBOSE}" == "true" && "${QUIET}" == "true" ]]; then
 		die "Error: --verbose and --quiet cannot be used together"
 	fi
+
+	# Auto-enable quiet mode for structured output formats
+	if [[ "${OUTPUT_FORMAT}" != "text" && "${QUIET}" != "true" ]]; then
+		log_info "Enabling quiet mode for structured output format: ${OUTPUT_FORMAT}"
+		QUIET=true
+	fi
 	
 	log_debug "Parsed arguments: RELEASES=(${RELEASES[*]}), VERBOSE=${VERBOSE}, QUIET=${QUIET}, DRY_RUN=${DRY_RUN}, OUTPUT_FORMAT=${OUTPUT_FORMAT}, RHEL_VERSION=${RHEL_VERSION}"
 }
@@ -409,7 +427,7 @@ parse_arguments() {
 # Output: Prints usage documentation to stdout
 # Example: show_usage
 #------------------------------------------------------------------------------
-show_usage() {
+function show_usage() {
 	cat <<EOF
 Usage: ${SCRIPT_NAME} [OPTIONS]
 
@@ -476,12 +494,12 @@ EOF
 # Note: curl doesn't return error for 404, so we check HTTP status code
 # Example: can_curl "https://example.com/file.json" && echo "URL is valid"
 #------------------------------------------------------------------------------
-can_curl() {
+function can_curl() {
 	local url="$1"
 	local http_code
 	
 	log_debug "Checking URL: ${url}"
-	http_code=$(curl --silent --location --output /dev/null --write-out "%{http_code}" "${url}")
+	http_code=$(curl --silent --location --max-time 30 --connect-timeout 10 --output /dev/null --write-out "%{http_code}" "${url}")
 	log_debug "HTTP status code: ${http_code}"
 	
 	if [[ "${http_code}" -ne 200 ]]; then
@@ -506,7 +524,7 @@ can_curl() {
 #   If not set: tries rhcos.json, then rhel-9, then rhel-10
 # Example: download_coreos_json "release-4.21"
 #------------------------------------------------------------------------------
-download_coreos_json() {
+function download_coreos_json() {
 	local release="$1"
 	local -a urls=()
 	
@@ -567,12 +585,11 @@ download_coreos_json() {
 #   download_url - URL to download the image
 #   filename - Image filename (without .qcow2.gz extension)
 #   sha256 - SHA256 checksum of the image
-#   size - Size of the image in bytes
 # Example:
 #   declare -A image_info
 #   extract_image_info image_info
 #------------------------------------------------------------------------------
-extract_image_info() {
+function extract_image_info() {
 	local -n result=$1
 	
 	if ! jq -r '.architectures.ppc64le.artifacts.openstack' "${FILE1}" > "${FILE2}" 2>/dev/null; then
@@ -587,11 +604,25 @@ extract_image_info() {
 	fi
 	
 	result[filename]="${result[download_url]##*/}"
-	result[filename]="${result[filename]//.qcow2.gz/}"
+	result[filename]="${result[filename]%.qcow2.gz}"
 	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
-	result[size]=$(jq -r '.formats."qcow2.gz".disk.size' "${FILE2}" 2>/dev/null)
 	
 	return 0
+}
+
+#------------------------------------------------------------------------------
+# Function: csv_escape
+# Description: Escape a value for safe CSV output according to RFC 4180 rules
+# Arguments:
+#   $1 - Raw field value
+# Returns: None
+# Output: CSV-safe field with embedded double quotes escaped
+# Example: csv_escape 'a,b"c'
+#------------------------------------------------------------------------------
+function csv_escape() {
+	local value="${1:-}"
+	value=${value//\"/\"\"}
+	printf '"%s"' "${value}"
 }
 
 #------------------------------------------------------------------------------
@@ -607,29 +638,37 @@ extract_image_info() {
 # Output Formats:
 #   text - Human-readable (handled by log functions)
 #   json - JSON object with all fields
-#   csv - Comma-separated values
+#   csv - Comma-separated values with proper escaping
 # Example: output_result "release-4.21" image_info "success"
 #------------------------------------------------------------------------------
-output_result() {
+function output_result() {
 	local release="$1"
 	local -n info=$2
 	local status="$3"
 	
 	case "${OUTPUT_FORMAT}" in
 		json)
-			cat <<-EOF
-			{
-			  "release": "${release}",
-			  "status": "${status}",
-			  "filename": "${info[filename]}",
-			  "download_url": "${info[download_url]}",
-			  "sha256": "${info[sha256]:-}",
-			  "size": ${info[size]:-0}
-			}
-			EOF
+			jq -n \
+				--arg release "${release}" \
+				--arg status "${status}" \
+				--arg filename "${info[filename]}" \
+				--arg download_url "${info[download_url]}" \
+				--arg sha256 "${info[sha256]:-}" \
+				'{
+				  release: $release,
+				  status: $status,
+				  filename: $filename,
+				  download_url: $download_url,
+				  sha256: $sha256
+				}'
 			;;
 		csv)
-			echo "${release},${status},${info[filename]},${info[download_url]},${info[sha256]:-},${info[size]:-0}"
+			printf '%s,%s,%s,%s,%s\n' \
+				"$(csv_escape "${release}")" \
+				"$(csv_escape "${status}")" \
+				"$(csv_escape "${info[filename]}")" \
+				"$(csv_escape "${info[download_url]}")" \
+				"$(csv_escape "${info[sha256]:-}")"
 			;;
 		text)
 			# Already handled by log messages
@@ -647,14 +686,18 @@ output_result() {
 #   1 - Failed to process release
 # Processing Steps:
 #   1. Download CoreOS JSON from GitHub
-#   2. Extract image metadata (URL, filename, SHA256, size)
+#   2. Extract image metadata (URL, filename, SHA256)
 #   3. Verify image exists in OpenStack
 #   4. Output result in specified format
 # Example: process_release "release-4.21"
 #------------------------------------------------------------------------------
-process_release() {
+function process_release() {
 	local release="$1"
 	declare -A image_info
+	# Initialize with default values for failure cases
+	image_info[filename]=""
+	image_info[download_url]=""
+	image_info[sha256]=""
 	
 	log_info "Processing release: ${release}"
 	
@@ -673,7 +716,6 @@ process_release() {
 	log_info "Download URL: ${image_info[download_url]}"
 	log_info "Filename: ${image_info[filename]}"
 	log_debug "SHA256: ${image_info[sha256]}"
-	log_debug "Size: ${image_info[size]} bytes"
 	
 	# Verify OpenStack resource
 	if ! verify_openstack_resource "image" "${image_info[filename]}"; then
@@ -718,7 +760,7 @@ process_release() {
 #   SCRIPT_NAME - Name of this script
 # Example: main "$@"
 #------------------------------------------------------------------------------
-main() {
+function main() {
 	local start_time
 	local end_time
 	local duration
@@ -727,6 +769,8 @@ main() {
 	
 	# Parse command line arguments first (before any logging)
 	parse_arguments "$@"
+
+	check_openstack_cli
 	
 	log_info "Starting OpenShift RHCOS image verification script"
 	log_info "Script: ${SCRIPT_NAME}"
@@ -749,7 +793,12 @@ main() {
 
 	# Output header for structured formats
 	if [[ "${OUTPUT_FORMAT}" == "csv" ]]; then
-		echo "release,status,filename,download_url,sha256,size"
+		printf '%s,%s,%s,%s,%s\n' \
+			"$(csv_escape "release")" \
+			"$(csv_escape "status")" \
+			"$(csv_escape "filename")" \
+			"$(csv_escape "download_url")" \
+			"$(csv_escape "sha256")"
 	elif [[ "${OUTPUT_FORMAT}" == "json" ]]; then
 		echo "["
 	fi
