@@ -581,23 +581,26 @@ function build_powervc_command() {
 	local output_file="output-${timestamp}"
 
 	POWERVC_CMD=$(cat <<-EOF
-		${POWERVC_TOOL} watch-installation \\
-		  --cloud "${CLOUD}" \\
-		  --domainName "${BASEDOMAIN}" \\
-		  --bastionMetadata "${HOME}" \\
-		  --bastionUsername "${BASTION_USERNAME}" \\
-		  --bastionRsa "${BASTION_RSA}" \\
-		  --enableDhcpd true \\
-		  --dhcpInterface "${LINK}" \\
-		  --dhcpSubnet "${DHCP_SUBNET}" \\
-		  --dhcpNetmask "${DHCP_NETMASK}" \\
-		  --dhcpRouter "${DHCP_ROUTER}" \\
-		  --dhcpDnsServers "${DHCP_DNS_SERVERS}" \\
-		  --dhcpServerId "${DHCP_SERVER_ID}" \\
-		  --shouldDebug true \\
+		${POWERVC_TOOL} watch-installation
+		  --cloud "${CLOUD}"
+		  --domainName "${BASEDOMAIN}"
+		  --bastionMetadata "${HOME}"
+		  --bastionUsername "${BASTION_USERNAME}"
+		  --bastionRsa "${BASTION_RSA}"
+		  --enableDhcpd true
+		  --dhcpInterface "${LINK}"
+		  --dhcpSubnet "${DHCP_SUBNET}"
+		  --dhcpNetmask "${DHCP_NETMASK}"
+		  --dhcpRouter "${DHCP_ROUTER}"
+		  --dhcpDnsServers "${DHCP_DNS_SERVERS}"
+		  --dhcpServerId "${DHCP_SERVER_ID}"
+		  --statsUser "${DHCP_STATS_USER}"
+		  --statsPassword "${DHCP_STATS_PASSWORD}"
+		  --shouldDebug true
 		  2>&1 | tee "${output_file}"
 	EOF
 	)
+	POWERVC_CMD=$(echo "${POWERVC_CMD}" | tr -d '\r\n')
 
 	log_debug "PowerVC command: ${POWERVC_CMD}"
 	log_info "Output will be logged to: ${output_file}"
