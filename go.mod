@@ -8,13 +8,13 @@ require (
 	github.com/IBM/networking-go-sdk v0.53.4
 	github.com/IBM/platform-services-go-sdk v0.97.4
 	github.com/coreos/ignition/v2 v2.26.0
-	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260506121621-4023bcf8ec0c
+	github.com/openshift/api v0.0.0-20260507162658-047c8957c266
 	github.com/sirupsen/logrus v1.9.4
 	k8s.io/apimachinery v0.36.0
-	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
+	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
 	sigs.k8s.io/yaml v1.6.0
 )
 
