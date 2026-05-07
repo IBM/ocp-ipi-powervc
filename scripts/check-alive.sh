@@ -87,7 +87,7 @@ readonly EXIT_MISSING_PROGRAM=2
 readonly EXIT_TMUX_DETECTION_FAILED=3
 readonly EXIT_INTERFACE_DETECTION_FAILED=4
 
-# Required environment variables
+# Required environment variables which need to be set and cannot be empty
 readonly REQUIRED_ENV_VARS=(
 	"BASEDOMAIN"
 	"BASTION_USERNAME"
@@ -99,6 +99,12 @@ readonly REQUIRED_ENV_VARS=(
 	"DHCP_ROUTER"
 	"DHCP_SERVER_ID"
 	"DHCP_SUBNET"
+)
+
+# Optional environment variables which need to be set but can be empty
+readonly OPTIONAL_ENV_VARS=(
+	"DHCP_STATS_USER"
+	"DHCP_STATS_PASSWORD"
 )
 
 # Required programs
@@ -315,6 +321,13 @@ function validate_environment_variables() {
 			else
 				log_debug "Environment variable ${var} is set"
 			fi
+		fi
+	done
+
+	for var in "${OPTIONAL_ENV_VARS[@]}"; do
+		if [[ ! -v ${var} ]]; then
+			missing_vars+=("${var}")
+			log_error "Required environment variable ${var} is not set"
 		fi
 	done
 
@@ -594,8 +607,21 @@ function build_powervc_command() {
 		  --dhcpRouter "${DHCP_ROUTER}"
 		  --dhcpDnsServers "${DHCP_DNS_SERVERS}"
 		  --dhcpServerId "${DHCP_SERVER_ID}"
-		  --statsUser "${DHCP_STATS_USER}"
-		  --statsPassword "${DHCP_STATS_PASSWORD}"
+	EOF
+	)
+	if [[ -n "${DHCP_STATS_USER}" ]]; then
+		POWERVC_CMD=$(cat <<-EOF
+		  	--statsUser "${DHCP_STATS_USER}"
+		EOF
+		)
+	fi
+	if [[ -n "${DHCP_STATS_PASSWORD}" ]]; then
+		POWERVC_CMD=$(cat <<-EOF
+		  	--statsPassword "${DHCP_STATS_PASSWORD}"
+		EOF
+		)
+	fi
+	POWERVC_CMD=$(cat <<-EOF
 		  --shouldDebug true
 		  2>&1 | tee "${output_file}"
 	EOF
@@ -698,7 +724,6 @@ function monitor_loop() {
 
 	local check_count=0
 	local failure_count=0
-	local restart_sent=false
 
 	while [[ "${SHUTDOWN_REQUESTED}" == "false" ]]; do
 		check_count=$((check_count + 1))
@@ -707,18 +732,12 @@ function monitor_loop() {
 		if ! check_server_alive; then
 			failure_count=$((failure_count + 1))
 			log_error "Server is down! (failure #${failure_count})"
-			if [[ "${restart_sent}" == "false" ]]; then
-				restart_watch_installation
-				restart_sent=true
-			else
-				log_debug "Restart already sent, waiting for recovery"
-			fi
+			restart_watch_installation
 		else
 			log_info "Server is alive and responding"
 			if [[ ${failure_count} -gt 0 ]]; then
 				log_info "Server recovered after ${failure_count} failure(s)"
 				failure_count=0
-				restart_sent=false
 			fi
 		fi
 
