@@ -621,14 +621,17 @@ function cleanup_on_exit() {
 		log_error "Script failed with exit code ${exit_code}"
 	fi
 
-	# If we have previously save the metadata
+	# If we have previously saved the metadata
 	if [[ -n "${TEMP_DIR}" ]] && [[ -d "${TEMP_DIR}" ]]
 	then
 		# And the metadata is missing
 		if [[ ! -d "${CLUSTER_DIR}" ]]; then
-			# Then copy it back
-			mkdir -p "${CLUSTER_DIR}"
-			/bin/cp "${TEMP_DIR}/metadata.json" "${CLUSTER_DIR}"
+			# And we had an error
+			if [[ ${exit_code} -gt 0 ]]; then
+				# Then copy it back
+				mkdir -p "${CLUSTER_DIR}"
+				/bin/cp "${TEMP_DIR}/metadata.json" "${CLUSTER_DIR}"
+			fi
 		fi
 
 		/bin/rm -rf "${TEMP_DIR}"
