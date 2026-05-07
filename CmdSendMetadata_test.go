@@ -211,7 +211,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 		{
 			name: "non-existent file",
 			setupFile: func(t *testing.T) string {
-				return "/tmp/non-existent-file-12345.json"
+				return filepath.Join(os.TempDir(), "non-existent-file-12345.json")
 			},
 			cleanupFile: func(s string) {},
 			expectError: true,

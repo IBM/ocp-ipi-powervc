@@ -16,6 +16,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -23,9 +24,15 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+
 const (
 //	rhcosImage = "hamzy2-419-96-20250402-0-ppc64le"
 	rhcosImage = "hamzy3-rhcos-9.6.20250826-1-openstack-ppc64le"
+)
+
+var (
+	errImageChanged = errors.New("image changed")
 )
 
 //
@@ -72,6 +79,10 @@ func processManifestDirectoryImage(directory string) error {
 	}
 
 	for _, entry = range entries {
+		if entry.IsDir() {
+			continue
+		}
+
 		filename = fmt.Sprintf("%s/%s", directory, entry.Name())
 		log.Debugf("processManifestDirectoryImage: %s", filename)
 
@@ -114,13 +125,10 @@ func changeImagesManifest(filename string) error {
 
 	err = changeImages(jsonOld)
 	log.Debugf("jsonOld = %+v", jsonOld)
-	if err != nil {
-		if err.Error() != "CHANGED-IMAGE" {
-			return err
-		}
-		log.Debugf("Found CHANGED-IMAGE")
-		changed = true
+	if err != nil && !errors.Is(err, errImageChanged) {
+		return err
 	}
+	changed = errors.Is(err, errImageChanged)
 
 	if !changed {
 		return nil
@@ -157,10 +165,10 @@ func changeImages(node map[string]any) error {
 						"name": rhcosImage,
 					},
 				}
-				return fmt.Errorf("CHANGED-IMAGE")
+				return errImageChanged
 			} else {
 				node[k] = rhcosImage
-				return fmt.Errorf("CHANGED-IMAGE")
+				return errImageChanged
 			}
 		}
 		switch value := v.(type) {

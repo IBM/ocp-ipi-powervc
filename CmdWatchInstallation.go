@@ -36,6 +36,8 @@
 //   - dhcpRouter: The router for DHCP requests (required if enableDhcpd=true)
 //   - dhcpDnsServers: The DNS servers for DHCP requests (required if enableDhcpd=true)
 //   - dhcpServerId: The DNS server identifier for DHCP requests (required if enableDhcpd=true)
+//   - statsUser: HAProxy stats username (leave empty to disable stats)
+//   - statsPassword: HAProxy stats password
 //   - shouldDebug: Enable debug output (true/false, default: false)
 //
 // The command runs continuously, waking up every 30 seconds to check for changes
@@ -52,6 +54,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -232,6 +235,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		ptrDhcpRouter       *string
 		ptrDhcpDnsServers   *string
 		ptrDhcpServerId     *string
+		ptrStatsUser        *string
+		ptrStatsPassword    *string
 		ptrEnableDhcpd      *string
 		ptrShouldDebug      *string
 		enableDhcpd         = false
@@ -275,6 +280,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	ptrDhcpDnsServers = watchInstallationFlags.String(flagWatchInstallationDhcpDnsServers, defaultWatchInstallationDhcpDnsServers, usageWatchInstallationDhcpDnsServers)
 	ptrDhcpServerId = watchInstallationFlags.String(flagWatchInstallationDhcpServerId, defaultWatchInstallationDhcpServerId, usageWatchInstallationDhcpServerId)
 	ptrShouldDebug = watchInstallationFlags.String(flagWatchInstallationShouldDebug, defaultWatchInstallationShouldDebug, usageWatchInstallationShouldDebug)
+	ptrStatsUser = watchInstallationFlags.String("statsUser", "", "HAProxy stats username (leave empty to disable stats)")
+	ptrStatsPassword = watchInstallationFlags.String("statsPassword", "", "HAProxy stats password")
 
 	// Parse command-line arguments
 	err = watchInstallationFlags.Parse(args)
@@ -358,6 +365,11 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		log.Println(line)
 	}
 
+	if enableDhcpd {
+		// @TODO validate flags for malicious strings
+		// Implement helper functions like isValidIP(), isValidNetmask()/isValidCIDR(), sanitizeDomainName(), and sanitizeDNSList()
+	}
+
 	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
 
@@ -367,30 +379,37 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 
 	// Spawn metadata listener goroutine
 	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
-	go listenForCommands(clouds)
+	go func() {
+		if err := listenForCommands(clouds); err != nil {
+			log.Errorf("Command listener failed: %v", err)
+			os.Exit(1)
+		}
+	}()
 
 	// Enter infinite monitoring loop
 	log.Printf("[INFO] Entering monitoring loop")
-	for true {
+	for {
 		log.Printf("[INFO] Waking up to check for changes")
+
+		// Create new context for this iteration
+		ctx, cancel = context.WithTimeout(context.Background(), watchLongTimeout)
+		// Note: cancel() is called at the end of this iteration or on error return
 
 		// Gather bastion information from metadata directories
 		log.Printf("[INFO] Gathering bastion information from: %s", *ptrBastionMetadata)
 		bastionInformations, err = gatherBastionInformations(*ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa)
 		if err != nil {
+			cancel() // Release context resources before returning
 			return fmt.Errorf("failed to gather bastion information: %w", err)
 		}
 		log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
 		log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
 
-		// Create new context for this iteration
-		ctx, cancel = context.WithTimeout(context.TODO(), watchLongTimeout)
-		defer cancel()
-
 		// Retrieve all servers from OpenStack
 		log.Printf("[INFO] Retrieving all servers from clouds: %+v", clouds)
 		allServers, err = getAllServers(ctx, clouds)
 		if err != nil {
+			cancel() // Release context resources before returning
 			return fmt.Errorf("failed to get all servers: %w", err)
 		}
 		log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
@@ -409,8 +428,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 			log.Printf("[INFO] No server changes detected")
 			log.Printf("[INFO] Sleeping for %v", watchSleepDuration)
 
+			cancel() // Release context resources before sleeping
 			time.Sleep(watchSleepDuration)
-
 			continue
 		}
 
@@ -422,6 +441,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		log.Printf("[INFO] Updating bastion configurations")
 		err = updateBastionInformations(ctx, clouds, bastionInformations)
 		if err != nil {
+			cancel() // Release context resources before returning
 			return fmt.Errorf("failed to update bastion information: %w", err)
 		}
 		log.Printf("[INFO] Bastion configurations updated successfully")
@@ -443,6 +463,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				*ptrDhcpServerId,
 			)
 			if err != nil {
+				cancel() // Release context resources before returning
 				return fmt.Errorf("failed to generate DHCP configuration: %w", err)
 			}
 			log.Printf("[INFO] DHCP configuration generated: %s", filename)
@@ -455,6 +476,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				"/etc/dhcp/dhcpd.conf",
 			})
 			if err != nil {
+				cancel() // Release context resources before returning
 				return fmt.Errorf("failed to copy DHCP configuration: %w", err)
 			}
 
@@ -466,6 +488,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				"dhcpd.service",
 			})
 			if err != nil {
+				cancel() // Release context resources before returning
 				return fmt.Errorf("failed to restart DHCP service: %w", err)
 			}
 			log.Printf("[INFO] DHCP service restarted successfully")
@@ -473,8 +496,9 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 
 		// Update HAProxy configuration
 		log.Printf("[INFO] Updating HAProxy configuration")
-		err = haproxyCfg(ctx, clouds, bastionInformations)
+		err = haproxyCfg(ctx, clouds, bastionInformations, *ptrStatsUser, *ptrStatsPassword)
 		if err != nil {
+			cancel() // Release context resources before returning
 			return fmt.Errorf("failed to update HAProxy configuration: %w", err)
 		}
 		log.Printf("[INFO] HAProxy configuration updated successfully")
@@ -492,6 +516,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 				deletedServerSet,
 			)
 			if err != nil {
+				cancel() // Release context resources before returning
 				return fmt.Errorf("failed to update DNS records: %w", err)
 			}
 			log.Printf("[INFO] DNS records updated successfully")
@@ -502,10 +527,9 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		// Sleep before next iteration
 		log.Printf("[INFO] Iteration complete, sleeping for %v", watchSleepDuration)
 
+		cancel() // Release context resources before sleeping
 		time.Sleep(watchSleepDuration)
 	}
-
-	return nil
 }
 
 // gatherBastionInformations walks a directory tree to find all metadata.json files
@@ -645,8 +669,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		// Refresh the data
 		clusterName, infraID, err = getMetadataClusterName(bastionInformation.Metadata)
 		if err != nil {
-			errstr := strings.TrimSpace(err.Error())
-			if !strings.HasSuffix(errstr, "no such file or directory") {
+			if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			err = nil
@@ -694,7 +717,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		bastionInformations[i].IPAddress = bastionIpAddress
 		bastionInformations[i].NumVMs = currentVMs
 
-		log.Debugf("updateBastionInformations: NEW bastionInformation = %+v", bastionInformation)
+		log.Debugf("updateBastionInformations: NEW bastionInformation = %+v", bastionInformations[i])
 
 		if previousVMs == 0 && currentVMs > 0 {
 			// First time for this bastion
@@ -751,7 +774,7 @@ func getServerSet(allServers []servers.Server) sets.Set[string] {
 //   - server: OpenStack server object
 //
 // Returns:
-//   - networkName: Name of the network (first return value, often unused)
+//   - macAddress: MAC address of the server's network interface
 //   - ipAddress: IP address of the server
 //   - error: Any error encountered extracting the IP address
 //
@@ -841,7 +864,7 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 
 	err = os.Remove(filename)
 	if err != nil {
-		if !strings.HasSuffix(err.Error(), "no such file or directory") {
+		if !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -868,7 +891,7 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 	fmt.Fprintf(file, "subnet %s netmask %s {\n", dhcpSubnet, dhcpNetmask)
 	fmt.Fprintf(file, "   interface %s;\n", dhcpInterface)
 	fmt.Fprintf(file, "   option routers %s;\n", dhcpRouter)
-	fmt.Fprintf(file, "   option subnet-mask %s;\n", dhcpSubnet)
+	fmt.Fprintf(file, "   option subnet-mask %s;\n", dhcpNetmask)
 	fmt.Fprintf(file, "   option domain-name-servers %s;\n", dhcpDnsServers)
 	fmt.Fprintf(file, "   option domain-name \"%s\";\n", domainName)
 	fmt.Fprintf(file, "   option dhcp-server-identifier %s;\n", dhcpServerId)
@@ -913,7 +936,7 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 // For each valid bastion with VMs, it generates /tmp/haproxy.cfg with backend
 // server entries for all cluster nodes, then copies it to the bastion server
 // and restarts the HAProxy service.
-func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation) error {
+func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation, statsUser string, statsPassword string) error {
 	var (
 		allServers []servers.Server
 		server      servers.Server
@@ -952,7 +975,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 
 		err = os.Remove(filename)
 		if err != nil {
-			if !strings.HasSuffix(err.Error(), "no such file or directory") {
+			if !os.IsNotExist(err) {
 				return err
 			}
 		}
@@ -961,7 +984,6 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		if err != nil {
 			return err
 		}
-		defer file.Close()
 
 		fmt.Fprintf(file, "#\n")
 		fmt.Fprintf(file, "global\n")
@@ -973,15 +995,17 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		fmt.Fprintf(file, "timeout client 50s\n")
 		fmt.Fprintf(file, "timeout server 50s\n")
 		fmt.Fprintf(file, "\n")
-		fmt.Fprintf(file, "listen stats # Define a listen section called \"stats\"\n")
-		fmt.Fprintf(file, "  bind :9000 # Listen on localhost:9000\n")
-		fmt.Fprintf(file, "  mode http\n")
-		fmt.Fprintf(file, "  stats enable  # Enable stats page\n")
-		fmt.Fprintf(file, "  stats hide-version  # Hide HAProxy version\n")
-		fmt.Fprintf(file, "  stats realm Haproxy\\ Statistics  # Title text for popup window\n")
-		fmt.Fprintf(file, "  stats uri /haproxy_stats  # Stats URI\n")
-		fmt.Fprintf(file, "  stats auth Username:Password  # Authentication credentials\n")
-		fmt.Fprintf(file, "\n")
+		if statsUser != "" && statsPassword != "" {
+			fmt.Fprintf(file, "listen stats # Define a listen section called \"stats\"\n")
+			fmt.Fprintf(file, "  bind 127.0.0.1:9000 # Listen on localhost:9000\n")
+			fmt.Fprintf(file, "  mode http\n")
+			fmt.Fprintf(file, "  stats enable  # Enable stats page\n")
+			fmt.Fprintf(file, "  stats hide-version  # Hide HAProxy version\n")
+			fmt.Fprintf(file, "  stats realm Haproxy\\ Statistics  # Title text for popup window\n")
+			fmt.Fprintf(file, "  stats uri /haproxy_stats  # Stats URI\n")
+			fmt.Fprintf(file, "  stats auth %s:%s  # Authentication credentials\n", statsUser, statsPassword)
+			fmt.Fprintf(file, "\n")
+		}
 
 		// listen ingress-http
 		fmt.Fprintf(file, "listen ingress-http\n")
@@ -1054,6 +1078,8 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			}
 		}
 
+		file.Close() // Close before scp/ssh operations
+
 		err = runSplitCommand([]string{
 			"scp",
 			"-i",
@@ -1083,7 +1109,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 	return nil
 }
 
-// getClusterName extracts the cluster name from a list of servers.
+// atLeastOneClusterName extracts the cluster name from a list of servers.
 //
 // Parameters:
 //   - allServers: List of all servers from OpenStack
@@ -1094,7 +1120,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 // The function searches for servers with "-bootstrap" or "-master" in their names
 // and extracts the cluster name by removing the infrastructure ID suffix.
 // For example, from "mycluster-abc123-master-0", it extracts "mycluster".
-func getClusterName(allServers []servers.Server) (clusterName string) {
+func atLeastOneClusterName(allServers []servers.Server) (clusterName string) {
 	var (
 		server servers.Server
 	)
@@ -1108,7 +1134,7 @@ func getClusterName(allServers []servers.Server) (clusterName string) {
 			continue
 		}
 
-		clusterName = server.Name[0:idx-1]
+		clusterName = server.Name[0:idx]
 
 		idx = strings.LastIndex(clusterName, "-")
 		if idx < 0 {
@@ -1165,6 +1191,7 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 		server       servers.Server
 		clusterName  string
 		err          error
+		errs         []error
 	)
 
 	cisServiceID, _, err = getServiceInfo(ctx, apiKey, "internet-svcs", "")
@@ -1192,7 +1219,8 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 		return err
 	}
 
-	clusterName = getClusterName(allServers)
+	// @TODO - One cluster name from the list of all servers?
+	clusterName = atLeastOneClusterName(allServers)
 	log.Debugf("dnsRecords: clusterName = %s", clusterName)
 	if clusterName == "" {
 		return nil
@@ -1214,18 +1242,30 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 				bastionInformation.IPAddress,
 				true,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to create DNS record for api.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 			err = createOrDeletePublicDNSRecord(ctx,
 				dnsrecordsv1.CreateDnsRecordOptions_Type_A,
 				fmt.Sprintf("api-int.%s.%s", bastionInformation.ClusterName, domainName),
 				bastionInformation.IPAddress,
 				true,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to create DNS record for api-int.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 			err = createOrDeletePublicDNSRecord(ctx,
 				dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
 				fmt.Sprintf("*.apps.%s.%s", bastionInformation.ClusterName, domainName),
 				fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
 				true,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to create DNS record for *.apps.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -1244,6 +1284,10 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 				"",
 				false,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to delete DNS record for %s.%s: %v", deletedServer, domainName, err)
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -1272,13 +1316,15 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 					ipAddress,
 					true,
 					dnsService)
+				if err != nil {
+					log.Errorf("Failed to create DNS record for %s.%s: %v", server.Name, domainName, err)
+					errs = append(errs, err)
+				}
 			}
 		}
 	}
 
 	if len(knownServers) == 0 && !firstDnsRun {
-		firstDnsRun = false
-
 		for _, bastionInformation := range bastionInformations {
 			if !bastionInformation.Valid {
 				continue
@@ -1290,19 +1336,35 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 				"",
 				false,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to delete DNS record for api.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 			err = createOrDeletePublicDNSRecord(ctx,
 				dnsrecordsv1.CreateDnsRecordOptions_Type_A,
 				fmt.Sprintf("api-int.%s.%s", bastionInformation.ClusterName, domainName),
 				"",
 				false,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to delete DNS record for api-int.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 			err = createOrDeletePublicDNSRecord(ctx,
 				dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
 				fmt.Sprintf("*.apps.%s.%s", bastionInformation.ClusterName, domainName),
 				fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
 				false,
 				dnsService)
+			if err != nil {
+				log.Errorf("Failed to delete DNS record for *.apps.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+				errs = append(errs, err)
+			}
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to manage DNS records: %+v", errs)
 	}
 
 	return nil
@@ -1421,7 +1483,7 @@ func getServiceInfo(ctx context.Context, apiKey string, service string, serviceP
 
 	var childObjResult *globalcatalogv1.EntrySearchResult
 
-	childObjResult, _, err = GetChildObjects(ctx, gcv1, &getChildOpt)
+	childObjResult, _, err = getChildObjects(ctx, gcv1, &getChildOpt)
 	if err != nil {
 		return "", "", err
 	}
@@ -1759,9 +1821,15 @@ func handleConnection(conn net.Conn, clouds cloudFlags) error {
 	// Close the connection when we're done
 	defer conn.Close()
 
+	// Set read deadline to prevent connection hanging indefinitely
+	conn.SetDeadline(time.Now().Add(5 * time.Minute))
+
 	reader := bufio.NewReader(conn)
 
 	for {
+		// Reset deadline for each command
+		conn.SetDeadline(time.Now().Add(5 * time.Minute))
+
 		data, err = reader.ReadString('\n')
 		if err != nil {
 			log.Debugf("handleConnection: reader.ReadString() returns %v", err)
@@ -1799,7 +1867,7 @@ func handleConnection(conn net.Conn, clouds cloudFlags) error {
 				return err
 			}
 
-			err = sendByteArray(conn, marshalledData)
+			err = sendByteArray(conn, marshalledData, 30 * time.Second)
 			if err != nil {
 				return err
 			}
@@ -1837,7 +1905,7 @@ func handleConnection(conn net.Conn, clouds cloudFlags) error {
 			}
 			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
 
-			err = sendByteArray(conn, marshalledData)
+			err = sendByteArray(conn, marshalledData, 30 * time.Second)
 			if err != nil {
 				return err
 			}
@@ -1882,6 +1950,25 @@ func handleCheckAlive(data string, errChan chan error) {
 	return
 }
 
+// validateInfraID ensures the InfraID is safe for use in file paths
+func validateInfraID(infraID string) error {
+	// Reject empty, absolute paths, and path traversal attempts
+	if infraID == "" {
+		return fmt.Errorf("infraID cannot be empty")
+	}
+
+	if filepath.IsAbs(infraID) {
+		return fmt.Errorf("infraID cannot be an absolute path")
+	}
+
+	cleaned := filepath.Clean(infraID)
+	if cleaned != infraID || strings.Contains(cleaned, "..") {
+		return fmt.Errorf("infraID contains invalid path components")
+	}
+
+	return nil
+}
+
 // handleCreateMetadata processes a create or delete metadata command.
 //
 // Parameters:
@@ -1920,6 +2007,12 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 	log.Debugf("handleCreateMetadata: cmd.metadata.ClusterName = %+v", cmd.Metadata.ClusterName)
 	log.Debugf("handleCreateMetadata: cmd.metadata.InfraID = %+v", cmd.Metadata.InfraID)
 
+	if err = validateInfraID(cmd.Metadata.InfraID); err != nil {
+		log.Debugf("handleCreateMetadata: invalid infraID: %v", err)
+		errChan <- err
+		return
+	}
+
 	marshalledData, err = json.Marshal(cmd.Metadata)
 	if err != nil {
 		log.Debugf("handleCreateMetadata: json.Marshal() returns %v", err)
@@ -1929,7 +2022,7 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 
 	if shouldCreate {
 		// Create the directory to save the metadata file in
-		err = os.MkdirAll(cmd.Metadata.InfraID, os.ModePerm)
+		err = os.MkdirAll(cmd.Metadata.InfraID, 0750)
 		if err != nil {
 			log.Debugf("handleCreateMetadata: os.MkdirAll() returns %v", err)
 			errChan <- err
@@ -1938,7 +2031,7 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 
 		err = os.WriteFile(fmt.Sprintf("%s/metadata.json", cmd.Metadata.InfraID), marshalledData, 0644)
 		if err != nil {
-			log.Debugf("handleCreateMetadata: os.MkdirAll() returns %v", err)
+			log.Debugf("handleCreateMetadata: os.WriteFile() returns %v", err)
 			errChan <- err
 			return
 		}

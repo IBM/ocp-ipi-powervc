@@ -17,15 +17,12 @@ package main
 //
 // Make sure the IPI installer can run.
 //
-func createClusterPhase1(directory string) error {
-	var (
-		err error
-	)
-
-	err = runSplitCommand([]string{
+// Note: The version sub-command genuinely has no use for the directory,
+// and the param is kept only for signature uniformity.
+//
+func createClusterPhase1(_ string) error {
+	return runSplitCommand([]string{
 		"openshift-install",
 		"version",
 	})
-
-	return err
 }

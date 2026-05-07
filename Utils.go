@@ -40,6 +40,9 @@ const (
 	// defaultTimeout is the default timeout for operations
 	defaultTimeout = 15 * time.Minute
 
+	// maxTimeout is the longest timeout for operations
+	maxTimeout = 30 * time.Minute
+
 	// maxFileSize is the maximum file size allowed for validation (100MB)
 	maxFileSize = 100 * 1024 * 1024
 
@@ -96,7 +99,8 @@ func initLogger(debug bool) *logrus.Logger {
 }
 
 // parseBoolFlag converts a string flag value to boolean.
-// Returns an error if the value is not "true" or "false" (case-insensitive).
+// Accepts "true", "1", "yes", "y" for true and "false", "0", "no", "n" for false (case-insensitive).
+// Returns an error if the value doesn't match any accepted value.
 func parseBoolFlag(value, flagName string) (bool, error) {
 	trimmedValue := strings.TrimSpace(strings.ToLower(value))
 
@@ -106,7 +110,7 @@ func parseBoolFlag(value, flagName string) (bool, error) {
 	case "false", "0", "no", "n":
 		return false, nil
 	default:
-		return false, fmt.Errorf("%s must be 'true' or 'false', got: %q", flagName, value)
+		return false, fmt.Errorf("%s must be a boolean value (true/false/yes/no/1/0), got: %q", flagName, value)
 	}
 }
 
@@ -128,14 +132,34 @@ func validateServerIP(ip string) error {
 		return fmt.Errorf("IP address or hostname cannot be empty")
 	}
 
-	// Try to parse as IP address first
-	_, err := netip.ParseAddr(ip)
-	if err != nil {
-		return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
+	addr, err := netip.ParseAddr(ip)
+	if err == nil && addr.Is4() {
+		return nil
+	} else if err == nil && addr.Is6() {
+		return nil
 	}
 
-	// If not a valid IP, check if it's a valid hostname
-	if _, err = net.LookupHost(ip); err != nil {
+	// addrs, err = resolver.LookupHost("192.168.1") succeeds with
+	// addrs = [192.168.0.1]
+	// Which is a bug!
+	re4 := regexp.MustCompile(`^[0-9.]+$`)
+	re6 := regexp.MustCompile(`[0-9a-fA-F:]{2,39}`)
+	if re4.MatchString(ip) || re6.MatchString(ip) {
+		// We only care about this test
+		if _, err := netip.ParseAddr(ip); err != nil {
+			return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
+		}
+
+		// Valid IP address
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	// Not a valid IP, check if it's a valid hostname
+	resolver := &net.Resolver{}
+	if _, err := resolver.LookupHost(ctx, ip); err != nil {
 		return fmt.Errorf("invalid IP address or hostname %q: %w", ip, err)
 	}
 
@@ -241,11 +265,15 @@ type retryConfig struct {
 // The configuration uses exponential backoff with a 15-second initial duration,
 // 1.1x factor, and respects the context timeout.
 func defaultRetryConfig(ctx context.Context) retryConfig {
+	cap := leftInContext(ctx)
+	if cap > maxTimeout {
+		cap = maxTimeout
+	}
 	return retryConfig{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32,
+		Cap:      cap,
+		Steps:    100, // Reasonable upper bound
 	}
 }
 
@@ -270,6 +298,7 @@ func retryWithBackoff[T any](
 ) (T, *core.DetailedResponse, error) {
 	var result T
 	var response *core.DetailedResponse
+	var lastErr error
 
 	config := defaultRetryConfig(ctx)
 	backoff := wait.Backoff{
@@ -282,14 +311,21 @@ func retryWithBackoff[T any](
 	log.Debugf("Starting %s operation", operationName)
 
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
-		var err error
-		result, response, err = operation(ctx)
-		if err != nil {
-			log.Debugf("%s attempt failed: %v", operationName, err)
-			return false, fmt.Errorf("%s failed: %w", operationName, err)
+		var opErr error
+
+		result, response, opErr = operation(ctx)
+		if opErr != nil {
+			log.Debugf("%s attempt failed: %v", operationName, opErr)
+			lastErr = opErr
+			return false, nil // Continue retrying
 		}
+
 		return true, nil
 	})
+
+	if err != nil && lastErr != nil {
+		return result, response, fmt.Errorf("%s failed: %w", operationName, lastErr)
+	}
 
 	if err == nil {
 		log.Debugf("%s operation completed successfully", operationName)
@@ -384,5 +420,9 @@ func leftInContext(ctx context.Context) time.Duration {
 	if !ok {
 		return math.MaxInt64
 	}
-	return time.Until(deadline)
+	remaining := time.Until(deadline)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }

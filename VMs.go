@@ -33,6 +33,7 @@ const (
 	VMsName = "Virtual Machines"
 
 	// SSH status constants
+	sshStatusNA    = "N/A"
 	sshStatusAlive = "ALIVE"
 	sshStatusDead  = "DEAD"
 )
@@ -92,7 +93,7 @@ func NewVMsAlt(services *Services) ([]*VMs, []error) {
 //
 // Returns:
 //   - []*VMs: Array containing the initialized VMs instance
-//   - []error: Array of errors encountered during initialization
+//   - []error: Array of errors encountered during initialization (currently always contains one nil error)
 func innerNewVMs(services *Services) ([]*VMs, []error) {
 	var (
 		vms  []*VMs
@@ -187,6 +188,14 @@ func (vms *VMs) ClusterStatus() {
 		return
 	}
 
+	infraID = metadata.GetInfraID()
+	if infraID == "" {
+		fmt.Printf("%s is NOTOK. Infrastructure ID is empty.\n", VMsName)
+		log.Debugf("ClusterStatus: InfraID is empty")
+		return
+	}
+	log.Debugf("ClusterStatus: infraID = %s", infraID)
+
 	log.Debugf("ClusterStatus: Checking VMs status for cloud %s", cloud)
 
 	connCompute, err = NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
@@ -195,14 +204,6 @@ func (vms *VMs) ClusterStatus() {
 		log.Debugf("ClusterStatus: NewServiceClient returned error: %v", err)
 		return
 	}
-
-	infraID = metadata.GetInfraID()
-	if infraID == "" {
-		fmt.Printf("%s is NOTOK. Infrastructure ID is empty.\n", VMsName)
-		log.Debugf("ClusterStatus: InfraID is empty")
-		return
-	}
-	log.Debugf("ClusterStatus: infraID = %s", infraID)
 
 	allServers, err = getAllServers(ctx, []string{ cloud })
 	if err != nil {
@@ -227,11 +228,11 @@ func (vms *VMs) ClusterStatus() {
 		var (
 			macAddress string
 			ipAddress  string
-			sshAlive   = sshStatusDead
+			sshAlive   = sshStatusNA
 			hypervisor hypervisors.Hypervisor
 		)
 
-		if !strings.HasPrefix(strings.ToLower(server.Name), infraID) {
+		if !strings.HasPrefix(strings.ToLower(server.Name), strings.ToLower(infraID)) {
 			log.Debugf("ClusterStatus: SKIPPING server = %s (not part of cluster)", server.Name)
 			continue
 		}
@@ -242,13 +243,16 @@ func (vms *VMs) ClusterStatus() {
 		if err != nil {
 			log.Debugf("ClusterStatus: findIpAddress for server %s returned error: %v", server.Name, err)
 			// Continue to show server info even without IP address
-			macAddress = "N/A"
-			ipAddress = "N/A"
+			macAddress = sshStatusNA
+			ipAddress = sshStatusNA
 		}
 
-		if ipAddress != "N/A" {
-			outb, err := keyscanServer(ctx, ipAddress, true)
-			if err == nil && len(outb) != 0 {
+		if ipAddress != sshStatusNA {
+			sshAlive = sshStatusDead
+
+			var outb []byte
+			outb, err = keyscanServer(ctx, ipAddress, true)
+			if err == nil && len(outb) > 0 {
 				sshAlive = sshStatusAlive
 				log.Debugf("ClusterStatus: SSH is alive for server %s at %s", server.Name, ipAddress)
 			} else {
@@ -256,16 +260,7 @@ func (vms *VMs) ClusterStatus() {
 			}
 		}
 
-		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), and ssh status (%s)\n",
-			VMsName,
-			server.Name,
-			server.Status,
-			server.PowerState.String(),
-			macAddress,
-			ipAddress,
-			sshAlive,
-		)
-		fmt.Println()
+		hypervisorName := "N/A"
 
 		if server.HypervisorHostname != "" {
 			log.Debugf("ClusterStatus: server.HypervisorHostname = %s", server.HypervisorHostname)
@@ -274,10 +269,23 @@ func (vms *VMs) ClusterStatus() {
 				log.Debugf("ClusterStatus: findHypervisorInList for %s returned error: %v", server.HypervisorHostname, err)
 			} else {
 				log.Debugf("ClusterStatus: Found hypervisor %s with HostIP %s", hypervisor.HypervisorHostname, hypervisor.HostIP)
+				hypervisorName = hypervisor.HypervisorHostname
 			}
 		} else {
 			log.Debugf("ClusterStatus: server %s has no hypervisor hostname", server.Name)
 		}
+
+		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), and ssh status (%s), and hypervisor (%s)\n",
+			VMsName,
+			server.Name,
+			server.Status,
+			server.PowerState.String(),
+			macAddress,
+			ipAddress,
+			sshAlive,
+			hypervisorName,
+		)
+		fmt.Println()
 	}
 
 	log.Debugf("ClusterStatus: Found %d cluster servers out of %d total servers", clusterServerCount, len(allServers))

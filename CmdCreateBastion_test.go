@@ -32,9 +32,6 @@ func TestNewBastionConfig(t *testing.T) {
 	if config.ShouldDebug {
 		t.Error("Expected ShouldDebug to be false by default")
 	}
-	if config.validated {
-		t.Error("Expected validated to be false by default")
-	}
 }
 
 func TestNewBastionConfigWithDefaults(t *testing.T) {
@@ -211,43 +208,10 @@ func TestBastionConfigValidate(t *testing.T) {
 	}
 }
 
-func TestBastionConfigValidate_CachesSuccess(t *testing.T) {
-	tempKeyDir := t.TempDir()
-	validKeyPath := filepath.Join(tempKeyDir, "id_rsa")
-	if err := os.WriteFile(validKeyPath, []byte("test-private-key"), 0600); err != nil {
-		t.Fatalf("failed to create test key: %v", err)
-	}
-
-	config := &BastionConfig{
-		Clouds:      []string{ "mycloud", },
-		BastionName: "bastion-1",
-		BastionRsa:  validKeyPath,
-		FlavorName:  "m1.small",
-		ImageName:   "rhel-8",
-		NetworkName: "private",
-		SshKeyName:  "mykey",
-	}
-
-	if err := config.Validate(); err != nil {
-		t.Fatalf("first validation failed: %v", err)
-	}
-	if !config.validated {
-		t.Fatal("expected config to be marked validated")
-	}
-
-	if err := os.Remove(validKeyPath); err != nil {
-		t.Fatalf("failed to remove key after validation: %v", err)
-	}
-
-	if err := config.Validate(); err != nil {
-		t.Fatalf("expected cached validation success, got %v", err)
-	}
-}
-
 func TestBastionConfigHelpers(t *testing.T) {
-	originalAPIKey := os.Getenv("IBMCLOUD_API_KEY")
+	originalAPIKey, wasSet := os.LookupEnv("IBMCLOUD_API_KEY")
 	defer func() {
-		if originalAPIKey == "" {
+		if !wasSet {
 			os.Unsetenv("IBMCLOUD_API_KEY")
 			return
 		}
@@ -394,7 +358,7 @@ func TestParseBastionFlags(t *testing.T) {
 				"--enableHAProxy", "invalid",
 			},
 			expectError: true,
-			errorMsg:    "enableHAProxy must be 'true' or 'false'",
+			errorMsg:    "enableHAProxy must be a boolean value (true/false/yes/no/1/0)",
 		},
 		{
 			name: "unknown flag",
@@ -555,7 +519,7 @@ func TestCleanupBastionIPFile(t *testing.T) {
 		testFile := filepath.Join(tempDir, "test-bastion-ip")
 		
 		// File doesn't exist - should not error
-		err := os.Remove(testFile)
+		err := cleanupBastionIPFile(testFile)
 		if err != nil && !os.IsNotExist(err) {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -572,7 +536,7 @@ func TestCleanupBastionIPFile(t *testing.T) {
 		}
 
 		// Remove file
-		err := os.Remove(testFile)
+		err := cleanupBastionIPFile(testFile)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -617,8 +581,8 @@ func TestAppendToFile_NonExistentFile(t *testing.T) {
 	testFile := filepath.Join(tempDir, "nonexistent")
 
 	err := appendToFile(testFile, []byte("test"))
-	if err == nil {
-		t.Error("expected error for nonexistent file, got nil")
+	if err != nil {
+		t.Errorf("expected nil for nonexistent file, got error: %v", err)
 	}
 }
 
@@ -692,10 +656,6 @@ func TestBastionConfig_ValidationCaching(t *testing.T) {
 	// First validation
 	if err := config.Validate(); err != nil {
 		t.Fatalf("first validation failed: %v", err)
-	}
-
-	if !config.validated {
-		t.Error("expected validated flag to be true")
 	}
 
 	// Second validation should use cache

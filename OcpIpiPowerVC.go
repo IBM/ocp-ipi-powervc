@@ -16,7 +16,7 @@
 // It provides a command-line interface for managing OpenShift cluster deployments on PowerVC.
 //
 // Build instructions:
-//   /bin/rm go.*; go mod init example/user/PowerVS-Check; go mod tidy
+//   /bin/rm go.*; go mod init example/user/PowerVC-Tool; go mod tidy
 //   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
 //
 // Usage:
@@ -54,7 +54,8 @@ const (
 	cmdWatchCreate       = "watch-create"
 
 	// Version flag
-	versionFlag = "-version"
+	versionFlag  = "-version"
+	versionFlag2 = "--version"
 
 	// Exit codes
 	exitSuccess = 0
@@ -129,19 +130,21 @@ func main() {
 	}
 
 	// Handle version flag
-	if len(os.Args) == 2 && os.Args[1] == versionFlag {
-		fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
-		os.Exit(exitSuccess)
+	for _, arg := range os.Args[1:] {
+		if arg == versionFlag || arg == versionFlag2 {
+			fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
+			os.Exit(exitSuccess)
+		}
 	}
 
 	// Initialize flag sets for each command
-	checkAliveFlags = flag.NewFlagSet(cmdCheckAlive, flag.ExitOnError)
-	createBastionFlags = flag.NewFlagSet(cmdCreateBastion, flag.ExitOnError)
-	createClusterFlags = flag.NewFlagSet(cmdCreateCluster, flag.ExitOnError)
-	createRhcosFlags = flag.NewFlagSet(cmdCreateRhcos, flag.ExitOnError)
-	sendMetadataFlags = flag.NewFlagSet(cmdSendMetadata, flag.ExitOnError)
-	watchInstallationFlags = flag.NewFlagSet(cmdWatchInstallation, flag.ExitOnError)
-	watchCreateClusterFlags = flag.NewFlagSet(cmdWatchCreate, flag.ExitOnError)
+	checkAliveFlags = flag.NewFlagSet(cmdCheckAlive, flag.ContinueOnError)
+	createBastionFlags = flag.NewFlagSet(cmdCreateBastion, flag.ContinueOnError)
+	createClusterFlags = flag.NewFlagSet(cmdCreateCluster, flag.ContinueOnError)
+	createRhcosFlags = flag.NewFlagSet(cmdCreateRhcos, flag.ContinueOnError)
+	sendMetadataFlags = flag.NewFlagSet(cmdSendMetadata, flag.ContinueOnError)
+	watchInstallationFlags = flag.NewFlagSet(cmdWatchInstallation, flag.ContinueOnError)
+	watchCreateClusterFlags = flag.NewFlagSet(cmdWatchCreate, flag.ContinueOnError)
 
 	// Dispatch to appropriate command handler
 	command := strings.ToLower(os.Args[1])

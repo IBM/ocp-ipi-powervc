@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -49,9 +50,6 @@ const (
 
 	// Server status constants
 	serverStatusActive = "ACTIVE"
-
-	// Error message prefixes
-	errMsgServerNotFound = "Could not find server named"
 )
 
 // getUserAgent generates a Gophercloud UserAgent to help cloud operators
@@ -128,6 +126,10 @@ func getServiceClient(ctx context.Context, serviceType string, cloud string) (cl
 		client, err2 = NewServiceClient(ctx, serviceType, DefaultClientOpts(cloud))
 		if err2 != nil {
 			log.Debugf("getServiceClient: Error: NewServiceClient returns error %v", err2)
+			// Stop retrying on authentication errors
+			if strings.Contains(err2.Error(), "authentication") {
+				return false, err2
+			}
 			return false, nil
 		}
 
@@ -419,7 +421,7 @@ func findServer(ctx context.Context, clouds []string, name string) (foundServer 
 		}
 	}
 
-	return servers.Server{}, fmt.Errorf("could not find server named %s", name)
+	return servers.Server{}, fmt.Errorf("%w: %s", ErrServerNotFound, name)
 }
 
 // waitForServer waits for a server to reach ACTIVE status with RUNNING power state.
@@ -453,7 +455,7 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 		if err2 != nil {
 			log.Debugf("waitForServer: findServer returned %v", err2)
 
-			if strings.HasPrefix(err2.Error(), errMsgServerNotFound) {
+			if errors.Is(err2, ErrServerNotFound) {
 				// Server not found yet, keep waiting
 				return false, nil
 			}
@@ -767,7 +769,7 @@ func getAllHypervisors(ctx context.Context, connCompute *gophercloud.ServiceClie
 
 			if strings.Contains(err2.Error(), "The request you have made requires authentication") {
 				// Authentication error, stop retrying
-				return true, err2
+				return false, err2
 			}
 
 			// Transient error, retry

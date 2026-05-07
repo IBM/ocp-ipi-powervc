@@ -74,7 +74,10 @@ func TestVersionVariables(t *testing.T) {
 func TestPrintUsage(t *testing.T) {
 	// Capture stderr
 	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
 	os.Stderr = w
 
 	printUsage("test-executable")
@@ -129,7 +132,10 @@ func TestPrintUsage_ExecutableName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
 			os.Stderr = w
 
 			printUsage(tt.executableName)
@@ -163,7 +169,10 @@ func TestPrintUsage_VersionInfo(t *testing.T) {
 	release = "test-release-456"
 
 	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
 	os.Stderr = w
 
 	printUsage("test-app")
@@ -186,7 +195,10 @@ func TestPrintUsage_VersionInfo(t *testing.T) {
 // TestPrintUsage_CommandFormatting verifies that commands are properly formatted
 func TestPrintUsage_CommandFormatting(t *testing.T) {
 	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
 	os.Stderr = w
 
 	printUsage("test-app")

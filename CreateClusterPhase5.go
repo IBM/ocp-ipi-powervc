@@ -16,11 +16,19 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"sigs.k8s.io/yaml"
+)
+
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+
+var (
+	errSecurityGroupDeleted = errors.New("security group deleted")
 )
 
 //
@@ -78,7 +86,11 @@ func processManifestDirectorySecurityGroups(directory string) error {
 	}
 
 	for _, entry = range entries {
-		filename = fmt.Sprintf("%s/%s", directory, entry.Name())
+		if entry.IsDir() {
+			continue
+		}
+
+		filename = filepath.Join(directory, entry.Name())
 		log.Debugf("processManifestDirectorySecurityGroups: %s", filename)
 
 		err = removeSecurityGroupsManifest(filename)
@@ -121,10 +133,10 @@ func removeSecurityGroupsManifest(filename string) error {
 	err = removeSecurityGroups(jsonOld)
 	log.Debugf("jsonOld = %+v", jsonOld)
 	if err != nil {
-		if err.Error() != "DELETED-SECURITY-GROUP" {
+		if !errors.Is(err, errSecurityGroupDeleted) {
 			return err
 		}
-		log.Debugf("Found DELETED-SECURITY-GROUP")
+		log.Debugf("Found errSecurityGroupDeleted")
 		changed = true
 	}
 
@@ -155,7 +167,7 @@ func removeSecurityGroups(node map[string]any) error {
 		if k == "securityGroups" {
 			log.Debugf("FOUND securityGroups! type: %T", v)
 			delete(node, "securityGroups")
-			return fmt.Errorf("DELETED-SECURITY-GROUP")
+			return errSecurityGroupDeleted
 		}
 		switch value := v.(type) {
 		case map[string]any:

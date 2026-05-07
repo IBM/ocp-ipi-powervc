@@ -133,7 +133,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	var preLog strings.Builder
 
 	// Parse and validate flags
-	config, err := parseWatchCreateFlags(preLog, watchCreateClusterFlags, args)
+	config, err := parseWatchCreateFlags(&preLog, watchCreateClusterFlags, args)
 	if err != nil {
 		return err
 	}
@@ -149,6 +149,9 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	for scanner.Scan() {
 		line := scanner.Text() // Each line as a string
 		log.Println(line)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[WARN] Error reading pre-log buffer: %v", err)
 	}
 
 	// Validate IBM Cloud API key if provided
@@ -199,7 +202,7 @@ type watchCreateConfig struct {
 }
 
 // parseWatchCreateFlags parses and validates command-line flags
-func parseWatchCreateFlags(preLog strings.Builder, flagSet *flag.FlagSet, args []string) (*watchCreateConfig, error) {
+func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args []string) (*watchCreateConfig, error) {
 	// Define command-line flags
 	ptrCloud := flagSet.String(flagWatchCreateCloud, defaultWatchCreateCloud, usageWatchCreateCloud)
 	ptrMetadata := flagSet.String(flagWatchCreateMetadata, defaultWatchCreateMetadata, usageWatchCreateMetadata)
@@ -220,8 +223,11 @@ func parseWatchCreateFlags(preLog strings.Builder, flagSet *flag.FlagSet, args [
 		return nil, fmt.Errorf("%s%w", errPrefixWatchCreate, err)
 	}
 
+	// Trim spaces from cloud parameter
+	cloud := strings.TrimSpace(*ptrCloud)
+
 	// Validate required flags
-	if err := validateRequiredFlags(preLog, *ptrCloud, *ptrMetadata, *ptrBastionUsername, *ptrBastionRsa); err != nil {
+	if err := validateRequiredFlags(preLog, cloud, *ptrMetadata, *ptrBastionUsername, *ptrBastionRsa); err != nil {
 		return nil, err
 	}
 
@@ -229,7 +235,7 @@ func parseWatchCreateFlags(preLog strings.Builder, flagSet *flag.FlagSet, args [
 	apiKey := os.Getenv(envIBMCloudAPIKey)
 
 	return &watchCreateConfig{
-		cloud:           *ptrCloud,
+		cloud:           cloud,
 		metadata:        *ptrMetadata,
 		kubeConfig:      *ptrKubeConfig,
 		bastionUsername: *ptrBastionUsername,
@@ -241,26 +247,26 @@ func parseWatchCreateFlags(preLog strings.Builder, flagSet *flag.FlagSet, args [
 }
 
 // validateRequiredFlags validates that all required flags are provided
-func validateRequiredFlags(preLog strings.Builder, cloud, metadata, bastionUsername, bastionRsa string) error {
+func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionUsername, bastionRsa string) error {
 	if cloud == "" {
 		return fmt.Errorf("%scloud name is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateCloud)
 	}
-	fmt.Fprintf(&preLog, "[INFO] Using cloud: %s", cloud)
+	fmt.Fprintf(preLog, "[INFO] Using cloud: %s\n", cloud)
 
 	if metadata == "" {
 		return fmt.Errorf("%smetadata file location is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateMetadata)
 	}
-	fmt.Fprintf(&preLog, "[INFO] Using metadata file: %s", metadata)
+	fmt.Fprintf(preLog, "[INFO] Using metadata file: %s\n", metadata)
 
 	if bastionUsername == "" {
 		return fmt.Errorf("%sbastion username is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionUsername)
 	}
-	fmt.Fprintf(&preLog, "[INFO] Using bastion username: %s", bastionUsername)
+	fmt.Fprintf(preLog, "[INFO] Using bastion username: %s\n", bastionUsername)
 
 	if bastionRsa == "" {
 		return fmt.Errorf("%sbastion RSA key is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionRsa)
 	}
-	fmt.Fprintf(&preLog, "[INFO] Using bastion RSA key: %s", bastionRsa)
+	fmt.Fprintf(preLog, "[INFO] Using bastion RSA key: %s\n", bastionRsa)
 
 	return nil
 }

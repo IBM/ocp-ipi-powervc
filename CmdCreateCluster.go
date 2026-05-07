@@ -52,8 +52,7 @@ const (
 	defaultShouldDebug = "false"
 
 	// Error message prefixes
-	errPrefixFlag      = "Error: "
-	errPrefixPhase     = "Phase execution failed: "
+	errPrefixFlag = "flag error: "
 
 	// Usage messages
 	usageDirectory   = "The location of the installation directory"
@@ -118,7 +117,7 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 	}
 
 	// Parse debug flag
-	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagCheckAliveShouldDebug)
+	shouldDebug, err := parseBoolFlag(*ptrShouldDebug, flagShouldDebug)
 	if err != nil {
 		return fmt.Errorf("%s%w", errPrefixFlag, err)
 	}
@@ -161,7 +160,7 @@ func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error
 
 		err = function(absDirectory)
 		if err != nil {
-			return fmt.Errorf("%sphase %d failed: %w", errPrefixPhase, phaseNum, err)
+			return fmt.Errorf("phase %d failed: %w", phaseNum, err)
 		}
 
 		log.Printf("[INFO] Phase %d completed successfully", phaseNum)

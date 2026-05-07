@@ -336,6 +336,8 @@ func findDNSZoneID(services *Services) (string, error) {
 
 	log.Debugf("findDNSZoneID: Found %d CIS instance(s) to search", len(listResourceInstancesResponse.Resources))
 
+	var lastErr error
+
 	// Search through CIS instances for the matching zone
 	for i, instance := range listResourceInstancesResponse.Resources {
 		if instance.CRN == nil {
@@ -349,6 +351,7 @@ func findDNSZoneID(services *Services) (string, error) {
 		zoneID, err := searchZonesInInstance(apiKey, instance.CRN, baseDomain)
 		if err != nil {
 			log.Debugf("findDNSZoneID: Error searching zones in instance %s: %v", *instance.CRN, err)
+			lastErr = err
 			continue
 		}
 
@@ -359,6 +362,11 @@ func findDNSZoneID(services *Services) (string, error) {
 	}
 
 	log.Debugf("findDNSZoneID: No matching zone found for base domain: %s", baseDomain)
+
+	if lastErr != nil {
+		return "", fmt.Errorf("failed to search all CIS instances, last error: %w", lastErr)
+	}
+
 	return "", nil
 }
 
@@ -475,7 +483,7 @@ func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 
 	// Build regex matcher for cluster DNS records
 	// Pattern matches: *.cluster.domain.com
-	pattern := fmt.Sprintf(`.*\Q%s.%s\E$`, clusterName, baseDomain)
+	pattern := fmt.Sprintf(".*%s[.]%s$", regexp.QuoteMeta(clusterName), regexp.QuoteMeta(baseDomain))
 	dnsMatcher, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile DNS records matcher pattern %q: %w", pattern, err)
@@ -553,11 +561,19 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 			contentMatches := matcher.Match([]byte(*record.Content))
 
 			if nameMatches || contentMatches {
-				log.Debugf("fetchMatchingDNSRecords: Found matching record: ID=%v, Name=%v, Content=%v",
-					*record.ID, *record.Name, *record.Content)
+				recordID := "nil"
+				if record.ID != nil {
+					recordID = *record.ID
+				}
+				log.Debugf("fetchMatchingDNSRecords: Found matching record: ID=%s, Name=%v, Content=%v",
+					recordID, record.Name, record.Content)
 				result = append(result, *record.Name)
 			}
 			recordsProcessed++
+		}
+
+		if dnsResources.ResultInfo.PerPage == nil || dnsResources.ResultInfo.Count == nil {
+			return nil, fmt.Errorf("result info missing pagination fields on page %d", page)
 		}
 
 		log.Debugf("fetchMatchingDNSRecords: Page %d: Processed=%d, PerPage=%v, Count=%v",
@@ -617,6 +633,10 @@ func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 					*record.ID, *record.Name, getRecordType(record))
 				totalRecords++
 			}
+		}
+
+		if dnsResources.ResultInfo.PerPage == nil || dnsResources.ResultInfo.Count == nil {
+			return fmt.Errorf("result info missing pagination fields on page %d", page)
 		}
 
 		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {

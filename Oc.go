@@ -75,7 +75,7 @@ func NewOcAlt(services *Services) ([]*Oc, []error) {
 //
 // Returns:
 //   - []*Oc: Array containing the initialized Oc instance
-//   - []error: Array of errors encountered during initialization
+//   - []error: Array of errors encountered during initialization (currently always contains one nil error)
 func innerNewOc(services *Services) ([]*Oc, []error) {
 	ocs := make([]*Oc, 1)
 	errs := make([]error, 1)
@@ -165,9 +165,6 @@ func (oc *Oc) ClusterStatus() {
 		"oc --request-timeout=5s get co/network",
 		"oc --request-timeout=5s get co/kube-controller-manager",
 		"oc --request-timeout=5s get co/etcd",
-		"oc --request-timeout=5s get machines.machine.openshift.io -n openshift-machine-api",
-		"oc --request-timeout=5s get machineset.m -n openshift-machine-api",
-		"oc --request-timeout=5s get pods -n openshift-machine-api",
 		"oc --request-timeout=5s get pods -n openshift-kube-controller-manager",
 		"oc --request-timeout=5s get pods -n openshift-ovn-kubernetes",
 		"oc --request-timeout=5s describe co/machine-config",
@@ -181,7 +178,9 @@ func (oc *Oc) ClusterStatus() {
 		},
 		{
 			"oc --request-timeout=5s get csr",
-			"grep Pending",
+			// ERROR: "grep Pending"
+			// returns an error code if no match is found
+			"sed -n '/Pending/p'",
 		},
 	}
 

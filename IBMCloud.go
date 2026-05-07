@@ -85,7 +85,7 @@ func listCatalogEntries(
 	}, "ListCatalogEntries")
 }
 
-// GetChildObjects retrieves child objects from IBM Cloud Global Catalog.
+// getChildObjects retrieves child objects from IBM Cloud Global Catalog.
 // It automatically retries on transient failures using exponential backoff.
 // This function is exported for use by other packages.
 //
@@ -101,13 +101,13 @@ func listCatalogEntries(
 //
 // Reference: https://cloud.ibm.com/apidocs/resource-catalog/global-catalog#get-child-catalog-entries
 // SDK Reference: https://github.com/IBM/platform-services-go-sdk/blob/main/globalcatalogv1/global_catalog_v1.go
-func GetChildObjects(
+func getChildObjects(
 	ctx context.Context,
 	gcv1 *globalcatalogv1.GlobalCatalogV1,
 	getChildOpt *globalcatalogv1.GetChildObjectsOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 	if gcv1 == nil {
-		return nil, nil, fmt.Errorf("GetChildObjects failed: gcv1 cannot be nil")
+		return nil, nil, fmt.Errorf("getChildObjects failed: gcv1 cannot be nil")
 	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.GetChildObjectsWithContext(ctx, getChildOpt)

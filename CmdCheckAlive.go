@@ -109,6 +109,9 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	if checkAliveFlags == nil {
 		return fmt.Errorf("%sflag set cannot be nil", errPrefixCheckAlive)
 	}
+	if args == nil {
+		return fmt.Errorf("%sargs cannot be nil", errPrefixCheckAlive)
+	}
 
 	// Display version information early for user feedback
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
@@ -140,7 +143,6 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	// Initialize logger and log operation start
 	log = initLogger(shouldDebug)
 	log.Infof("Starting check-alive command")
-	log.Infof("Program version: %v, release: %v", version, release)
 	log.Infof("Server IP: %s", serverIP)
 	log.Infof("Debug mode: %v", shouldDebug)
 

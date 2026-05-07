@@ -16,20 +16,27 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"sigs.k8s.io/yaml"
 )
 
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+
+var (
+	errAddedLoadBalancer = errors.New("added LoadBalancer configuration")
+)
+
 //
-// Change the LoadBalancer enabled to false in the cloud provider config.
+// Adds a LoadBalancer block with enabled=false to the cloud provider config if missing.
 //
 func createClusterPhase7(directory string) error {
 	var (
-		filename = "test/manifests/cloud-provider-config.yaml"
+		filename = filepath.Join(directory, "manifests", "cloud-provider-config.yaml")
 		err      error
 	)
 
@@ -51,7 +58,7 @@ func processCloudProviderConfig(filename string) error {
 		err          error
 	)
 
-	abyteYamlOld, err = ioutil.ReadFile(filename)
+	abyteYamlOld, err = os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("Error reading YAML file: %v", err)
 	}
@@ -71,10 +78,10 @@ func processCloudProviderConfig(filename string) error {
 	err = changeCloudProviderConfig(jsonOld)
 //	log.Debugf("jsonOld = %+v", jsonOld)
 	if err != nil {
-		if err.Error() != "ADDED-LOADBALANCER" {
+		if !errors.Is(err, errAddedLoadBalancer) {
 			return err
 		}
-		log.Debugf("Found ADDED-LOADBALANCER")
+		log.Debugf("Found errAddedLoadBalancer")
 		changed = true
 	}
 
@@ -130,13 +137,20 @@ func changeCloudProviderConfig(jsonOld map[string]any) error {
 	}
 	log.Debugf("config = %+v", config)
 
-	if strings.Contains(config, "[LoadBalancer]") {
-		return nil
+	for _, line := range strings.Split(config, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[LoadBalancer]" {
+			return nil
+		}
 	}
 
+	// Ensure there's a newline before the new section
+	if !strings.HasSuffix(config, "\n") {
+		config = config + "\n"
+	}
 	config = config + "[LoadBalancer]\nenabled = false\n"
 
 	dataMap["config"] = config
 
-	return fmt.Errorf("ADDED-LOADBALANCER")
+	return errAddedLoadBalancer
 }

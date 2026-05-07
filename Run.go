@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -55,6 +56,8 @@ func createCommand(ctx context.Context, acmdline []string) (*exec.Cmd, error) {
 // Parameters:
 //   - kubeconfig: Path to the kubeconfig file
 //   - cmdline: Space-separated command line string
+//
+// Note: Commands with quoted arguments containing spaces won't be parsed correctly.
 //
 // Returns:
 //   - error: Any error encountered during command execution
@@ -126,7 +129,7 @@ func runSplitCommand(acmdline []string) error {
 
 	if err != nil {
 		log.Debugf("runSplitCommand: Command failed: %v", err)
-		return fmt.Errorf("command execution failed: %w", err)
+		return err
 	}
 
 	log.Debugf("runSplitCommand: Command completed successfully")
@@ -161,7 +164,7 @@ func runSplitCommand2(acmdline []string) ([]byte, error) {
 	log.Debugf("runSplitCommand2: Executing command: %v", acmdline)
 
 	fmt.Println(separatorLine)
-	fmt.Println(acmdline)
+	fmt.Println(strings.Join(acmdline, " "))
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -189,6 +192,9 @@ func runSplitCommand2(acmdline []string) ([]byte, error) {
 //   if err != nil {
 //       log.Printf("Command failed: %v", err)
 //   }
+//
+// Note:
+//   - stderr is discarded
 func runSplitCommandNoErr(acmdline []string, silent bool) ([]byte, error) {
 	if len(acmdline) == 0 {
 		return nil, fmt.Errorf("command array cannot be empty")
@@ -203,12 +209,13 @@ func runSplitCommandNoErr(acmdline []string, silent bool) ([]byte, error) {
 	}
 
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout // Capture stdout into a buffer (stderr is not captured)
+	cmd.Stdout = &stdout      // Capture stdout into a buffer
+	cmd.Stderr = io.Discard   // Explicitly discard stderr
 
 	if !silent {
 		log.Debugf("runSplitCommandNoErr: Executing command: %v", acmdline)
 		fmt.Println(separatorLine)
-		fmt.Println(acmdline)
+		fmt.Println(strings.Join(acmdline, " "))
 	} else {
 		log.Debugf("runSplitCommandNoErr: Executing command (silent): %v", acmdline)
 	}
@@ -233,12 +240,16 @@ func runSplitCommandNoErr(acmdline []string, silent bool) ([]byte, error) {
 //   - cmdline1: Space-separated command line string for the first command
 //   - cmdline2: Space-separated command line string for the second command
 //
+// Note: Commands with quoted arguments containing spaces won't be parsed correctly.
+//
 // Returns:
 //   - error: Any error encountered during command execution
 //
 // Example:
 //   err := runTwoCommands("/path/to/kubeconfig", "kubectl get pods -o json", "jq .items[].metadata.name")
 func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
+	var readPipeClosed bool
+
 	if kubeconfig == "" {
 		return fmt.Errorf("kubeconfig path cannot be empty")
 	}
@@ -251,6 +262,9 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+
+	fmt.Println(separatorLine)
+	fmt.Printf("%s | %s\n", cmdline1, cmdline2)
 
 	log.Debugf("runTwoCommands: cmdline1 = %s", cmdline1)
 	log.Debugf("runTwoCommands: cmdline2 = %s", cmdline2)
@@ -282,7 +296,11 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
-	defer readPipe.Close()
+	defer func () {
+		if !readPipeClosed {
+			readPipe.Close()
+		}
+	}()
 
 	// Connect first command's stdout to pipe
 	cmd1.Stdin  = os.Stdin
@@ -308,9 +326,17 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	// Run second command
 	log.Debugf("runTwoCommands: Running second command: %v", acmdline2)
 	if err := cmd2.Run(); err != nil {
-		cmd1.Wait() // Wait for first command to finish
+		readPipe.Close() // Unblock cmd1 if it's writing
+		readPipeClosed = true
+		if waitErr := cmd1.Wait(); waitErr != nil {
+			log.Debugf("runTwoCommands: First command also failed: %v", waitErr)
+		}
 		return fmt.Errorf("failed to run second command: %w", err)
 	}
+
+	// Close read end so cmd1 gets SIGPIPE if it is still writing after cmd2 exited.
+	readPipe.Close()
+	readPipeClosed = true
 
 	// Wait for first command to complete
 	if err := cmd1.Wait(); err != nil {
@@ -319,9 +345,6 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	}
 
 	out := buffer.Bytes()
-
-	fmt.Println(separatorLine)
-	fmt.Printf("%s | %s\n", cmdline1, cmdline2)
 	fmt.Println(string(out))
 
 	log.Debugf("runTwoCommands: Pipeline completed successfully, output size: %d bytes", len(out))

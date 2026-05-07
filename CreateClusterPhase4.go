@@ -23,8 +23,10 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/objectstorage/v1/objects"
 )
 
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
+
 //
-// Upload the bootstrap igniton file to Swift.
+// Upload the bootstrap ignition file to Swift.
 //
 func createClusterPhase4(directory string) error {
 	var (
@@ -39,10 +41,10 @@ func createClusterPhase4(directory string) error {
 	)
 
 	metadata, err = NewMetadataFromCCMetadata(fmt.Sprintf("%s/%s", directory, "metadata.json"))
-	log.Debugf("metadata = %+v", metadata)
 	if err != nil {
 		return err
 	}
+	log.Debugf("metadata = %+v", metadata)
 
 	cloud = metadata.GetCloud()
 	log.Debugf("cloud = %s", cloud)
@@ -61,7 +63,7 @@ func createClusterPhase4(directory string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("conn = %+v\n", conn)
+	log.Debugf("object-store endpoint = %s", conn.Endpoint)
 
 	f, err := os.Open(filename)
 	if err != nil {
@@ -99,8 +101,8 @@ func createClusterPhase4(directory string) error {
 		objects.CreateOpts{
 			Content: f,
 		}).Extract()
-	fmt.Printf("header = %+v\n", header)
-	fmt.Printf("err = %+v\n", err)
+	log.Debugf("header = %+v\n", header)
+	log.Debugf("err = %+v\n", err)
 	if err != nil {
 		return err
 	}

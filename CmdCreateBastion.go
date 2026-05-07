@@ -23,7 +23,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -88,6 +88,9 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 
 		outb, _ := runSplitCommand2([]string{
 			"ssh",
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=30",
+			"-o", "StrictHostKeyChecking=no",
 			"-i", cfg.KeyPath,
 			fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
 			"echo", "ready",
@@ -118,6 +121,9 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
 	args := []string{
 		"ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=30",
+		"-o", "StrictHostKeyChecking=no",
 		"-i", cfg.KeyPath,
 		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
 	}
@@ -434,9 +440,6 @@ type BastionConfig struct {
 	DomainName    string // DNS domain for bastion records (optional, requires IBMCLOUD_API_KEY)
 	EnableHAProxy bool   // Enable HAProxy load balancer (default: true)
 	ShouldDebug   bool   // Enable debug logging (default: false)
-
-	// Internal state (not exposed via flags)
-	validated bool // Tracks if Validate() has been called successfully
 }
 
 // Validate checks if the configuration is valid and returns detailed errors.
@@ -446,11 +449,6 @@ type BastionConfig struct {
 //   - Mutual exclusivity constraints
 //   - Resource accessibility (file existence)
 func (c *BastionConfig) Validate() error {
-	// Skip re-validation if already validated
-	if c.validated {
-		return nil
-	}
-
 	var validationErrors []error
 
 	// Required fields validation
@@ -518,12 +516,12 @@ func (c *BastionConfig) Validate() error {
 
 	// Return aggregated errors
 	if len(validationErrors) > 0 {
-		return fmt.Errorf("configuration validation failed:\n  - %w", 
-			errors.Join(validationErrors...))
+		errStrings := make([]string, len(validationErrors))
+		for i, e := range validationErrors {
+			errStrings[i] = "  - " + e.Error()
+		}
+		return fmt.Errorf("configuration validation failed:\n%s", strings.Join(errStrings, "\n"))
 	}
-
-	// Mark as validated on success
-	c.validated = true
 
 	return nil
 }
@@ -663,7 +661,7 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 	defer cancel()
 
 	// Clean up previous bastion IP file
-	if err := cleanupBastionIPFile(); err != nil {
+	if err := cleanupBastionIPFile(bastionIpFilename); err != nil {
 		return fmt.Errorf("failed to cleanup bastion IP file: %w", err)
 	}
 
@@ -687,8 +685,8 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 
 // cleanupBastionIPFile removes the bastion IP file if it exists.
 // It returns an error only if the file exists but cannot be removed.
-func cleanupBastionIPFile() error {
-	err := os.Remove(bastionIpFilename)
+func cleanupBastionIPFile(filename string) error {
+	err := os.Remove(filename)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove bastion IP file: %w", err)
 	}
@@ -705,10 +703,8 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 		return nil
 	}
 
-	// Check if error is "server not found" - using string prefix check as errors.Is doesn't work
-	// with the current error wrapping in findServer
-	if !strings.HasPrefix(strings.ToLower(err.Error()), "could not find server named") {
-		return fmt.Errorf("failed to find server: %w", err)
+	if !errors.Is(err, ErrServerNotFound) {
+		return fmt.Errorf("Unknown error found in ensureServerExists: %w", err)
 	}
 
 	// Server doesn't exist, create it
@@ -802,15 +798,36 @@ func createServer(ctx context.Context, cloudName, flavorName, imageName, network
 	}
 	log.Debugf("createServer: port.ID = %v", port.ID)
 
+	// Cleanup port on failure
+	cleanupPort := func(createdPort *ports.Port) {
+		if deleteErr := deleteNetworkPort(ctx, cloudName, createdPort); deleteErr != nil {
+			log.Debugf("Warning: failed to cleanup port %s: %v", port.ID, deleteErr)
+		}
+	}
+
+	cleanupServerAndPort := func(server *servers.Server, createdPort *ports.Port) {
+		// Delete server first
+		if deleteErr := deleteServer(ctx, cloudName, server); deleteErr != nil {
+			if server == nil {
+				log.Debugf("Warning: failed to cleanup nil server: %v", deleteErr)
+			} else {
+				log.Debugf("Warning: failed to cleanup server %v: %v", server.ID, deleteErr)
+			}
+		}
+		cleanupPort(createdPort)
+	}
+
 	// Step 3: Create server
 	newServer, err = createServerInstance(ctx, cloudName, bastionName, flavor.ID, image.ID, port.ID, sshKeyName, sshKeyPair.Name, userData)
 	if err != nil {
+		cleanupPort(port)
 		return fmt.Errorf("failed to create server instance: %w", err)
 	}
 	log.Debugf("createServer: newServer = %+v", newServer)
 
 	// Step 4: Wait for server to be ready
 	if err := waitForServer(ctx, cloudName, bastionName); err != nil {
+		cleanupServerAndPort(newServer, port)
 		return fmt.Errorf("server creation timeout: %w", err)
 	}
 
@@ -837,6 +854,26 @@ func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID st
 	}
 
 	return port, nil
+}
+
+// deleteNetworkPort deletes a network port by its ID.
+// Returns an error if the port cannot be deleted.
+func deleteNetworkPort(ctx context.Context, cloudName string, createdPort *ports.Port) error {
+	if createdPort == nil || createdPort.ID == "" {
+		return nil
+	}
+
+	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
+	if err != nil {
+		return fmt.Errorf("failed to create network client: %w", err)
+	}
+
+	err = ports.Delete(ctx, connNetwork, createdPort.ID).ExtractErr()
+	if err != nil {
+		return fmt.Errorf("failed to delete port: %w", err)
+	}
+
+	return nil
 }
 
 // createServerInstance creates the actual server instance.
@@ -875,6 +912,26 @@ func createServerInstance(ctx context.Context, cloudName, bastionName, flavorID,
 
 	return newServer, nil
 }
+// deleteServer deletes a server instance by its ID.
+// Returns an error if the server cannot be deleted.
+func deleteServer(ctx context.Context, cloudName string, server *servers.Server) error {
+	if server == nil || server.ID == "" {
+		return nil
+	}
+
+	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
+	if err != nil {
+		return fmt.Errorf("failed to create compute client: %w", err)
+	}
+
+	err = servers.Delete(ctx, connCompute, server.ID).ExtractErr()
+	if err != nil {
+		return fmt.Errorf("failed to delete server: %w", err)
+	}
+
+	return nil
+}
+
 
 // addServerKnownHosts adds the server's SSH host keys to known_hosts file.
 // It removes any existing host keys for the IP address before adding new ones.
@@ -884,7 +941,7 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 		return fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	knownHostsPath := path.Join(homeDir, ".ssh/known_hosts")
+	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
 	log.Debugf("addServerKnownHosts: known_hosts path = %s", knownHostsPath)
 
 	// Remove old host key if it exists
@@ -922,19 +979,24 @@ func removeHostKey(knownHostsPath, ipAddress string) error {
 // appendToFile appends data to a file.
 // It returns an error if the file cannot be opened, written to, or if the write is incomplete.
 func appendToFile(filePath string, data []byte) error {
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_RDWR, filePermReadWrite)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_RDWR|os.O_CREATE, filePermReadWrite)
 	if err != nil {
 		return fmt.Errorf("failed to open file %q: %w", filePath, err)
 	}
-	defer file.Close()
 
 	n, err := file.Write(data)
 	if err != nil {
+		file.Close()
 		return fmt.Errorf("failed to write to file: %w", err)
 	}
 
 	if n != len(data) {
+		file.Close()
 		return fmt.Errorf("incomplete write: wrote %d of %d bytes", n, len(data))
+	}
+
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	return nil

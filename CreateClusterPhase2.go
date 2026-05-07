@@ -17,11 +17,17 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"sigs.k8s.io/yaml"
 )
+
+var (
+	testSubnet = false
+)
+
+// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
 
 // process an unmarshalled JSON array structure by finding every map element.
 func replacePlatformArray(node []interface{}) error {
@@ -80,7 +86,7 @@ func createClusterPhase2(directory string) error {
 		err          error
 	)
 
-	abyteYamlOld, err = ioutil.ReadFile(fmt.Sprintf("%s/%s", directory, "install-config.yaml"))
+	abyteYamlOld, err = os.ReadFile(filepath.Join(directory, "install-config.yaml"))
 	if err != nil {
 		return fmt.Errorf("Error reading YAML file: %v", err)
 	}
@@ -89,7 +95,7 @@ func createClusterPhase2(directory string) error {
 	if err != nil {
 		return fmt.Errorf("Error: could not convert yaml to json: %v", err)
 	}
-	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
+	log.Debugf("abyteJsonOld read successfully (%d bytes)", len(abyteJsonOld))
 
 	err = json.Unmarshal(abyteJsonOld, &jsonOld)
 	if err != nil {
@@ -100,7 +106,7 @@ func createClusterPhase2(directory string) error {
 	if err != nil {
 		return fmt.Errorf("Error: could not replacePlatformMap the json: %v", err)
 	}
-	log.Debugf("jsonOld = %+v", jsonOld)
+	log.Debugf("replacePlatformMap completed successfully")
 
 	abyteJsonNew, err = json.Marshal(jsonOld)
 	if err != nil {
@@ -112,18 +118,21 @@ func createClusterPhase2(directory string) error {
 		return err
 	}
 
-	err = os.WriteFile(fmt.Sprintf("%s/%s", directory, "install-config.yaml"), abyteYamlNew, 0644)
+	err = os.WriteFile(filepath.Join(directory, "install-config.yaml"), abyteYamlNew, 0600)
 	if err != nil {
 		return err
 	}
 
-if false {
+if testSubnet {
 	err = runSplitCommand([]string{
 		"sed",
 		"-i",
 		"s,subnet: null,subnet:,",
 		fmt.Sprintf("%s/%s", directory, "install-config.yaml"),
 	})
+	if err != nil {
+		return err
+	}
 }
 
 	return nil

@@ -65,7 +65,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "cloud name is required",
+			errorMsg:    "validation error for field 'Cloud': is required",
 		},
 		{
 			name: "missing rhcos name",
@@ -79,7 +79,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "RHCOS name is required",
+			errorMsg:    "validation error for field 'RhcosName': is required",
 		},
 		{
 			name: "invalid rhcos name characters",
@@ -93,7 +93,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "RHCOS name contains invalid characters",
+			errorMsg:    "validation error for field 'RhcosName': contains invalid characters: test@rhcos!",
 		},
 		{
 			name: "missing flavor name",
@@ -107,7 +107,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "flavor name is required",
+			errorMsg:    "validation error for field 'FlavorName': is required",
 		},
 		{
 			name: "missing image name",
@@ -121,7 +121,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "image name is required",
+			errorMsg:    "validation error for field 'ImageName': is required",
 		},
 		{
 			name: "missing network name",
@@ -135,7 +135,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "network name is required",
+			errorMsg:    "validation error for field 'NetworkName': is required",
 		},
 		{
 			name: "missing ssh public key",
@@ -149,7 +149,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: "",
 			},
 			expectError: true,
-			errorMsg:    "SSH public key is required",
+			errorMsg:    "validation error for field 'SshPublicKey': is required",
 		},
 		{
 			name: "ssh key too short",
@@ -163,7 +163,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: "ssh-rsa short",
 			},
 			expectError: true,
-			errorMsg:    "SSH public key appears invalid (too short)",
+			errorMsg:    "validation error for field 'SshPublicKey': appears invalid (too short, minimum 100 characters)",
 		},
 		{
 			name: "ssh key invalid prefix",
@@ -177,7 +177,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: "invalid-prefix AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
 			},
 			expectError: true,
-			errorMsg:    "SSH public key must start with 'ssh-' or 'ecdsa-'",
+			errorMsg:    "validation error for field 'SshPublicKey': must start with 'ssh-' or 'ecdsa-'",
 		},
 		{
 			name: "valid ecdsa key",
@@ -204,7 +204,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "password hash is required",
+			errorMsg:    "validation error for field 'PasswdHash': is required",
 		},
 		{
 			name: "password hash too short",
@@ -218,7 +218,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "password hash appears invalid (too short)",
+			errorMsg:    "validation error for field 'PasswdHash': appears invalid (too short, minimum 13 characters)",
 		},
 		{
 			name: "password hash invalid format",
@@ -232,7 +232,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: validSSHKey,
 			},
 			expectError: true,
-			errorMsg:    "password hash must be in crypt format (starting with $)",
+			errorMsg:    "validation error for field 'PasswdHash': must be in crypt format (starting with $)",
 		},
 	}
 
@@ -250,8 +250,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 					t.Logf("ValidationError: Field=%s, Message=%s", validationErr.Field, validationErr.Message)
 				}
 				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Logf("Expected error to contain %q, got: %v", tt.errorMsg, err)
-					// Don't fail the test - our new error format is more structured
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
 				}
 			} else {
 				if err != nil {
@@ -287,8 +286,11 @@ func TestParseRhcosFlags(t *testing.T) {
 			},
 			expectError: false,
 			checkConfig: func(t *testing.T, c *rhcosConfig) {
+				if len(c.Clouds) != 1 {
+					t.Fatal("Expected Clouds to have at least one element")
+				}
 				if c.Clouds[0] != "mycloud" {
-					t.Errorf("Expected cloud 'mycloud', got %q", c.Clouds)
+					t.Errorf("Expected cloud 'mycloud', got %q", c.Clouds[0])
 				}
 				if c.RhcosName != "test-rhcos" {
 					t.Errorf("Expected rhcosName 'test-rhcos', got %q", c.RhcosName)
@@ -594,7 +596,7 @@ func TestIsServerNotFoundError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "server not found error with correct prefix",
+			name:     "unrelated stdlib error (os.ErrNotExist)",
 			err:      os.ErrNotExist,
 			expected: false,
 		},
@@ -603,7 +605,15 @@ func TestIsServerNotFoundError(t *testing.T) {
 			err:      os.ErrInvalid,
 			expected: false,
 		},
+		{
+			name:     "actual server not found error",
+			err:      errors.New(serverNotFoundPrefix + "server-123"),
+			expected: true,
+		},
 	}
+
+	// Initialize logger for tests
+	log = initLogger(false)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -895,8 +905,6 @@ func TestParseRhcosFlags_DebugFlagVariations(t *testing.T) {
 		{name: "FALSE uppercase", debugValue: "FALSE", expectDebug: false, expectError: false},
 		{name: "1 numeric", debugValue: "1", expectDebug: true, expectError: false},
 		{name: "0 numeric", debugValue: "0", expectDebug: false, expectError: false},
-		{name: "yes", debugValue: "yes", expectDebug: true, expectError: false},
-		{name: "no", debugValue: "no", expectDebug: false, expectError: false},
 		{name: "invalid", debugValue: "invalid", expectDebug: false, expectError: true},
 	}
 

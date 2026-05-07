@@ -45,7 +45,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -153,11 +153,14 @@ type rhcosConfig struct {
 // indicating which field failed validation and why.
 func (c *rhcosConfig) validate() error {
 	// Validate required string fields
-	requiredFields := map[string]string{
-		"RhcosName":   c.RhcosName,
-		"FlavorName":  c.FlavorName,
-		"ImageName":   c.ImageName,
-		"NetworkName": c.NetworkName,
+	requiredFields := []struct {
+		name  string
+		value string
+	}{
+		{"RhcosName", c.RhcosName},
+		{"FlavorName", c.FlavorName},
+		{"ImageName", c.ImageName},
+		{"NetworkName", c.NetworkName},
 	}
 
 	if len(c.Clouds) != 1 {
@@ -174,10 +177,10 @@ func (c *rhcosConfig) validate() error {
 		}
 	}
 
-	for field, value := range requiredFields {
-		if value == "" {
+	for _, f := range requiredFields {
+		if f.value == "" {
 			return &ValidationError{
-				Field:   field,
+				Field:   f.name,
 				Message: "is required",
 			}
 		}
@@ -482,8 +485,8 @@ func isServerNotFoundError(err error) bool {
 //   - error: Any error encountered during DNS configuration, nil on success or skip
 func configureDNS(ctx context.Context, config *rhcosConfig) error {
 	if config.APIKey == "" {
-		fmt.Println("Warning: IBMCLOUD_API_KEY not set. DNS configuration skipped.")
-		fmt.Println("Ensure DNS is configured through another method.")
+		fmt.Fprintln(os.Stderr, "Warning: IBMCLOUD_API_KEY not set. DNS configuration skipped.")
+		fmt.Fprintln(os.Stderr, "Ensure DNS is configured through another method.")
 		return nil
 	}
 
@@ -661,8 +664,8 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	sshDir := path.Join(homeDir, ".ssh")
-	knownHostsPath := path.Join(sshDir, "known_hosts")
+	sshDir := filepath.Join(homeDir, ".ssh")
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 
 	// Ensure .ssh directory exists
 	if err := ensureSSHDirectory(sshDir); err != nil {
@@ -675,7 +678,6 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 	// Exit code 0: key found, Exit code 1: key not found
 	_, err = runSplitCommand2([]string{
 		"ssh-keygen",
-		"-H",
 		"-F",
 		ipAddress,
 	})

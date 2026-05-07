@@ -641,8 +641,8 @@ func TestWatchCreateClusterCommand_EdgeCases(t *testing.T) {
 				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
-			expectError: false, // Function completes, whitespace is preserved
-			errorMsg:    "",
+			expectError: true,
+			errorMsg:    "cloud name is required, use -cloud flag",
 		},
 	}
 
@@ -805,7 +805,7 @@ func TestParseWatchCreateFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var preLog strings.Builder
 			flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-			config, err := parseWatchCreateFlags(preLog, flagSet, tt.args)
+			config, err := parseWatchCreateFlags(&preLog, flagSet, tt.args)
 
 			if tt.expectError {
 				if err == nil {
@@ -889,7 +889,7 @@ func TestValidateRequiredFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var preLog strings.Builder
-			err := validateRequiredFlags(preLog, tt.cloud, tt.metadata, tt.bastionUsername, tt.bastionRsa)
+			err := validateRequiredFlags(&preLog, tt.cloud, tt.metadata, tt.bastionUsername, tt.bastionRsa)
 
 			if tt.expectError {
 				if err == nil {
@@ -910,7 +910,9 @@ func TestValidateRequiredFlags(t *testing.T) {
 // TestValidateMetadataFile tests the validateMetadataFile helper function
 func TestValidateMetadataFile(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 
 	tempDir := t.TempDir()
 
@@ -981,7 +983,9 @@ func TestValidateMetadataFile(t *testing.T) {
 // TestBuildComponentList tests the buildComponentList helper function
 func TestBuildComponentList(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 
 	tests := []struct {
 		name          string
@@ -1111,7 +1115,9 @@ func TestBuildComponentList(t *testing.T) {
 // TestQueryComponentStatus tests the queryComponentStatus helper function
 func TestQueryComponentStatus(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 
 	tests := []struct {
 		name        string

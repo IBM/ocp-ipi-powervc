@@ -82,7 +82,7 @@ type CommandBastionCreated struct {
 // CommandSendMetadata represents a request to send metadata to the server.
 type CommandSendMetadata struct {
 	Command  string         `json:"Command"`
-	Metadata CreateMetadata
+	Metadata CreateMetadata `json:"Metadata"`
 }
 
 // sendByteArray sends a byte array to the server connection followed by a newline.
@@ -91,10 +91,11 @@ type CommandSendMetadata struct {
 // Parameters:
 //   - conn: Network connection to the server
 //   - ab: Byte array to send
+//   - waitFor: Length to wait for a write
 //
 // Returns:
 //   - error: Any error encountered during sending
-func sendByteArray(conn net.Conn, ab []byte) (err error) {
+func sendByteArray(conn net.Conn, ab []byte, waitFor time.Duration) (err error) {
 	if conn == nil {
 		return fmt.Errorf("connection cannot be nil")
 	}
@@ -102,14 +103,14 @@ func sendByteArray(conn net.Conn, ab []byte) (err error) {
 		return fmt.Errorf("byte array cannot be empty")
 	}
 
-	_, err = conn.Write(ab)
-	if err != nil {
-		return fmt.Errorf("failed to write data: %w", err)
+	if err = conn.SetWriteDeadline(time.Now().Add(waitFor)); err != nil {
+		return fmt.Errorf("failed to set write deadline: %w", err)
 	}
 
-	_, err = conn.Write([]byte("\n"))
+	payload := append(ab, '\n')
+	_, err = conn.Write(payload)
 	if err != nil {
-		return fmt.Errorf("failed to write newline: %w", err)
+		return fmt.Errorf("failed to write data: %w", err)
 	}
 
 	log.Debugf("sendByteArray: Successfully sent %d bytes", len(ab))
@@ -120,13 +121,19 @@ func sendByteArray(conn net.Conn, ab []byte) (err error) {
 //
 // Parameters:
 //   - conn: Network connection to the server
+//   - waitFor: Length to wait for a reply
 //
 // Returns:
 //   - string: Response string received from the server
 //   - error: Any error encountered during reading
-func receiveResponse(conn net.Conn) (response string, err error) {
+func receiveResponse(conn net.Conn, waitFor time.Duration) (response string, err error) {
 	if conn == nil {
 		return "", fmt.Errorf("connection cannot be nil")
+	}
+
+	// Set read deadline to prevent hanging on unresponsive connections
+	if err := conn.SetReadDeadline(time.Now().Add(waitFor)); err != nil {
+		return "", fmt.Errorf("failed to set read deadline: %w", err)
 	}
 
 	reader := bufio.NewReader(conn)
@@ -179,12 +186,12 @@ func sendCheckAlive(serverIP string) error {
 	log.Debugf("sendCheckAlive: Sending command: %s", string(marshalledData))
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData)
+	err = sendByteArray(conn, marshalledData, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to send check-alive command: %w", err)
 	}
 
-	response, err = receiveResponse(conn)
+	response, err = receiveResponse(conn, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to receive response: %w", err)
 	}
@@ -260,12 +267,12 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	log.Debugf("sendCreateBastion: Sending command: %s", string(marshalledData))
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData)
+	err = sendByteArray(conn, marshalledData, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to send create-bastion command: %w", err)
 	}
 
-	response, err = receiveResponse(conn)
+	response, err = receiveResponse(conn, 15 * time.Minute)
 	if err != nil {
 		return fmt.Errorf("failed to receive response: %w", err)
 	}
@@ -339,16 +346,16 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal metadata from file: %w", err)
 	}
-	log.Debugf("sendMetadata: Parsed metadata: %+v", cmd)
+	log.Debugf("sendMetadata: Parsed metadata command: %s (metadata payload redacted)", cmd.Command)
 
 	marshalledData, err = json.Marshal(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to marshal command: %w", err)
 	}
-	log.Debugf("sendMetadata: Sending command: %s", string(marshalledData))
+	log.Debugf("sendMetadata: Sending command: %s (%d bytes, payload redacted)", cmd.Command, len(marshalledData))
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData)
+	err = sendByteArray(conn, marshalledData, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to send metadata command: %w", err)
 	}

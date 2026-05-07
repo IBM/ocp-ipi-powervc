@@ -264,6 +264,9 @@ func initializeRunnableObjects(services *Services, robjsFuncs []NewRunnableObjec
 
 	log.Debugf("initializeRunnableObjects: Created %d runnable objects total", len(robjsCluster))
 
+	// Sort objects by priority (highest first)
+	robjsCluster = BubbleSort(robjsCluster)
+
 	// Run each object
 	for i, robj := range robjsCluster {
 		robjObjectName, err := robj.ObjectName()

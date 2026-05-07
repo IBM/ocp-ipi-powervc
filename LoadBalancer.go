@@ -368,12 +368,11 @@ func (lbs *LoadBalancer) ClusterStatus() {
 			systemctlNoPager,
 			systemctlLongLines,
 		})
-		if statusErr != nil {
-			return fmt.Errorf("failed to retrieve HAProxy service status: %w", statusErr)
-		}
+		// systemctl status returns non-zero for inactive services (exit code 3)
+		// Only retry on connection/SSH errors, not on valid status responses
 		outs = strings.TrimSpace(string(outb))
-		if outs == "" {
-			return fmt.Errorf("HAProxy service status is empty")
+		if outs == "" && statusErr != nil {
+			return fmt.Errorf("failed to retrieve HAProxy service status: %w", statusErr)
 		}
 		return nil
 	}, "HAProxy service status retrieval")

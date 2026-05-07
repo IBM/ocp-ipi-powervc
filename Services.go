@@ -32,7 +32,7 @@ import (
 
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
@@ -103,8 +103,7 @@ func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud str
 
 	controllerSvc, err = initCloudObjectStorageService(apiKey)
 	if err != nil {
-		log.Fatalf("Error: NewServices: initCloudObjectStorageService returns %v", err)
-		return nil, err
+		return nil, fmt.Errorf("NewServices: initCloudObjectStorageService: %w", err)
 	}
 	log.Debugf("NewServices: controllerSvc = %+v", controllerSvc)
 
@@ -122,6 +121,9 @@ func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud str
 
 		cisInstanceCRN, err = getCISInstanceCRN(apiKey, controllerSvc, baseDomain)
 		log.Debugf("NewServices: cisInstanceCRN = %v, err = %+v", cisInstanceCRN, err)
+		if err != nil {
+			return nil, fmt.Errorf("NewServices: getCISInstanceCRN: %w", err)
+		} 
 	}
 
 	services = &Services{
@@ -233,26 +235,42 @@ func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, erro
 		return nil, fmt.Errorf("fetchUserDetails config.IAMAccessToken is empty")
 	}
 
-	if strings.HasPrefix(config.IAMAccessToken, "Bearer") {
-		bluemixToken = config.IAMAccessToken[7:len(config.IAMAccessToken)]
-	} else {
-		bluemixToken = config.IAMAccessToken
+	bluemixToken = strings.TrimPrefix(config.IAMAccessToken, "Bearer ")
+	if bluemixToken == config.IAMAccessToken {
+		// No "Bearer " prefix found, try without space
+		bluemixToken = strings.TrimPrefix(config.IAMAccessToken, "Bearer")
 	}
 
-	token, err := jwt.Parse(bluemixToken, func(token *jwt.Token) (interface{}, error) {
-		return "", nil
-	})
-	if err != nil && !strings.Contains(err.Error(), "key is of invalid type") {
-		return &user, err
+	token, _, err := jwt.NewParser().ParseUnverified(bluemixToken, jwt.MapClaims{})
+	if err != nil {
+		return nil, fmt.Errorf("fetchUserDetails: jwt.ParseUnverified: %w", err)
 	}
 
-	claims := token.Claims.(jwt.MapClaims)
-	if email, ok := claims["email"]; ok {
-		user.Email = email.(string)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("fetchUserDetails: unexpected claims type")
 	}
-	user.ID = claims["id"].(string)
-	user.Account = claims["account"].(map[string]interface{})["bss"].(string)
-	iss := claims["iss"].(string)
+	if email, ok := claims["email"].(string); ok {
+		user.Email = email
+	}
+	id, ok := claims["id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("fetchUserDetails: missing or invalid 'id' claim")
+	}
+	user.ID = id
+	account, ok := claims["account"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("fetchUserDetails: missing or invalid 'account' claim")
+	}
+	bss, ok := account["bss"].(string)
+	if !ok {
+		return nil, fmt.Errorf("fetchUserDetails: missing or invalid 'bss' in account claim")
+	}
+	user.Account = bss
+	iss, ok := claims["iss"].(string)
+	if !ok {
+		return nil, fmt.Errorf("fetchUserDetails: missing or invalid 'iss' claim")
+	}
 	if strings.Contains(iss, "https://iam.cloud.ibm.com") {
 		user.cloudName = "bluemix"
 	} else {
@@ -262,7 +280,7 @@ func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, erro
 	user.generation = generation
 
 	log.Debugf("fetchUserDetails: user.ID         = %v", user.ID)
-	log.Debugf("fetchUserDetails: user.Email      = %v", user.Email)
+	// Avoid logging email for privacy compliance
 	log.Debugf("fetchUserDetails: user.Account    = %v", user.Account)
 	log.Debugf("fetchUserDetails: user.cloudType  = %v", user.cloudType)
 	log.Debugf("fetchUserDetails: user.generation = %v", user.generation)
@@ -287,11 +305,10 @@ func initCloudObjectStorageService(apiKey string) (*resourcecontrollerv2.Resourc
 		Authenticator: authenticator,
 	})
 	if err != nil {
-		log.Fatalf("Error: resourcecontrollerv2.NewResourceControllerV2 returns %v", err)
-		return nil, err
+		return nil, fmt.Errorf("resourcecontrollerv2.NewResourceControllerV2: %w", err)
 	}
 	if controllerSvc == nil {
-		panic(fmt.Errorf("Error: controllerSvc is empty?"))
+		return nil, fmt.Errorf("Error: controllerSvc is empty?")
 	}
 
 	return controllerSvc, nil
@@ -326,7 +343,7 @@ func getCISInstanceCRN(apiKey string, controllerSvc *resourcecontrollerv2.Resour
 		}
 		err = authenticator.Validate()
 		if err != nil {
-			err = fmt.Errorf("Error: :getCISInstanceCRN: authenticator.Validate: %v", err)
+			err = fmt.Errorf("Error: getCISInstanceCRN: authenticator.Validate: %v", err)
 			return
 		}
 
@@ -342,21 +359,30 @@ func getCISInstanceCRN(apiKey string, controllerSvc *resourcecontrollerv2.Resour
 		listZonesOptions = zonesService.NewListZonesOptions()
 
 		listZonesResponse, _, err = zonesService.ListZones(listZonesOptions)
-		if listZonesResponse == nil {
-			err = fmt.Errorf("Error: getCISInstanceCRN: ListZones: %v", err)
+		if err != nil {
+			err = fmt.Errorf("Error: getCISInstanceCRN: ListZones: %w", err)
+			return
+		}
+		if listZonesResponse == nil || listZonesResponse.Result == nil {
+			err = fmt.Errorf("Error: getCISInstanceCRN: ListZones or listZonesResponse.Result is nil")
 			return
 		}
 
 		for _, zone := range listZonesResponse.Result {
+			if zone.Name == nil || zone.Status == nil {
+				continue
+			}
+
 			log.Debugf("getCISInstanceCRN: zone.Name = %s, zone.Status = %s", *zone.Name, *zone.Status)
 
 			if *zone.Status == "active" {
 				if *zone.Name == baseDomain {
 					CISInstanceCRN = *instance.CRN
+					return CISInstanceCRN, nil
 				}
 			}
 		}
 	}
 
-	return
+	return "", fmt.Errorf("getCISInstanceCRN: no CIS instance found for domain %q", baseDomain)
 }

@@ -303,7 +303,7 @@ func TestWatchInstallationCommand_InvalidDebugFlag(t *testing.T) {
 				t.Fatal("Expected error for invalid debug flag, got nil")
 			}
 
-			expectedMsg := "must be 'true' or 'false'"
+			expectedMsg := "shouldDebug must be a boolean value (true/false/yes/no/1/0)"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
 			}
@@ -371,7 +371,9 @@ func TestStringArray_Set(t *testing.T) {
 // TestGatherBastionInformations tests the gatherBastionInformations function
 func TestGatherBastionInformations(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 	
 	// Create a temporary directory structure for testing
 	tempDir := t.TempDir()
@@ -439,7 +441,9 @@ func TestGatherBastionInformations(t *testing.T) {
 // TestGatherBastionInformations_EmptyDirectory tests gathering from an empty directory
 func TestGatherBastionInformations_EmptyDirectory(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 	
 	tempDir := t.TempDir()
 
@@ -456,7 +460,9 @@ func TestGatherBastionInformations_EmptyDirectory(t *testing.T) {
 // TestGetMetadataClusterName tests the getMetadataClusterName function
 func TestGetMetadataClusterName(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 	
 	tempDir := t.TempDir()
 	metadataFile := filepath.Join(tempDir, "metadata.json")
@@ -494,7 +500,9 @@ func TestGetMetadataClusterName(t *testing.T) {
 // TestGetMetadataClusterName_NonExistentFile tests reading from a non-existent file
 func TestGetMetadataClusterName_NonExistentFile(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 
 	_, _, err := getMetadataClusterName("/nonexistent/metadata.json")
 	if err == nil {
@@ -505,7 +513,9 @@ func TestGetMetadataClusterName_NonExistentFile(t *testing.T) {
 // TestGetMetadataClusterName_InvalidJSON tests reading invalid JSON
 func TestGetMetadataClusterName_InvalidJSON(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 
 	tempDir := t.TempDir()
 	metadataFile := filepath.Join(tempDir, "metadata.json")
@@ -720,7 +730,7 @@ func TestFindIpAddress(t *testing.T) {
 	}
 }
 
-// TestGetClusterName tests the getClusterName function
+// TestGetClusterName tests the atLeastOneClusterName function
 func TestGetClusterName(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -767,7 +777,7 @@ func TestGetClusterName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getClusterName(tt.servers)
+			result := atLeastOneClusterName(tt.servers)
 			if result != tt.expected {
 				t.Errorf("Expected cluster name %q, got %q", tt.expected, result)
 			}
@@ -778,7 +788,9 @@ func TestGetClusterName(t *testing.T) {
 // TestHandleCheckAlive tests the handleCheckAlive function
 func TestHandleCheckAlive(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 	
 	tests := []struct {
 		name        string
@@ -817,7 +829,9 @@ func TestHandleCheckAlive(t *testing.T) {
 // TestHandleCreateMetadata tests the handleCreateMetadata function
 func TestHandleCreateMetadata(t *testing.T) {
 	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		log = initLogger(false)
+	}
 	
 	tempDir := t.TempDir()
 	originalDir, err := os.Getwd()
@@ -944,7 +958,9 @@ func TestMinimalMetadata(t *testing.T) {
 //// TestUpdateBastionInformations_EmptyList tests updateBastionInformations with empty list
 //func TestUpdateBastionInformations_EmptyList(t *testing.T) {
 //	// Initialize logger for tests
-//	log = initLogger(false)
+//	if log == nil {
+//		log = initLogger(false)
+//	}
 //
 //	ctx := context.Background()
 //	bastionInfos := []bastionInformation{}

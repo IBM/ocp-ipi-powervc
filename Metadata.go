@@ -116,7 +116,7 @@ func NewMetadataFromCCMetadata(filename string) (*Metadata, error) {
 	}
 
 	log.Debugf("NewMetadataFromCCMetadata: Read %d bytes from file", len(content))
-	log.Debugf("NewMetadataFromCCMetadata: content = %s", string(content))
+//	log.Debugf("NewMetadataFromCCMetadata: content = %s", string(content))
 
 	// Parse the JSON content
 	var metadata Metadata

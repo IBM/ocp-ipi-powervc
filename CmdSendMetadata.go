@@ -277,7 +277,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	log.Printf("[INFO] Metadata sent successfully (took %v)", duration)
 
 	// Provide user feedback
-	fmt.Printf("Metadata successfully %s from file: %s\n", opType.pastTense(), metadataFile)
+	fmt.Printf("Metadata %s successfully (source file: %s)\n", opType.pastTense(), metadataFile)
 	log.Printf("[INFO] Send-metadata command completed successfully")
 
 	return nil

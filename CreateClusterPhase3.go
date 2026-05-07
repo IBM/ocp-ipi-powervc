@@ -34,7 +34,7 @@ func createClusterPhase3(directory string) error {
 		directory,
 	})
 	if err != nil {
-		return nil
+		return err
 	}
 
 	err = runSplitCommand([]string{
