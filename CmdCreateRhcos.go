@@ -119,6 +119,9 @@ type rhcosConfig struct {
 	// RhcosName is the name to assign to the RHCOS virtual machine
 	RhcosName string
 
+	// AvailabilityZone specifies the OpenStack availability zone to use
+	AvailabilityZone string // OpenStack availability zone for VM
+
 	// FlavorName specifies the OpenStack flavor (instance type) to use
 	FlavorName string
 
@@ -184,6 +187,11 @@ func (c *rhcosConfig) validate() error {
 				Message: "is required",
 			}
 		}
+	}
+
+	// Optional fields
+	if c.AvailabilityZone == "" {
+		c.AvailabilityZone = defaultAvailZone
 	}
 
 	// Validate RHCOS name format
@@ -269,6 +277,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	// Define flags
 	ptrCloud := createRhcosFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrRhcosName := createRhcosFlags.String("rhcosName", "", "The name of the RHCOS VM to create")
+	availabilityZone := createRhcosFlags.String("", defaultAvailZone, "The name of the availability zone")
 	ptrFlavorName := createRhcosFlags.String("flavorName", "", "The name of the flavor to use")
 	ptrImageName := createRhcosFlags.String("imageName", "", "The name of the image to use")
 	ptrNetworkName := createRhcosFlags.String("networkName", "", "The name of the network to use")
@@ -284,6 +293,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	// Populate config from parsed flags
 	config.Clouds = []string{ *ptrCloud }
 	config.RhcosName = *ptrRhcosName
+	config.AvailabilityZone = *availabilityZone
 	config.FlavorName = *ptrFlavorName
 	config.ImageName = *ptrImageName
 	config.NetworkName = *ptrNetworkName
@@ -413,6 +423,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 
 		if err := createServer(ctx,
 			config.Clouds[0],
+			config.AvailabilityZone,
 			config.FlavorName,
 			config.ImageName,
 			config.NetworkName,

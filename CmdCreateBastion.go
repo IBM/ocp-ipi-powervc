@@ -426,10 +426,11 @@ type BastionConfig struct {
 	NetworkName string     // OpenStack network name for bastion VM (required)
 
 	// Bastion VM Specification
-	BastionName string // Name of the bastion VM (required, alphanumeric/hyphens/underscores only)
-	FlavorName  string // OpenStack flavor for VM sizing (required)
-	ImageName   string // OpenStack image for VM OS (required)
-	SshKeyName  string // OpenStack SSH keypair name (required)
+	BastionName      string // Name of the bastion VM (required, alphanumeric/hyphens/underscores only)
+	AvailabilityZone string // OpenStack availability zone for VM
+	FlavorName       string // OpenStack flavor for VM sizing (required)
+	ImageName        string // OpenStack image for VM OS (required)
+	SshKeyName       string // OpenStack SSH keypair name (required)
 
 	// Setup Mode (mutually exclusive)
 	BastionRsa string // Path to RSA private key for local SSH setup (mutually exclusive with ServerIP)
@@ -468,6 +469,11 @@ func (c *BastionConfig) Validate() error {
 	} else if !isValidResourceName(c.BastionName) {
 		validationErrors = append(validationErrors, 
 			fmt.Errorf("bastionName: contains invalid characters (use alphanumeric, hyphens, underscores): %q", c.BastionName))
+	}
+
+	// Optional parameters
+	if c.AvailabilityZone == "" {
+		c.AvailabilityZone = defaultAvailZone
 	}
 
 	// Setup mode validation (mutually exclusive)
@@ -589,6 +595,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	flags.Var(&clouds, "cloud", "Cloud name to use in clouds.yaml")
 	bastionName := flags.String("bastionName", "", "The name of the bastion VM")
 	bastionRsa := flags.String("bastionRsa", "", "The RSA filename for the bastion VM")
+	availabilityZone := flags.String("", defaultAvailZone, "The name of the availability zone")
 	flavorName := flags.String("flavorName", "", "The name of the flavor")
 	imageName := flags.String("imageName", "", "The name of the image")
 	networkName := flags.String("networkName", "", "The name of the network")
@@ -608,6 +615,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	config.Clouds = clouds
 	config.BastionName = *bastionName
 	config.BastionRsa = *bastionRsa
+	config.AvailabilityZone = *availabilityZone
 	config.FlavorName = *flavorName
 	config.ImageName = *imageName
 	config.NetworkName = *networkName
@@ -759,6 +767,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 
 	if err := createServer(ctx,
 		config.Clouds[0],
+		config.AvailabilityZone,
 		config.FlavorName,
 		config.ImageName,
 		config.NetworkName,
@@ -801,7 +810,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 
 // createServer creates a new OpenStack server with the specified configuration.
 // It handles resource lookup, port creation, and server provisioning.
-func createServer(ctx context.Context, cloudName, flavorName, imageName, networkName, sshKeyName, bastionName string, userData []byte) error {
+func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, imageName, networkName, sshKeyName, bastionName string, userData []byte) error {
 	var (
 		flavor           flavors.Flavor
 		image            images.Image
@@ -865,7 +874,17 @@ func createServer(ctx context.Context, cloudName, flavorName, imageName, network
 	}
 
 	// Step 3: Create server
-	newServer, err = createServerInstance(ctx, cloudName, bastionName, flavor.ID, image.ID, port.ID, sshKeyName, sshKeyPair.Name, userData)
+	newServer, err = createServerInstance(ctx,
+		cloudName,
+		bastionName,
+		availabilityZone,
+		flavor.ID,
+		image.ID,
+		port.ID,
+		sshKeyName,
+		sshKeyPair.Name,
+		userData,
+	)
 	if err != nil {
 		cleanupPort(port)
 		return fmt.Errorf("failed to create server instance: %w", err)
@@ -925,14 +944,14 @@ func deleteNetworkPort(ctx context.Context, cloudName string, createdPort *ports
 
 // createServerInstance creates the actual server instance.
 // If sshKeyName is empty, the server is created without an SSH key.
-func createServerInstance(ctx context.Context, cloudName, bastionName, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
+func createServerInstance(ctx context.Context, cloudName, bastionName, availabilityZone, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
 	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
 
 	serverCreateOpts := servers.CreateOpts{
-		AvailabilityZone: defaultAvailZone,
+		AvailabilityZone: availabilityZone,
 		FlavorRef:        flavorID,
 		ImageRef:         imageID,
 		Name:             bastionName,
