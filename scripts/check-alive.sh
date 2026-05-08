@@ -610,18 +610,18 @@ function build_powervc_command() {
 	EOF
 	)
 	if [[ -n "${DHCP_STATS_USER}" ]]; then
-		POWERVC_CMD=$(cat <<-EOF
+		POWERVC_CMD=$(echo "${POWERVC_CMD}"; cat <<-EOF
 		  	--statsUser "${DHCP_STATS_USER}"
 		EOF
 		)
 	fi
 	if [[ -n "${DHCP_STATS_PASSWORD}" ]]; then
-		POWERVC_CMD=$(cat <<-EOF
+		POWERVC_CMD=$(echo "${POWERVC_CMD}"; cat <<-EOF
 		  	--statsPassword "${DHCP_STATS_PASSWORD}"
 		EOF
 		)
 	fi
-	POWERVC_CMD=$(cat <<-EOF
+	POWERVC_CMD=$(echo "${POWERVC_CMD}"; cat <<-EOF
 		  --shouldDebug true
 		  2>&1 | tee "${output_file}"
 	EOF
