@@ -517,7 +517,7 @@ func TestCleanupBastionIPFile(t *testing.T) {
 	t.Run("file does not exist", func(t *testing.T) {
 		tempDir := t.TempDir()
 		testFile := filepath.Join(tempDir, "test-bastion-ip")
-		
+
 		// File doesn't exist - cleanup should be idempotent (no error)
 		err := cleanupBastionIPFile(testFile)
 		if err != nil {
@@ -529,7 +529,7 @@ func TestCleanupBastionIPFile(t *testing.T) {
 	t.Run("file exists", func(t *testing.T) {
 		tempDir := t.TempDir()
 		testFile := filepath.Join(tempDir, "test-bastion-ip")
-		
+
 		// Create file
 		if err := os.WriteFile(testFile, []byte("192.168.1.100"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)

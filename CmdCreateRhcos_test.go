@@ -469,7 +469,7 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 		// Initialize logger for tests
 		log = initLogger(false)
 	}
-	
+
 	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
 	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
 
@@ -565,7 +565,7 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 		// Initialize logger for tests
 		log = initLogger(false)
 	}
-	
+
 	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
 	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
 

@@ -587,12 +587,12 @@ func retryOperation(ctx context.Context, operationName string, operation func() 
 		}
 
 		lastErr = err
-		
+
 		// Check if we should retry
 		if attempt < maxRetryAttempts && isRetryableError(err) {
 			log.Debugf("Operation '%s' failed (attempt %d/%d): %v. Retrying in %v...",
 				operationName, attempt, maxRetryAttempts, err, delay)
-			
+
 			// Wait with exponential backoff
 			select {
 			case <-time.After(delay):

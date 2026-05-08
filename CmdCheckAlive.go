@@ -151,7 +151,7 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	// Execute check-alive command with 2-minute timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	
+
 	log.Infof("Sending check-alive command to server %s", serverIP)
 	if err := sendCheckAlive(ctx, serverIP); err != nil {
 		return fmt.Errorf("%scheck-alive command failed: %w", errPrefixCheckAlive, err)

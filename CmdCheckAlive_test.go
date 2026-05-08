@@ -23,11 +23,11 @@ import (
 // TestCheckAliveCommand_NilFlagSet tests that the function returns an error when flagSet is nil
 func TestCheckAliveCommand_NilFlagSet(t *testing.T) {
 	err := checkAliveCommand(nil, []string{})
-	
+
 	if err == nil {
 		t.Fatal("Expected error for nil flag set, got nil")
 	}
-	
+
 	expectedMsg := "flag set cannot be nil"
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -53,16 +53,16 @@ func TestCheckAliveCommand_MissingServerIP(t *testing.T) {
 			args: []string{"--serverIP", "   "},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			err := checkAliveCommand(flagSet, tt.args)
-			
+
 			if err == nil {
 				t.Fatal("Expected error for missing/empty serverIP, got nil")
 			}
-			
+
 			expectedMsg := "required flag --serverIP not specified"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -94,17 +94,17 @@ func TestCheckAliveCommand_InvalidServerIP(t *testing.T) {
 			serverIP: "192.168.1.1!@#",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			args := []string{"--serverIP", tt.serverIP}
 			err := checkAliveCommand(flagSet, args)
-			
+
 			if err == nil {
 				t.Fatalf("Expected error for invalid serverIP %q, got nil", tt.serverIP)
 			}
-			
+
 			expectedMsg := "invalid server IP"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -132,7 +132,7 @@ func TestCheckAliveCommand_InvalidDebugFlag(t *testing.T) {
 			debugValue: "TRUE1",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
@@ -141,11 +141,11 @@ func TestCheckAliveCommand_InvalidDebugFlag(t *testing.T) {
 				"--shouldDebug", tt.debugValue,
 			}
 			err := checkAliveCommand(flagSet, args)
-			
+
 			if err == nil {
 				t.Fatalf("Expected error for invalid debug flag %q, got nil", tt.debugValue)
 			}
-			
+
 			// The error should mention the flag name
 			if !strings.Contains(err.Error(), "shouldDebug") {
 				t.Errorf("Expected error message to mention shouldDebug flag, got: %v", err)
@@ -202,7 +202,7 @@ func TestCheckAliveCommand_ValidDebugFlags(t *testing.T) {
 			expected:   false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Note: This test will fail when trying to connect to the server
@@ -212,10 +212,10 @@ func TestCheckAliveCommand_ValidDebugFlags(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 				"--shouldDebug", tt.debugValue,
 			}
-			
+
 			// We expect this to fail at the sendCheckAlive stage, not at flag parsing
 			err := checkAliveCommand(flagSet, args)
-			
+
 			// The error should be about connection, not about invalid flag
 			if err != nil && strings.Contains(err.Error(), "must be 'true' or 'false'") {
 				t.Errorf("Debug flag %q should be valid but got parsing error: %v", tt.debugValue, err)
@@ -261,12 +261,12 @@ func TestCheckAliveCommand_FlagParsing(t *testing.T) {
 			errorMsg:    "failed to parse flags",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			err := checkAliveCommand(flagSet, tt.args)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected error, got nil")
@@ -298,16 +298,16 @@ func TestCheckAliveCommand_ErrorPrefix(t *testing.T) {
 			args: []string{"--serverIP", "999.999.999.999"},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			err := checkAliveCommand(flagSet, tt.args)
-			
+
 			if err == nil {
 				t.Fatal("Expected error, got nil")
 			}
-			
+
 			expectedPrefix := "[check-alive]"
 			if !strings.Contains(err.Error(), expectedPrefix) {
 				t.Errorf("Expected error to contain prefix %q, got: %v", expectedPrefix, err)
@@ -339,13 +339,13 @@ func TestCheckAliveCommand_ValidIPv4Addresses(t *testing.T) {
 			serverIP: "255.255.255.255",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			args := []string{"--serverIP", tt.serverIP}
 			err := checkAliveCommand(flagSet, args)
-			
+
 			// Should fail at connection stage, not validation
 			if err != nil && strings.Contains(err.Error(), "invalid server IP") {
 				t.Errorf("IP %q should be valid but got validation error: %v", tt.serverIP, err)
@@ -377,13 +377,13 @@ func TestCheckAliveCommand_ValidIPv6Addresses(t *testing.T) {
 			serverIP: "0:0:0:0:0:0:0:1",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			args := []string{"--serverIP", tt.serverIP}
 			err := checkAliveCommand(flagSet, args)
-			
+
 			// Should fail at connection stage, not validation
 			if err != nil && strings.Contains(err.Error(), "invalid server IP") {
 				t.Errorf("IP %q should be valid but got validation error: %v", tt.serverIP, err)
@@ -427,12 +427,12 @@ func TestCheckAliveCommand_EdgeCases(t *testing.T) {
 			errorMsg: "check-alive command failed",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
 			err := checkAliveCommand(flagSet, tt.args)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected error, got nil")
@@ -472,11 +472,11 @@ func TestCheckAliveCommand_Constants(t *testing.T) {
 // TestCheckAliveCommand_FlagDefaults tests that default values are set correctly
 func TestCheckAliveCommand_FlagDefaults(t *testing.T) {
 	flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
-	
+
 	// Define flags without parsing
 	serverIP := flagSet.String(flagCheckAliveServerIP, defaultCheckAliveServerIP, usageCheckAliveServerIP)
 	shouldDebug := flagSet.String(flagCheckAliveShouldDebug, defaultCheckAliveShouldDebug, usageCheckAliveShouldDebug)
-	
+
 	// Check defaults before parsing
 	if *serverIP != "" {
 		t.Errorf("Default serverIP should be empty, got: %q", *serverIP)
@@ -494,14 +494,14 @@ func TestCheckAliveCommand_MultipleInvocations(t *testing.T) {
 	if err1 == nil {
 		t.Error("First invocation: expected error for missing serverIP")
 	}
-	
+
 	// Second invocation
 	flagSet2 := flag.NewFlagSet("check-alive-2", flag.ContinueOnError)
 	err2 := checkAliveCommand(flagSet2, []string{})
 	if err2 == nil {
 		t.Error("Second invocation: expected error for missing serverIP")
 	}
-	
+
 	// Both should have similar errors
 	if err1.Error() != err2.Error() {
 		t.Errorf("Multiple invocations should produce consistent errors.\nFirst: %v\nSecond: %v", err1, err2)

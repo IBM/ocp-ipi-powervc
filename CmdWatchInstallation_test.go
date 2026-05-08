@@ -374,7 +374,7 @@ func TestGatherBastionInformations(t *testing.T) {
 	if log == nil {
 		log = initLogger(false)
 	}
-	
+
 	// Create a temporary directory structure for testing
 	tempDir := t.TempDir()
 
@@ -444,7 +444,7 @@ func TestGatherBastionInformations_EmptyDirectory(t *testing.T) {
 	if log == nil {
 		log = initLogger(false)
 	}
-	
+
 	tempDir := t.TempDir()
 
 	bastionInfos, err := gatherBastionInformations(tempDir, "testuser", "/tmp/test.rsa")
@@ -463,7 +463,7 @@ func TestGetMetadataClusterName(t *testing.T) {
 	if log == nil {
 		log = initLogger(false)
 	}
-	
+
 	tempDir := t.TempDir()
 	metadataFile := filepath.Join(tempDir, "metadata.json")
 
@@ -799,7 +799,7 @@ func TestHandleCheckAlive(t *testing.T) {
 	if log == nil {
 		log = initLogger(false)
 	}
-	
+
 	tests := []struct {
 		name        string
 		data        string
@@ -840,7 +840,7 @@ func TestHandleCreateMetadata(t *testing.T) {
 	if log == nil {
 		log = initLogger(false)
 	}
-	
+
 	tempDir := t.TempDir()
 	originalDir, err := os.Getwd()
 	if err != nil {

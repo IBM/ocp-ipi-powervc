@@ -25,11 +25,11 @@ import (
 // TestSendMetadataCommand_NilFlagSet tests that the function returns an error when flagSet is nil
 func TestSendMetadataCommand_NilFlagSet(t *testing.T) {
 	err := sendMetadataCommand(nil, []string{})
-	
+
 	if err == nil {
 		t.Fatal("Expected error for nil flag set, got nil")
 	}
-	
+
 	expectedMsg := "flag set cannot be nil"
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -41,7 +41,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 	// Create a temporary test file
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name        string
 		args        []string
@@ -83,12 +83,12 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 			errorMsg:    "delete failed during metadata transmission: failed to connect to server",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			err := sendMetadataCommand(flagSet, tt.args)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected error, got nil")
@@ -109,7 +109,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 func TestSendMetadataCommand_MissingServerIP(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name string
 		args []string
@@ -137,16 +137,16 @@ func TestSendMetadataCommand_MissingServerIP(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			err := sendMetadataCommand(flagSet, tt.args)
-			
+
 			if err == nil {
 				t.Fatal("Expected error for missing/empty serverIP, got nil")
 			}
-			
+
 			expectedMsg := "required flag --serverIP not specified"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -159,7 +159,7 @@ func TestSendMetadataCommand_MissingServerIP(t *testing.T) {
 func TestSendMetadataCommand_InvalidServerIP(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name     string
 		serverIP string
@@ -177,7 +177,7 @@ func TestSendMetadataCommand_InvalidServerIP(t *testing.T) {
 			serverIP: "192.168.1.abc",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -186,11 +186,11 @@ func TestSendMetadataCommand_InvalidServerIP(t *testing.T) {
 				"--serverIP", tt.serverIP,
 			}
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			if err == nil {
 				t.Fatalf("Expected error for invalid serverIP %q, got nil", tt.serverIP)
 			}
-			
+
 			expectedMsg := "invalid IP address or hostname"
 			if !strings.Contains(err.Error(), expectedMsg) {
 				t.Errorf("Expected error message to contain %q, got: %v", expectedMsg, err)
@@ -236,19 +236,19 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			errorMsg:    "required flag --createMetadata or --deleteMetadata must be specified",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := tt.setupFile(t)
 			defer tt.cleanupFile(filePath)
-			
+
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			args := []string{
 				"--createMetadata", filePath,
 				"--serverIP", "192.168.1.100",
 			}
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected error, got nil")
@@ -269,7 +269,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name       string
 		debugValue string
@@ -283,7 +283,7 @@ func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 			debugValue: "2",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -293,11 +293,11 @@ func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 				"--shouldDebug", tt.debugValue,
 			}
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			if err == nil {
 				t.Fatalf("Expected error for invalid debug flag %q, got nil", tt.debugValue)
 			}
-			
+
 			if !strings.Contains(err.Error(), "shouldDebug") {
 				t.Errorf("Expected error message to mention shouldDebug flag, got: %v", err)
 			}
@@ -309,7 +309,7 @@ func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name       string
 		debugValue string
@@ -321,7 +321,7 @@ func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 		{name: "1 numeric", debugValue: "1"},
 		{name: "0 numeric", debugValue: "0"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -330,9 +330,9 @@ func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 				"--shouldDebug", tt.debugValue,
 			}
-			
+
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			// Should fail at connection stage, not at flag parsing
 			if err != nil && strings.Contains(err.Error(), "must be 'true' or 'false'") {
 				t.Errorf("Debug flag %q should be valid but got parsing error: %v", tt.debugValue, err)
@@ -345,20 +345,20 @@ func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 func TestSendMetadataCommand_CreateOperation(t *testing.T) {
 	tmpFile := createTempTestFile(t, "create-metadata.json", `{"test": "create"}`)
 	defer os.Remove(tmpFile)
-	
+
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 	args := []string{
 		"--createMetadata", tmpFile,
 		"--serverIP", "192.168.1.100",
 	}
-	
+
 	err := sendMetadataCommand(flagSet, args)
-	
+
 	// Should fail at connection stage (expected)
 	if err == nil {
 		t.Fatal("Expected error (connection failure), got nil")
 	}
-	
+
 	// Should not fail at validation
 	if strings.Contains(err.Error(), "metadata file validation failed") {
 		t.Errorf("Should not fail at file validation, got: %v", err)
@@ -372,20 +372,20 @@ func TestSendMetadataCommand_CreateOperation(t *testing.T) {
 func TestSendMetadataCommand_DeleteOperation(t *testing.T) {
 	tmpFile := createTempTestFile(t, "delete-metadata.json", `{"test": "delete"}`)
 	defer os.Remove(tmpFile)
-	
+
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 	args := []string{
 		"--deleteMetadata", tmpFile,
 		"--serverIP", "192.168.1.100",
 	}
-	
+
 	err := sendMetadataCommand(flagSet, args)
-	
+
 	// Should fail at connection stage (expected)
 	if err == nil {
 		t.Fatal("Expected error (connection failure), got nil")
 	}
-	
+
 	// Should not fail at validation
 	if strings.Contains(err.Error(), "metadata file validation failed") {
 		t.Errorf("Should not fail at file validation, got: %v", err)
@@ -413,16 +413,16 @@ func TestSendMetadataCommand_ErrorPrefix(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			err := sendMetadataCommand(flagSet, tt.args)
-			
+
 			if err == nil {
 				t.Fatal("Expected error, got nil")
 			}
-			
+
 			expectedPrefix := "Error:"
 			if !strings.Contains(err.Error(), expectedPrefix) {
 				t.Errorf("Expected error to contain prefix %q, got: %v", expectedPrefix, err)
@@ -446,7 +446,7 @@ func TestSendMetadataCommand_Constants(t *testing.T) {
 	if flagSendShouldDebug == "" {
 		t.Error("flagSendShouldDebug constant should not be empty")
 	}
-	
+
 	// Test default value constants
 	if defaultSendCreateMetadata != "" {
 		t.Errorf("defaultSendCreateMetadata should be empty string, got: %q", defaultSendCreateMetadata)
@@ -460,7 +460,7 @@ func TestSendMetadataCommand_Constants(t *testing.T) {
 	if defaultSendShouldDebug != "false" {
 		t.Errorf("defaultSendShouldDebug should be 'false', got: %q", defaultSendShouldDebug)
 	}
-	
+
 	// Test operation name constants
 	if operationCreate != "create" {
 		t.Errorf("operationCreate should be 'create', got: %q", operationCreate)
@@ -474,7 +474,7 @@ func TestSendMetadataCommand_Constants(t *testing.T) {
 	if operationDeleted != "deleted" {
 		t.Errorf("operationDeleted should be 'deleted', got: %q", operationDeleted)
 	}
-	
+
 	// Test error prefix
 	if errPrefixSend == "" {
 		t.Error("errPrefixSend constant should not be empty")
@@ -484,13 +484,13 @@ func TestSendMetadataCommand_Constants(t *testing.T) {
 // TestSendMetadataCommand_FlagDefaults tests that default values are set correctly
 func TestSendMetadataCommand_FlagDefaults(t *testing.T) {
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
-	
+
 	// Define flags without parsing
 	createMetadata := flagSet.String(flagSendCreateMetadata, defaultSendCreateMetadata, usageSendCreateMetadata)
 	deleteMetadata := flagSet.String(flagSendDeleteMetadata, defaultSendDeleteMetadata, usageSendDeleteMetadata)
 	serverIP := flagSet.String(flagSendServerIP, defaultSendServerIP, usageSendServerIP)
 	shouldDebug := flagSet.String(flagSendShouldDebug, defaultSendShouldDebug, usageSendShouldDebug)
-	
+
 	// Check defaults before parsing
 	if *createMetadata != "" {
 		t.Errorf("Default createMetadata should be empty, got: %q", *createMetadata)
@@ -510,7 +510,7 @@ func TestSendMetadataCommand_FlagDefaults(t *testing.T) {
 func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name     string
 		args     []string
@@ -541,12 +541,12 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 			shouldOK: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			err := sendMetadataCommand(flagSet, tt.args)
-			
+
 			if tt.shouldOK {
 				// Should fail at connection, not validation
 				if err != nil && (strings.Contains(err.Error(), "metadata file validation failed") ||
@@ -568,7 +568,7 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name     string
 		serverIP string
@@ -578,7 +578,7 @@ func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 		{name: "zero address", serverIP: "0.0.0.0"},
 		{name: "broadcast", serverIP: "255.255.255.255"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -587,7 +587,7 @@ func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 				"--serverIP", tt.serverIP,
 			}
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			// Should fail at connection stage, not validation
 			if err != nil && strings.Contains(err.Error(), "invalid server IP") {
 				t.Errorf("IP %q should be valid but got validation error: %v", tt.serverIP, err)
@@ -600,7 +600,7 @@ func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 func TestSendMetadataCommand_ValidIPv6Addresses(t *testing.T) {
 	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
 	defer os.Remove(tmpFile)
-	
+
 	tests := []struct {
 		name     string
 		serverIP string
@@ -609,7 +609,7 @@ func TestSendMetadataCommand_ValidIPv6Addresses(t *testing.T) {
 		{name: "compressed IPv6", serverIP: "2001:db8:85a3::8a2e:370:7334"},
 		{name: "localhost IPv6", serverIP: "::1"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -618,7 +618,7 @@ func TestSendMetadataCommand_ValidIPv6Addresses(t *testing.T) {
 				"--serverIP", tt.serverIP,
 			}
 			err := sendMetadataCommand(flagSet, args)
-			
+
 			// Should fail at connection stage, not validation
 			if err != nil && strings.Contains(err.Error(), "invalid server IP") {
 				t.Errorf("IP %q should be valid but got validation error: %v", tt.serverIP, err)
@@ -635,14 +635,14 @@ func TestSendMetadataCommand_MultipleInvocations(t *testing.T) {
 	if err1 == nil {
 		t.Error("First invocation: expected error for missing flags")
 	}
-	
+
 	// Second invocation
 	flagSet2 := flag.NewFlagSet("send-metadata-2", flag.ContinueOnError)
 	err2 := sendMetadataCommand(flagSet2, []string{})
 	if err2 == nil {
 		t.Error("Second invocation: expected error for missing flags")
 	}
-	
+
 	// Both should have similar errors
 	if err1.Error() != err2.Error() {
 		t.Errorf("Multiple invocations should produce consistent errors.\nFirst: %v\nSecond: %v", err1, err2)
@@ -652,15 +652,15 @@ func TestSendMetadataCommand_MultipleInvocations(t *testing.T) {
 // Helper function to create a temporary test file
 func createTempTestFile(t *testing.T, name, content string) string {
 	t.Helper()
-	
+
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, name)
-	
+
 	err := os.WriteFile(filePath, []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	
+
 	return filePath
 }
 
