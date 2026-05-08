@@ -250,7 +250,7 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 //
 // Returns:
 //   - error: Any error encountered during the operation
-func sendCreateBastion(serverIP string, cloudName string, serverName string, domainName string) error {
+func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, serverName string, domainName string) error {
 	if serverIP == "" {
 		return fmt.Errorf("server IP cannot be empty")
 	}
@@ -262,6 +262,11 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	}
 	if domainName == "" {
 		return fmt.Errorf("domain name cannot be empty")
+	}
+
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sending create-bastion command: %w", err)
 	}
 
 	var (
@@ -283,7 +288,9 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	log.Debugf("sendCreateBastion: Creating bastion %s in cloud %s with domain %s", serverName, cloudName, domainName)
 
 	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
+	// Create a dialer that respects context
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
@@ -299,6 +306,11 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 	err = sendByteArray(conn, marshalledData, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to send create-bastion command: %w", err)
+	}
+
+	// Check context before waiting for response
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before receiving response: %w", err)
 	}
 
 	response, err = receiveResponse(conn, 15 * time.Minute)

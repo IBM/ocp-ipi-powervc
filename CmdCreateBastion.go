@@ -115,9 +115,10 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	return fmt.Errorf("SSH not ready after %d attempts on %s", cfg.MaxRetries, cfg.Host)
 }
 
-// execSSHCommand executes a command via SSH.
+// execSSHCommand executes a command via SSH with context support.
 // It returns the trimmed output and any error encountered.
-func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
+// The command will be cancelled if the context is cancelled or times out.
+func execSSHCommand(ctx context.Context, cfg *sshConfig, command []string) (string, error) {
 	args := []string{
 		"ssh",
 		"-o", "BatchMode=yes",
@@ -128,15 +129,17 @@ func execSSHCommand(cfg *sshConfig, command []string) (string, error) {
 	}
 	args = append(args, command...)
 
-	outb, err := runSplitCommand2(args)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	outb, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(outb)), err
 }
 
-// execSSHSudoCommand executes a command with sudo via SSH.
+// execSSHSudoCommand executes a command with sudo via SSH with context support.
 // The command is prefixed with "sudo" automatically.
-func execSSHSudoCommand(cfg *sshConfig, command []string) (string, error) {
+// The command will be cancelled if the context is cancelled or times out.
+func execSSHSudoCommand(ctx context.Context, cfg *sshConfig, command []string) (string, error) {
 	sudoCmd := append([]string{"sudo"}, command...)
-	return execSSHCommand(cfg, sudoCmd)
+	return execSSHCommand(ctx, cfg, sudoCmd)
 }
 
 // ============================================================================
@@ -145,10 +148,11 @@ func execSSHSudoCommand(cfg *sshConfig, command []string) (string, error) {
 
 // isHAProxyInstalled checks if HAProxy is installed on the remote server.
 // It uses rpm -q to query the package database.
-func isHAProxyInstalled(cfg *sshConfig) (bool, error) {
+// The operation respects context cancellation and timeout.
+func isHAProxyInstalled(ctx context.Context, cfg *sshConfig) (bool, error) {
 	log.Debugf("Checking if HAProxy is installed on %s", cfg.Host)
 
-	output, err := execSSHCommand(cfg, []string{"rpm", "-q", haproxyPackageName})
+	output, err := execSSHCommand(ctx, cfg, []string{"rpm", "-q", haproxyPackageName})
 
 	// rpm -q returns exit code 1 if package is not installed
 	var exitError *exec.ExitError
@@ -168,10 +172,11 @@ func isHAProxyInstalled(cfg *sshConfig) (bool, error) {
 }
 
 // installHAProxy installs HAProxy package on the remote server using dnf.
-func installHAProxy(cfg *sshConfig) error {
+// The operation respects context cancellation and timeout.
+func installHAProxy(ctx context.Context, cfg *sshConfig) error {
 	log.Debugf("Installing HAProxy on %s", cfg.Host)
 
-	output, err := execSSHSudoCommand(cfg, []string{
+	output, err := execSSHSudoCommand(ctx, cfg, []string{
 		"dnf", "install", "-y", haproxyPackageName,
 	})
 
@@ -185,14 +190,15 @@ func installHAProxy(cfg *sshConfig) error {
 
 // ensureHAProxyInstalled ensures HAProxy is installed, installing if necessary.
 // It checks if HAProxy is installed and installs it if not found.
-func ensureHAProxyInstalled(cfg *sshConfig) error {
-	installed, err := isHAProxyInstalled(cfg)
+// The operation respects context cancellation and timeout.
+func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
+	installed, err := isHAProxyInstalled(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
 	if !installed {
-		return installHAProxy(cfg)
+		return installHAProxy(ctx, cfg)
 	}
 
 	return nil
@@ -204,8 +210,9 @@ func ensureHAProxyInstalled(cfg *sshConfig) error {
 
 // getFilePermissions retrieves file permissions in octal format using stat.
 // Returns a string like "644" or "755".
-func getFilePermissions(cfg *sshConfig, filePath string) (string, error) {
-	output, err := execSSHSudoCommand(cfg, []string{
+// The operation respects context cancellation and timeout.
+func getFilePermissions(ctx context.Context, cfg *sshConfig, filePath string) (string, error) {
+	output, err := execSSHSudoCommand(ctx, cfg, []string{
 		"stat", "-c", "%a", filePath,
 	})
 
@@ -218,10 +225,11 @@ func getFilePermissions(cfg *sshConfig, filePath string) (string, error) {
 
 // setFilePermissions sets file permissions using chmod.
 // The perms parameter should be in octal format (e.g., "644", "755").
-func setFilePermissions(cfg *sshConfig, filePath, perms string) error {
+// The operation respects context cancellation and timeout.
+func setFilePermissions(ctx context.Context, cfg *sshConfig, filePath, perms string) error {
 	log.Debugf("Setting permissions %s on %s", perms, filePath)
 
-	_, err := execSSHSudoCommand(cfg, []string{
+	_, err := execSSHSudoCommand(ctx, cfg, []string{
 		"chmod", perms, filePath,
 	})
 
@@ -234,8 +242,9 @@ func setFilePermissions(cfg *sshConfig, filePath, perms string) error {
 
 // ensureHAProxyConfigPermissions ensures HAProxy config has correct permissions.
 // It checks current permissions and updates them if they don't match the expected value.
-func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
-	currentPerms, err := getFilePermissions(cfg, haproxyConfigPath)
+// The operation respects context cancellation and timeout.
+func ensureHAProxyConfigPermissions(ctx context.Context, cfg *sshConfig) error {
+	currentPerms, err := getFilePermissions(ctx, cfg, haproxyConfigPath)
 	if err != nil {
 		return err
 	}
@@ -243,9 +252,9 @@ func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
 	log.Debugf("Current HAProxy config permissions: %s", currentPerms)
 
 	if currentPerms != haproxyConfigPerms {
-		log.Debugf("Updating HAProxy config permissions from %s to %s", 
+		log.Debugf("Updating HAProxy config permissions from %s to %s",
 			currentPerms, haproxyConfigPerms)
-		return setFilePermissions(cfg, haproxyConfigPath, haproxyConfigPerms)
+		return setFilePermissions(ctx, cfg, haproxyConfigPath, haproxyConfigPerms)
 	}
 
 	log.Debugf("HAProxy config permissions are correct")
@@ -258,8 +267,9 @@ func ensureHAProxyConfigPermissions(cfg *sshConfig) error {
 
 // getSELinuxBool retrieves the value of an SELinux boolean.
 // It parses the output format: "boolean_name --> on" or "boolean_name --> off".
-func getSELinuxBool(cfg *sshConfig, boolName string) (bool, error) {
-	output, err := execSSHSudoCommand(cfg, []string{
+// The operation respects context cancellation and timeout.
+func getSELinuxBool(ctx context.Context, cfg *sshConfig, boolName string) (bool, error) {
+	output, err := execSSHSudoCommand(ctx, cfg, []string{
 		"getsebool", boolName,
 	})
 
@@ -276,7 +286,8 @@ func getSELinuxBool(cfg *sshConfig, boolName string) (bool, error) {
 
 // setSELinuxBool sets an SELinux boolean persistently (-P flag).
 // The value is set to "1" for true and "0" for false.
-func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
+// The operation respects context cancellation and timeout.
+func setSELinuxBool(ctx context.Context, cfg *sshConfig, boolName string, value bool) error {
 	valueStr := "0"
 	if value {
 		valueStr = "1"
@@ -284,7 +295,7 @@ func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
 
 	log.Debugf("Setting SELinux boolean %s to %s", boolName, valueStr)
 
-	_, err := execSSHSudoCommand(cfg, []string{
+	_, err := execSSHSudoCommand(ctx, cfg, []string{
 		"setsebool", "-P", fmt.Sprintf("%s=%s", boolName, valueStr),
 	})
 
@@ -297,15 +308,16 @@ func setSELinuxBool(cfg *sshConfig, boolName string, value bool) error {
 
 // ensureHAProxySELinux ensures HAProxy SELinux settings are correct.
 // It enables the haproxy_connect_any boolean if not already enabled.
-func ensureHAProxySELinux(cfg *sshConfig) error {
-	isEnabled, err := getSELinuxBool(cfg, haproxySelinuxSetting)
+// The operation respects context cancellation and timeout.
+func ensureHAProxySELinux(ctx context.Context, cfg *sshConfig) error {
+	isEnabled, err := getSELinuxBool(ctx, cfg, haproxySelinuxSetting)
 	if err != nil {
 		return err
 	}
 
 	if !isEnabled {
 		log.Debugf("Enabling SELinux boolean %s", haproxySelinuxSetting)
-		return setSELinuxBool(cfg, haproxySelinuxSetting, true)
+		return setSELinuxBool(ctx, cfg, haproxySelinuxSetting, true)
 	}
 
 	log.Debugf("SELinux boolean %s is already enabled", haproxySelinuxSetting)
@@ -318,10 +330,11 @@ func ensureHAProxySELinux(cfg *sshConfig) error {
 
 // systemctlCommand executes a systemctl command via SSH.
 // Common actions include: enable, disable, start, stop, restart, status.
-func systemctlCommand(cfg *sshConfig, action, service string) error {
+// The operation respects context cancellation and timeout.
+func systemctlCommand(ctx context.Context, cfg *sshConfig, action, service string) error {
 	log.Debugf("Executing systemctl %s %s", action, service)
 
-	_, err := execSSHSudoCommand(cfg, []string{
+	_, err := execSSHSudoCommand(ctx, cfg, []string{
 		"systemctl", action, service,
 	})
 
@@ -333,23 +346,26 @@ func systemctlCommand(cfg *sshConfig, action, service string) error {
 }
 
 // enableService enables a systemd service to start on boot.
-func enableService(cfg *sshConfig, service string) error {
-	return systemctlCommand(cfg, "enable", service)
+// The operation respects context cancellation and timeout.
+func enableService(ctx context.Context, cfg *sshConfig, service string) error {
+	return systemctlCommand(ctx, cfg, "enable", service)
 }
 
 // startService starts a systemd service immediately.
-func startService(cfg *sshConfig, service string) error {
-	return systemctlCommand(cfg, "start", service)
+// The operation respects context cancellation and timeout.
+func startService(ctx context.Context, cfg *sshConfig, service string) error {
+	return systemctlCommand(ctx, cfg, "start", service)
 }
 
 // enableAndStartHAProxy enables and starts the HAProxy service.
 // It first enables the service to start on boot, then starts it immediately.
-func enableAndStartHAProxy(cfg *sshConfig) error {
-	if err := enableService(cfg, haproxyServiceName); err != nil {
+// The operation respects context cancellation and timeout.
+func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
+	if err := enableService(ctx, cfg, haproxyServiceName); err != nil {
 		return err
 	}
 
-	return startService(cfg, haproxyServiceName)
+	return startService(ctx, cfg, haproxyServiceName)
 }
 
 // ============================================================================
@@ -364,36 +380,55 @@ func enableAndStartHAProxy(cfg *sshConfig) error {
 //  4. Configure HAProxy file permissions
 //  5. Configure SELinux for HAProxy
 //  6. Enable and start HAProxy service
+// The operation respects context cancellation and timeout, checking before each major step.
 func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) error {
 	cfg := newSSHConfig(ipAddress, bastionRsa)
 
 	// Step 1: Add server to known_hosts
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before adding to known_hosts: %w", err)
+	}
 	if err := addServerKnownHosts(ctx, ipAddress); err != nil {
 		return fmt.Errorf("failed to add server to known_hosts: %w", err)
 	}
 
 	// Step 2: Wait for SSH to be ready
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before SSH ready check: %w", err)
+	}
 	if err := waitForSSHReady(ctx, cfg); err != nil {
 		return fmt.Errorf("SSH not ready: %w", err)
 	}
 
 	// Step 3: Ensure HAProxy is installed
-	if err := ensureHAProxyInstalled(cfg); err != nil {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy installation: %w", err)
+	}
+	if err := ensureHAProxyInstalled(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to ensure HAProxy installation: %w", err)
 	}
 
 	// Step 4: Configure HAProxy file permissions
-	if err := ensureHAProxyConfigPermissions(cfg); err != nil {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy permissions: %w", err)
+	}
+	if err := ensureHAProxyConfigPermissions(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to configure HAProxy permissions: %w", err)
 	}
 
 	// Step 5: Configure SELinux for HAProxy
-	if err := ensureHAProxySELinux(cfg); err != nil {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy SELinux: %w", err)
+	}
+	if err := ensureHAProxySELinux(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to configure HAProxy SELinux: %w", err)
 	}
 
 	// Step 6: Enable and start HAProxy service
-	if err := enableAndStartHAProxy(cfg); err != nil {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy service start: %w", err)
+	}
+	if err := enableAndStartHAProxy(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to start HAProxy service: %w", err)
 	}
 
@@ -663,27 +698,27 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 //   // path might be: "/tmp/bastionIp-54321"
 func getBastionIPFilePath() (string, error) {
     tmpDir := os.TempDir()
-    
+
     // Verify the temporary directory exists
     info, err := os.Stat(tmpDir)
     if err != nil {
-        return "", fmt.Errorf("temporary directory does not exist: %w", err)
+	return "", fmt.Errorf("temporary directory does not exist: %w", err)
     }
-    
+
     // Verify it's actually a directory
     if !info.IsDir() {
-        return "", fmt.Errorf("temporary path is not a directory: %s", tmpDir)
+	return "", fmt.Errorf("temporary path is not a directory: %s", tmpDir)
     }
-    
+
     // Verify the directory is writable by attempting to create a test file
     testFile := filepath.Join(tmpDir, fmt.Sprintf(".write-test-%d", os.Getpid()))
     f, err := os.Create(testFile)
     if err != nil {
-        return "", fmt.Errorf("temporary directory is not writable: %w", err)
+	return "", fmt.Errorf("temporary directory is not writable: %w", err)
     }
     f.Close()
     os.Remove(testFile)
-    
+
     return filepath.Join(tmpDir, fmt.Sprintf("bastionIp-%d", os.Getpid())), nil
 }
 
@@ -792,10 +827,12 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 // The setup mode is determined by the BastionConfig:
 //  - Remote setup: delegates to another server via sendCreateBastion
 //  - Local setup: performs setup directly via SSH
+// The operation respects context cancellation and timeout.
 func setupBastion(ctx context.Context, config *BastionConfig) error {
 	if config.IsRemoteSetup() {
 		fmt.Println("Setting up bastion remotely...")
-		if err := sendCreateBastion(config.ServerIP,
+		if err := sendCreateBastion(ctx,
+			config.ServerIP,
 			config.Clouds[0],
 			config.BastionName,
 			config.DomainName,
@@ -865,15 +902,23 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 	log.Debugf("createServer: port.ID = %v", port.ID)
 
 	// Cleanup port on failure
+	// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
 	cleanupPort := func(createdPort *ports.Port) {
-		if deleteErr := deleteNetworkPort(ctx, cloudName, createdPort); deleteErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if deleteErr := deleteNetworkPort(cleanupCtx, cloudName, createdPort); deleteErr != nil {
 			log.Debugf("Warning: failed to cleanup port %s: %v", port.ID, deleteErr)
 		}
 	}
 
 	cleanupServerAndPort := func(server *servers.Server, createdPort *ports.Port) {
+		// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
 		// Delete server first
-		if deleteErr := deleteServer(ctx, cloudName, server); deleteErr != nil {
+		if deleteErr := deleteServer(cleanupCtx, cloudName, server); deleteErr != nil {
 			if server == nil {
 				log.Debugf("Warning: failed to cleanup nil server: %v", deleteErr)
 			} else {
