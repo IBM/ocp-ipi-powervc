@@ -206,28 +206,6 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 In @ocp-ipi-powervc/VMs.go around lines 96 - 111, innerNewVMs currently preallocates errs with length 1 (errs = make([]error, 1)) which returns []error{nil} and falsely signals an error; change innerNewVMs to return a nil error slice when there are no errors (remove the make with length 1 and either leave errs nil or set errs = nil) so callers see a nil/empty error result; update the return to return vms, nil (or vms, errs where errs is nil) and ensure no other code relies on a non-nil single-entry errs in the VMs creation path.
 
 ============================================================================
-File: ocp-ipi-powervc/CmdCheckAlive.go
-Line: 150 to 153
-Type: potential_issue
-Severity: major
-
-Comment:
-sendCheckAlive has no visible timeout — command can hang indefinitely
-
-A health-check command is most often used against a server that may be unreachable. Calling sendCheckAlive(serverIP) with no context.Context deadline means the command will block forever if the TCP connection is accepted but no response arrives, leaving the caller unable to detect or recover from a hung invocation.
-
-Expose a timeout via a flag (e.g., --timeout 30s) or at minimum pass a context with a hardcoded deadline into sendCheckAlive.
-
-
-
-Go context timeout pattern for network health check commands
-
-Prompt for AI Agent:
-Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.
-
-In @ocp-ipi-powervc/CmdCheckAlive.go around lines 150 - 153, The call to sendCheckAlive(serverIP) can hang indefinitely; update the caller around the log.Infof("Sending check-alive command to server %s", serverIP) to pass a context with a deadline (or use a configured timeout flag like --timeout) into sendCheckAlive instead of the current signature, and update sendCheckAlive to accept ctx context.Context and respect ctx.Done()/timeouts; ensure the new caller creates a context with a sensible hardcoded deadline or reads the flag, cancels it on return, and returns a wrapped error using errPrefixCheckAlive when the context times out or is cancelled.
-
-============================================================================
 File: ocp-ipi-powervc/CmdCreateBastion.go
 Line: 43
 Type: potential_issue

@@ -45,10 +45,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -146,9 +148,12 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	log.Infof("Server IP: %s", serverIP)
 	log.Infof("Debug mode: %v", shouldDebug)
 
-	// Execute check-alive command
+	// Execute check-alive command with 2-minute timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	
 	log.Infof("Sending check-alive command to server %s", serverIP)
-	if err := sendCheckAlive(serverIP); err != nil {
+	if err := sendCheckAlive(ctx, serverIP); err != nil {
 		return fmt.Errorf("%scheck-alive command failed: %w", errPrefixCheckAlive, err)
 	}
 

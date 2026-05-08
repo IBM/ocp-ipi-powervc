@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -149,11 +150,15 @@ func receiveResponse(conn net.Conn, waitFor time.Duration) (response string, err
 // sendCheckAlive sends a check-alive command to the server to verify it's responsive.
 //
 // Parameters:
+//   - ctx: Context for cancellation support
 //   - serverIP: IP address of the server to check
 //
 // Returns:
 //   - error: Any error encountered during the check
-func sendCheckAlive(serverIP string) error {
+func sendCheckAlive(ctx context.Context, serverIP string) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
 	if serverIP == "" {
 		return fmt.Errorf("server IP cannot be empty")
 	}
@@ -172,12 +177,22 @@ func sendCheckAlive(serverIP string) error {
 
 	log.Debugf("sendCheckAlive: Connecting to server at %s", serverIP)
 
-	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
+	// Use net.Dialer with context for cancellation support
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
 	defer conn.Close()
+
+	// Check if context was cancelled after connection
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled: %w", ctx.Err())
+	default:
+	}
 
 	marshalledData, err = json.Marshal(cmdIn)
 	if err != nil {
@@ -185,10 +200,24 @@ func sendCheckAlive(serverIP string) error {
 	}
 	log.Debugf("sendCheckAlive: Sending command: %s", string(marshalledData))
 
+	// Check if context was cancelled before sending
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before send: %w", ctx.Err())
+	default:
+	}
+
 	// Send the command to the server
 	err = sendByteArray(conn, marshalledData, 30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to send check-alive command: %w", err)
+	}
+
+	// Check if context was cancelled before receiving
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before receive: %w", ctx.Err())
+	default:
 	}
 
 	response, err = receiveResponse(conn, 30 * time.Second)
