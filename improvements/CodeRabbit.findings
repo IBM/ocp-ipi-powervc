@@ -70,44 +70,6 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 In @ocp-ipi-powervc/IBM-DNS.go around lines 743 - 750, The strict equality check using len(records) != expectedDNSRecordCount can produce false negatives; change the condition to len(records) < expectedDNSRecordCount so we only fail when there are fewer than the required records, and update the log/print messages that reference IBMDNSName and ClusterStatus to say "expecting at least %d" (and include the actual records for debugging). Locate the block that references variables records, expectedDNSRecordCount, IBMDNSName and the ClusterStatus log and replace the equality check and messages accordingly.
 
 ============================================================================
-File: ocp-ipi-powervc/CmdCreateBastion_test.go
-Line: 517 to 526
-Type: potential_issue
-Severity: minor
-
-Comment:
-Clarify expected behavior in test assertion.
-
-The condition err != nil && !os.IsNotExist(err) silently accepts os.IsNotExist errors, which conflicts with the comment "should not error". If cleanupBastionIPFile is idempotent and should return nil for non-existent files, simplify the assertion:
-
-
-
-🔧 Proposed fix (if function should return nil for non-existent files)
-
- 	t.Run("file does not exist", func(t *testing.T) {
- 		tempDir := t.TempDir()
- 		testFile := filepath.Join(tempDir, "test-bastion-ip")
- 		
--		// File doesn't exist - should not error
-+		// File doesn't exist - cleanup should be idempotent (no error)
- 		err := cleanupBastionIPFile(testFile)
--		if err != nil && !os.IsNotExist(err) {
--			t.Errorf("unexpected error: %v", err)
-+		if err != nil {
-+			t.Errorf("expected no error for non-existent file, got: %v", err)
- 		}
- 	})
-
-
-
-If cleanupBastionIPFile intentionally returns os.IsNotExist errors (and callers should ignore them), update the comment to reflect that expectation.
-
-Prompt for AI Agent:
-Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.
-
-In @ocp-ipi-powervc/CmdCreateBastion_test.go around lines 517 - 526, The test currently treats os.IsNotExist errors as acceptable despite the comment "should not error"; update the test to assert the function is idempotent by requiring cleanupBastionIPFile(testFile) returns nil (i.e., replace the conditional check with a simple if err != nil { t.Fatalf("unexpected error: %v", err) }) and adjust the inline comment to "File doesn't exist - should return nil (idempotent)"; if instead the intended behavior is to allow os.IsNotExist, change the comment to say "File doesn't exist - os.IsNotExist is acceptable" so the test expectation matches cleanupBastionIPFile's contract.
-
-============================================================================
 File: ocp-ipi-powervc/IBM-DNS.go
 Line: 134 to 150
 Type: potential_issue

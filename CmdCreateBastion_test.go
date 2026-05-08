@@ -518,10 +518,10 @@ func TestCleanupBastionIPFile(t *testing.T) {
 		tempDir := t.TempDir()
 		testFile := filepath.Join(tempDir, "test-bastion-ip")
 		
-		// File doesn't exist - should not error
+		// File doesn't exist - cleanup should be idempotent (no error)
 		err := cleanupBastionIPFile(testFile)
-		if err != nil && !os.IsNotExist(err) {
-			t.Errorf("unexpected error: %v", err)
+		if err != nil {
+			t.Errorf("expected no error for non-existent file, got: %v", err)
 		}
 	})
 
