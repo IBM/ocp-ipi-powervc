@@ -201,4 +201,20 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 
 In @ocp-ipi-powervc/Oc.go around lines 79 - 89, innerNewOc currently creates errs with make([]error, 1) which yields a slice containing a single nil and misleads callers that check len(errs) > 0; change the function to return a nil error slice when there are no errors (e.g., use "var errs []error" or set errs = nil) and keep ocs initialization and population as-is (ocs, Oc, services remain unchanged), so callers see a nil slice on success instead of a non-empty [nil] slice.
 
-Review completed: 23 findings ✔
+============================================================================
+File: ocp-ipi-powervc/CmdSendMetadata.go
+Line: 217 to 220
+Type: potential_issue
+Severity: minor
+
+Comment:
+Global logger reassignment could cause issues in concurrent scenarios.
+
+The package-level log variable is reassigned here. While acceptable for a typical CLI tool that runs once and exits, this could cause race conditions if sendMetadataCommand is ever called concurrently from multiple goroutines.
+
+Consider passing the logger as a parameter or using a function-scoped logger if concurrent execution is a possibility.
+
+Prompt for AI Agent:
+Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.
+
+In @ocp-ipi-powervc/CmdSendMetadata.go around lines 217 - 220, The package-level logger variable is being reassigned by calling initLogger(shouldDebug) which can cause races if sendMetadataCommand is invoked concurrently; instead avoid mutating the package-level log: create a function-scoped logger (e.g., logger := initLogger(shouldDebug)) and use that local variable throughout sendMetadataCommand, or change sendMetadataCommand to accept a logger parameter and pass the local logger in; update any calls inside sendMetadataCommand (and helper functions it calls) to use the passed/local logger rather than the package-level log variable.
