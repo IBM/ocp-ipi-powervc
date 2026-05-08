@@ -833,6 +833,7 @@ function create_bastion_host() {
 		create-bastion \
 		--cloud "${CLOUD}" \
 		--bastionName "${CLUSTER_NAME}" \
+		--availabilityZone "${MACHINE_TYPE}" \
 		--flavorName "${FLAVOR_NAME}" \
 		--imageName "${BASTION_IMAGE_NAME}" \
 		--networkName "${NETWORK_NAME}" \

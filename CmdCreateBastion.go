@@ -595,7 +595,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	flags.Var(&clouds, "cloud", "Cloud name to use in clouds.yaml")
 	bastionName := flags.String("bastionName", "", "The name of the bastion VM")
 	bastionRsa := flags.String("bastionRsa", "", "The RSA filename for the bastion VM")
-	availabilityZone := flags.String("", defaultAvailZone, "The name of the availability zone")
+	availabilityZone := flags.String("availabilityZone", defaultAvailZone, "The name of the availability zone")
 	flavorName := flags.String("flavorName", "", "The name of the flavor")
 	imageName := flags.String("imageName", "", "The name of the image")
 	networkName := flags.String("networkName", "", "The name of the network")

@@ -277,7 +277,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	// Define flags
 	ptrCloud := createRhcosFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrRhcosName := createRhcosFlags.String("rhcosName", "", "The name of the RHCOS VM to create")
-	availabilityZone := createRhcosFlags.String("", defaultAvailZone, "The name of the availability zone")
+	availabilityZone := createRhcosFlags.String("availabilityZone", defaultAvailZone, "The name of the availability zone")
 	ptrFlavorName := createRhcosFlags.String("flavorName", "", "The name of the flavor to use")
 	ptrImageName := createRhcosFlags.String("imageName", "", "The name of the image to use")
 	ptrNetworkName := createRhcosFlags.String("networkName", "", "The name of the network to use")
