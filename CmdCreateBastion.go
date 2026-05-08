@@ -40,7 +40,6 @@ import (
 )
 
 const (
-	bastionIpFilename = "/tmp/bastionIp"
 	defaultAvailZone  = "s1022"
 	maxSSHRetries     = 10
 	sshRetryDelay     = 15 * time.Second
@@ -436,6 +435,9 @@ type BastionConfig struct {
 	BastionRsa string // Path to RSA private key for local SSH setup (mutually exclusive with ServerIP)
 	ServerIP   string // IP address for remote setup delegation (mutually exclusive with BastionRsa)
 
+	// Output
+	BastionIpFile string // The filename containing the IP of the bastion server
+
 	// Optional Configuration
 	DomainName    string // DNS domain for bastion records (optional, requires IBMCLOUD_API_KEY)
 	EnableHAProxy bool   // Enable HAProxy load balancer (default: true)
@@ -594,6 +596,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	domainName := flags.String("domainName", "", "The DNS domain (optional)")
 	enableHAProxy := flags.String("enableHAProxy", "true", "Enable HA Proxy daemon")
 	serverIP := flags.String("serverIP", "", "The IP address of the server")
+	bastionIpFile := flags.String("bastionIpFile", "/tmp/bastionIp", "The filename containing the IP of the bastion server")
 	shouldDebug := flags.String("shouldDebug", "false", "Enable debug output")
 
 	// Parse flags
@@ -611,6 +614,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	config.SshKeyName = *sshKeyName
 	config.DomainName = *domainName
 	config.ServerIP = *serverIP
+	config.BastionIpFile = *bastionIpFile
 
 	// Parse boolean flags
 	var err error
@@ -630,6 +634,49 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	}
 
 	return config, nil
+}
+
+// getBastionIPFilePath generates a unique temporary file path for storing the bastion IP address.
+// The file path is constructed using the system's temporary directory and includes the current
+// process ID to ensure uniqueness across multiple concurrent executions.
+//
+// The function verifies that the temporary directory exists and is writable before returning
+// the path to prevent errors during subsequent file operations.
+//
+// Returns:
+//   - string: The full path to the bastion IP file (e.g., "/tmp/bastionIp-12345")
+//   - error: An error if the temporary directory doesn't exist or isn't writable
+//
+// Example:
+//   path, err := getBastionIPFilePath()
+//   if err != nil {
+//       return fmt.Errorf("failed to get bastion IP file path: %w", err)
+//   }
+//   // path might be: "/tmp/bastionIp-54321"
+func getBastionIPFilePath() (string, error) {
+    tmpDir := os.TempDir()
+    
+    // Verify the temporary directory exists
+    info, err := os.Stat(tmpDir)
+    if err != nil {
+        return "", fmt.Errorf("temporary directory does not exist: %w", err)
+    }
+    
+    // Verify it's actually a directory
+    if !info.IsDir() {
+        return "", fmt.Errorf("temporary path is not a directory: %s", tmpDir)
+    }
+    
+    // Verify the directory is writable by attempting to create a test file
+    testFile := filepath.Join(tmpDir, fmt.Sprintf(".write-test-%d", os.Getpid()))
+    f, err := os.Create(testFile)
+    if err != nil {
+        return "", fmt.Errorf("temporary directory is not writable: %w", err)
+    }
+    f.Close()
+    os.Remove(testFile)
+    
+    return filepath.Join(tmpDir, fmt.Sprintf("bastionIp-%d", os.Getpid())), nil
 }
 
 // createBastionCommand is the main entry point for the create-bastion command.
@@ -661,7 +708,7 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 	defer cancel()
 
 	// Clean up previous bastion IP file
-	if err := cleanupBastionIPFile(bastionIpFilename); err != nil {
+	if err := cleanupBastionIPFile(config.BastionIpFile); err != nil {
 		return fmt.Errorf("failed to cleanup bastion IP file: %w", err)
 	}
 
@@ -1061,8 +1108,8 @@ func writeBastionIP(ctx context.Context, config *BastionConfig, serverName strin
 	}
 	log.Debugf("writeBastionIP: ipAddress = %s", ipAddress)
 
-	if err := os.WriteFile(bastionIpFilename, []byte(ipAddress), filePermReadWrite); err != nil {
-		return fmt.Errorf("failed to write bastion IP to %q: %w", bastionIpFilename, err)
+	if err := os.WriteFile(config.BastionIpFile, []byte(ipAddress), filePermReadWrite); err != nil {
+		return fmt.Errorf("failed to write bastion IP to %q: %w", config.BastionIpFile, err)
 	}
 
 	return nil

@@ -140,10 +140,7 @@ readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Temporary file for storing bastion IP address
-# Note: Using fixed path for compatibility with create-bastion tool
-# TODO: Update create-bastion to accept custom filename via parameter
-readonly TEMP_BASTION_IP="/tmp/bastionIp"
-#readonly TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
+readonly TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
 
 # Security: Prevent symlink attacks on temporary file
 if [[ -L "${TEMP_BASTION_IP}" ]]; then
@@ -443,8 +440,6 @@ function cleanup_on_exit() {
 		if [[ -v CLUSTER_DIR ]] && [[ -n "${CLUSTER_DIR}" ]]; then
 			cleanup_metadata
 		fi
-
-		[[ -f "${TEMP_BASTION_IP}" ]] && /bin/rm -f "${TEMP_BASTION_IP}"
 	fi
 }
 
@@ -845,6 +840,7 @@ function create_bastion_host() {
 		--domainName "${BASEDOMAIN}" \
 		--enableHAProxy true \
 		--serverIP "${CONTROLLER_IP}" \
+		--bastionIpFile "${TEMP_BASTION_IP}" \
 		--shouldDebug true
 
 	if [[ ! -f "${TEMP_BASTION_IP}" ]]; then

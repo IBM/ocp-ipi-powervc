@@ -206,37 +206,6 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 In @ocp-ipi-powervc/VMs.go around lines 96 - 111, innerNewVMs currently preallocates errs with length 1 (errs = make([]error, 1)) which returns []error{nil} and falsely signals an error; change innerNewVMs to return a nil error slice when there are no errors (remove the make with length 1 and either leave errs nil or set errs = nil) so callers see a nil/empty error result; update the return to return vms, nil (or vms, errs where errs is nil) and ensure no other code relies on a non-nil single-entry errs in the VMs creation path.
 
 ============================================================================
-File: ocp-ipi-powervc/CmdCreateBastion.go
-Line: 43
-Type: potential_issue
-Severity: minor
-
-Comment:
-Predictable filename in /tmp poses a symlink attack risk.
-
-Using a hardcoded, predictable path in /tmp can allow local attackers to create a symlink at this location before your program runs, potentially causing data to be written elsewhere. Consider using os.CreateTemp or placing the file in a user-specific directory.
-
-
-
-Proposed fix
-
--	bastionIpFilename = "/tmp/bastionIp"
-+	// Consider using os.CreateTemp or a user-specific path like ~/.bastion/bastionIp
-+	bastionIpFilename = "/tmp/bastionIp" // TODO: Migrate to secure temp file handling
-
-
-Alternatively, generate a unique filename:
-func getBastionIPFilePath() (string, error) {
-    tmpDir := os.TempDir()
-    return filepath.Join(tmpDir, fmt.Sprintf("bastionIp-%d", os.Getpid())), nil
-}
-
-Prompt for AI Agent:
-Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.
-
-In @ocp-ipi-powervc/CmdCreateBastion.go at line 43, The hardcoded variable bastionIpFilename = "/tmp/bastionIp" is vulnerable to symlink attacks; replace usage with a secure temporary file creation (e.g., use os.CreateTemp or a helper like getBastionIPFilePath) so the file is created atomically with a unique name and proper permissions, update any code paths that open/write/read bastionIpFilename to accept the returned path (or file handle) from the secure creator, and ensure the file is cleaned up after use.
-
-============================================================================
 File: ocp-ipi-powervc/CmdSendMetadata.go
 Line: 287 to 303
 Type: potential_issue
