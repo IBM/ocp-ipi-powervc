@@ -324,13 +324,17 @@ func sendCreateBastion(serverIP string, cloudName string, serverName string, dom
 // sendMetadata sends cluster metadata to the server for creation or deletion.
 //
 // Parameters:
+//   - ctx: Context for cancellation support
 //   - metadataFile: Path to the metadata JSON file
 //   - serverIP: IP address of the server
 //   - shouldCreateMetadata: true to create metadata, false to delete
 //
 // Returns:
 //   - error: Any error encountered during the operation
-func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata bool) error {
+func sendMetadata(ctx context.Context, metadataFile string, serverIP string, shouldCreateMetadata bool) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
 	if metadataFile == "" {
 		return fmt.Errorf("metadata file path cannot be empty")
 	}
@@ -348,12 +352,22 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	log.Debugf("sendMetadata: Connecting to server at %s", serverIP)
 	log.Debugf("sendMetadata: Reading metadata from %s", metadataFile)
 
-	// Use net.JoinHostPort to properly handle IPv6 addresses
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(serverIP, serverPort), 10 * time.Second)
+	// Use net.Dialer with context for cancellation support
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
 	defer conn.Close()
+
+	// Check if context was cancelled after connection
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled: %w", ctx.Err())
+	default:
+	}
 
 	// Read metadata file (using os.ReadFile instead of deprecated ioutil.ReadFile)
 	content, err = os.ReadFile(metadataFile)
@@ -377,11 +391,25 @@ func sendMetadata(metadataFile string, serverIP string, shouldCreateMetadata boo
 	}
 	log.Debugf("sendMetadata: Parsed metadata command: %s (metadata payload redacted)", cmd.Command)
 
+	// Check if context was cancelled before marshalling
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before marshal: %w", ctx.Err())
+	default:
+	}
+
 	marshalledData, err = json.Marshal(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to marshal command: %w", err)
 	}
 	log.Debugf("sendMetadata: Sending command: %s (%d bytes, payload redacted)", cmd.Command, len(marshalledData))
+
+	// Check if context was cancelled before sending
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before send: %w", ctx.Err())
+	default:
+	}
 
 	// Send the command to the server
 	err = sendByteArray(conn, marshalledData, 30 * time.Second)

@@ -206,46 +206,6 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 In @ocp-ipi-powervc/VMs.go around lines 96 - 111, innerNewVMs currently preallocates errs with length 1 (errs = make([]error, 1)) which returns []error{nil} and falsely signals an error; change innerNewVMs to return a nil error slice when there are no errors (remove the make with length 1 and either leave errs nil or set errs = nil) so callers see a nil/empty error result; update the return to return vms, nil (or vms, errs where errs is nil) and ensure no other code relies on a non-nil single-entry errs in the VMs creation path.
 
 ============================================================================
-File: ocp-ipi-powervc/CmdSendMetadata.go
-Line: 287 to 303
-Type: potential_issue
-Severity: major
-
-Comment:
-sendMetadata goroutine cannot be cancelled on timeout, and the select is non-deterministic when both cases are ready.
-
-Two distinct problems in this function:
-
-1 — Non-cancellable goroutine (major)
-sendMetadata receives no context.Context, so when the deadline fires the goroutine keeps running until sendMetadata returns on its own. If sendMetadata hangs indefinitely (e.g., a TCP connection with no read deadline), the goroutine leaks for the lifetime of the process. More critically, if sendMetadata completes after the timeout error has already been returned, the remote operation may have actually succeeded while the CLI reports failure — a data-consistency hazard that can cause duplicate creates or missed deletes on retry.
-
-The proper fix is to thread the context into sendMetadata so it can respect cancellation. If sendMetadata can't be changed right now, the limitation should at least be documented clearly.
-
-2 — Non-deterministic select (minor)
-When sendMetadata finishes at precisely the timeout boundary, both errChan and ctx.Done() may be ready simultaneously. Go selects randomly between them, meaning a legitimately successful operation can be misreported as a timeout 50 % of the time in that race window. Prefer the operation result when it is available:
-
-
-
-
-
-🔧 Proposed fix — prefer operation result, document goroutine limitation
-
- func sendMetadataWithContext(ctx context.Context, metadataFile, serverIP string, shouldCreate bool) error {
- 	errChan := make(chan error, 1)
-
- 	go func() {
-+		// NOTE: sendMetadata does not accept a context; it cannot be interrupted
-+		// by cancellation. The goroutine will run until sendMetadata returns even
-+		// after the context deadline has fired. Ensure sendMetadata has an internal
-+		// timeout (e.g., HTTP/RPC deadline) to bound its execution.
- 		errChan
-
-Prompt for AI Agent:
-Verify each finding against current code. Fix only still-valid issues, skip the rest with a brief reason, keep changes minimal, and validate.
-
-In @ocp-ipi-powervc/CmdSendMetadata.go around lines 287 - 303, Thread the context through to allow cancellation: change sendMetadata to accept a context.Context (sendMetadata(ctx context.Context, ...)) and make its network/IO calls respect ctx (use context-aware APIs or set deadlines) and update sendMetadataWithContext to call sendMetadata(ctx, ...). Also make the select deterministic by preferring the operation result: in sendMetadataWithContext first wait on errChan case and return its result; if ctx.Done fires, do a non-blocking read from errChan (select { case err := <-errChan: return err default: return fmt.Errorf("operation cancelled or timed out: %w", ctx.Err()) }) so a late-successing sendMetadata is reported correctly. If changing sendMetadata is not possible immediately, add a clear comment in sendMetadataWithContext explaining the goroutine cannot be cancelled and the associated consistency risk.
-
-============================================================================
 File: ocp-ipi-powervc/Oc.go
 Line: 79 to 89
 Type: potential_issue

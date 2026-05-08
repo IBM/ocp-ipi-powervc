@@ -269,7 +269,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	startTime := time.Now()
 
 	// Send metadata command to server with context
-	if err := sendMetadataWithContext(ctx, metadataFile, serverIP, shouldCreateMetadata); err != nil {
+	if err := sendMetadata(ctx, metadataFile, serverIP, shouldCreateMetadata); err != nil {
 		return newSendMetadataError(opType.String(), "metadata transmission", err)
 	}
 
@@ -281,23 +281,4 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	log.Printf("[INFO] Send-metadata command completed successfully")
 
 	return nil
-}
-
-// sendMetadataWithContext sends metadata with context support for cancellation
-func sendMetadataWithContext(ctx context.Context, metadataFile, serverIP string, shouldCreate bool) error {
-	// Create a channel to receive the result
-	errChan := make(chan error, 1)
-
-	// Run the operation in a goroutine
-	go func() {
-		errChan <- sendMetadata(metadataFile, serverIP, shouldCreate)
-	}()
-
-	// Wait for either completion or context cancellation
-	select {
-	case err := <-errChan:
-		return err
-	case <-ctx.Done():
-		return fmt.Errorf("operation cancelled or timed out: %w", ctx.Err())
-	}
 }
