@@ -46,7 +46,7 @@ type RunnableObject interface {
 
 	// ClusterStatus checks and reports the status of the object in the cluster.
 	// This is typically called to validate cluster health and configuration.
-	ClusterStatus()
+	ClusterStatus() error
 
 	// Priority returns the execution priority of the object.
 	// Higher priority objects are executed first. A priority of -1 indicates

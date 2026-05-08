@@ -369,7 +369,10 @@ func queryComponentStatus(robjsCluster []RunnableObject) error {
 			robjObjectName = fmt.Sprintf("unknown-component-%d", i)
 		}
 		log.Printf("[INFO] Querying status of component %d/%d: %s", i+1, len(robjsCluster), robjObjectName)
-		robj.ClusterStatus()
+		err = robj.ClusterStatus()
+		if err != nil {
+			log.Debugf("ERROR: %s returned %v", robjObjectName, err)
+		}
 	}
 
 	return nil

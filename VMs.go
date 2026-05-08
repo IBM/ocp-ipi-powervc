@@ -153,18 +153,16 @@ func (vms *VMs) Run() error {
 //
 // This implements the RunnableObject interface.
 // Errors from individual operations are logged but don't stop execution.
-func (vms *VMs) ClusterStatus() {
+func (vms *VMs) ClusterStatus() error {
 	if vms == nil || vms.services == nil {
 		fmt.Printf("%s is NOTOK. It has not been initialized.\n", VMsName)
-		log.Debugf("ClusterStatus: VMs or services is nil")
-		return
+		return fmt.Errorf("ClusterStatus: VMs or services is nil")
 	}
 
 	metadata := vms.services.GetMetadata()
 	if metadata == nil {
 		fmt.Printf("%s is NOTOK. Metadata is not available.\n", VMsName)
-		log.Debugf("ClusterStatus: Metadata is nil")
-		return
+		return fmt.Errorf("ClusterStatus: Metadata is nil")
 	}
 
 	var (
@@ -184,15 +182,13 @@ func (vms *VMs) ClusterStatus() {
 	cloud := vms.services.GetCloud()
 	if cloud == "" {
 		fmt.Printf("%s is NOTOK. Cloud configuration is empty.\n", VMsName)
-		log.Debugf("ClusterStatus: Cloud configuration is empty")
-		return
+		return fmt.Errorf("ClusterStatus: Cloud configuration is empty")
 	}
 
 	infraID = metadata.GetInfraID()
 	if infraID == "" {
 		fmt.Printf("%s is NOTOK. Infrastructure ID is empty.\n", VMsName)
-		log.Debugf("ClusterStatus: InfraID is empty")
-		return
+		return fmt.Errorf("ClusterStatus: InfraID is empty")
 	}
 	log.Debugf("ClusterStatus: infraID = %s", infraID)
 
@@ -201,23 +197,20 @@ func (vms *VMs) ClusterStatus() {
 	connCompute, err = NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to create compute service client: %v\n", VMsName, err)
-		log.Debugf("ClusterStatus: NewServiceClient returned error: %v", err)
-		return
+		return fmt.Errorf("ClusterStatus: NewServiceClient returned error: %v", err)
 	}
 
 	allServers, err = getAllServers(ctx, []string{ cloud })
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to get servers: %v\n", VMsName, err)
-		log.Debugf("ClusterStatus: getAllServers returned error: %v", err)
-		return
+		return fmt.Errorf("ClusterStatus: getAllServers returned error: %v", err)
 	}
 	log.Debugf("ClusterStatus: Retrieved %d servers", len(allServers))
 
 	allHypervisors, err = getAllHypervisors(ctx, connCompute)
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to get hypervisors: %v\n", VMsName, err)
-		log.Debugf("ClusterStatus: getAllHypervisors returned error: %v", err)
-		return
+		return fmt.Errorf("ClusterStatus: getAllHypervisors returned error: %v", err)
 	}
 	log.Debugf("ClusterStatus: Retrieved %d hypervisors", len(allHypervisors))
 
@@ -245,6 +238,8 @@ func (vms *VMs) ClusterStatus() {
 			// Continue to show server info even without IP address
 			macAddress = sshStatusNA
 			ipAddress = sshStatusNA
+		} else {
+			log.Debugf("ClusterStatus: findIpAddress for server %s returned %s and %s", server.Name, macAddress, ipAddress)
 		}
 
 		if ipAddress != sshStatusNA {
@@ -293,6 +288,8 @@ func (vms *VMs) ClusterStatus() {
 	if clusterServerCount == 0 {
 		fmt.Printf("%s: Warning: No servers found for cluster with infraID %s\n", VMsName, infraID)
 	}
+
+	return nil
 }
 
 // Priority returns the execution priority for this service.

@@ -220,7 +220,7 @@ func (lbs *LoadBalancer) Run() error {
 // the program to exit.
 //
 // This method implements part of the RunnableObject interface.
-func (lbs *LoadBalancer) ClusterStatus() {
+func (lbs *LoadBalancer) ClusterStatus() error {
 	var (
 		ctx         context.Context
 		cancel      context.CancelFunc
@@ -235,8 +235,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 
 	// Validate services field
 	if lbs.services == nil {
-		fmt.Printf("%s: Error: services is nil\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: services is nil\n", LoadBalancerName)
 	}
 
 	ctx, cancel = lbs.services.GetContextWithTimeout()
@@ -245,33 +244,28 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	clusterName = lbs.services.GetMetadata().GetClusterName()
 	log.Debugf("ClusterStatus: clusterName = %s", clusterName)
 	if clusterName == "" {
-		fmt.Printf("%s: Error: cluster name is empty\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: cluster name is empty\n", LoadBalancerName)
 	}
 
 	cloud = lbs.services.GetMetadata().GetCloud()
 	log.Debugf("ClusterStatus: cloud = %s", cloud)
 	if cloud == "" {
-		fmt.Printf("%s: Error: cloud name is empty\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: cloud name is empty\n", LoadBalancerName)
 	}
 
 	log.Printf("[INFO] Finding bastion server for cluster '%s'", clusterName)
 	server, err = findServer(ctx, []string{ cloud }, clusterName)
 	if err != nil {
-		fmt.Printf("%s: Error: failed to find bastion server: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: failed to find bastion server: %v\n", LoadBalancerName, err)
 	}
 	log.Debugf("ClusterStatus: FOUND server = %s", server.Name)
 
 	_, ipAddress, err = findIpAddress(server)
 	if err != nil {
-		fmt.Printf("%s: Error: failed to find IP address: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: failed to find IP address: %v\n", LoadBalancerName, err)
 	}
 	if ipAddress == "" {
-		fmt.Printf("%s: Error: IP address is empty\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: IP address is empty\n", LoadBalancerName)
 	}
 	log.Debugf("ClusterStatus: ipAddress = %s", ipAddress)
 
@@ -298,8 +292,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	}, "SSH connectivity check")
 
 	if err != nil {
-		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: %v\n", LoadBalancerName, err)
 	}
 	fmt.Printf("%s: Cluster bastion is alive\n", LoadBalancerName)
 
@@ -307,21 +300,18 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	log.Printf("[INFO] Adding bastion to known hosts")
 	err = addServerKnownHosts(ctx, ipAddress)
 	if err != nil {
-		fmt.Printf("%s: Error: failed to add server to known hosts: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: failed to add server to known hosts: %v\n", LoadBalancerName, err)
 	}
 
 	// Retrieve HAProxy configuration with retry logic
 	log.Printf("[INFO] Retrieving HAProxy configuration from bastion")
 	installerRsa := lbs.services.GetInstallerRsa()
 	if installerRsa == "" {
-		fmt.Printf("%s: Error: installer RSA key path is empty\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: installer RSA key path is empty\n", LoadBalancerName)
 	}
 	bastionUsername := lbs.services.GetBastionUsername()
 	if bastionUsername == "" {
-		fmt.Printf("%s: Error: bastion username is empty\n", LoadBalancerName)
-		return
+		return fmt.Errorf("%s: Error: bastion username is empty\n", LoadBalancerName)
 	}
 
 	err = retrySshWithBackoff(func() error {
@@ -346,8 +336,7 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	}, "HAProxy configuration retrieval")
 
 	if err != nil {
-		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: %v\n", LoadBalancerName, err)
 	}
 	fmt.Printf("%s: Cluster bastion has the following config:\n", LoadBalancerName)
 	fmt.Println(outs)
@@ -378,12 +367,13 @@ func (lbs *LoadBalancer) ClusterStatus() {
 	}, "HAProxy service status retrieval")
 
 	if err != nil {
-		fmt.Printf("%s: Error: %v\n", LoadBalancerName, err)
-		return
+		return fmt.Errorf("%s: Error: %v\n", LoadBalancerName, err)
 	}
 
 	fmt.Printf("%s: Cluster bastion has the following status:\n", LoadBalancerName)
 	fmt.Println(outs)
+
+	return nil
 }
 
 // Priority returns the execution priority of the LoadBalancer component.

@@ -702,41 +702,36 @@ func (dns *IBMDNS) Run() error {
 // Example output:
 //   IBM Domain Name Service is OK.
 //   IBM Domain Name Service is NOTOK. Expected DNS record api.cluster.domain.com does not exist
-func (dns *IBMDNS) ClusterStatus() {
+func (dns *IBMDNS) ClusterStatus() error {
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
 	if dns == nil || dns.services == nil {
 		fmt.Printf("%s is NOTOK. It has not been initialized.\n", IBMDNSName)
-		log.Debugf("ClusterStatus: DNS service or services is nil")
-		return
+		return fmt.Errorf("ClusterStatus: DNS service or services is nil")
 	}
 
 	metadata := dns.services.GetMetadata()
 	if metadata == nil {
 		fmt.Printf("%s is NOTOK. Metadata is not available.\n", IBMDNSName)
-		log.Debugf("ClusterStatus: Metadata is nil")
-		return
+		return fmt.Errorf("ClusterStatus: Metadata is nil")
 	}
 
 	clusterName := metadata.GetClusterName()
 	if clusterName == "" {
 		fmt.Printf("%s is NOTOK. Cluster name is empty.\n", IBMDNSName)
-		log.Debugf("ClusterStatus: Cluster name is empty")
-		return
+		return fmt.Errorf("ClusterStatus: Cluster name is empty")
 	}
 
 	baseDomain := dns.services.GetBaseDomain()
 	if baseDomain == "" {
 		fmt.Printf("%s is NOTOK. Base domain is empty.\n", IBMDNSName)
-		log.Debugf("ClusterStatus: Base domain is empty")
-		return
+		return fmt.Errorf("ClusterStatus: Base domain is empty")
 	}
 
 	records, err := dns.listIBMDNSRecords()
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Could not list DNS records: %v\n", IBMDNSName, err)
-		log.Debugf("ClusterStatus: Failed to list DNS records: %v", err)
-		return
+		return fmt.Errorf("ClusterStatus: Failed to list DNS records: %v", err)
 	}
 	log.Debugf("ClusterStatus: Found %d DNS records: %+v", len(records), records)
 
@@ -744,9 +739,8 @@ func (dns *IBMDNS) ClusterStatus() {
 	if len(records) != expectedDNSRecordCount {
 		fmt.Printf("%s is NOTOK. Expecting %d DNS records, found %d (%+v)\n",
 			IBMDNSName, expectedDNSRecordCount, len(records), records)
-		log.Debugf("ClusterStatus: Record count mismatch - expected %d, got %d",
+		return fmt.Errorf("ClusterStatus: Record count mismatch - expected %d, got %d",
 			expectedDNSRecordCount, len(records))
-		return
 	}
 
 	// Validate each required DNS record pattern
@@ -766,8 +760,7 @@ func (dns *IBMDNS) ClusterStatus() {
 		if !found {
 			fmt.Printf("%s is NOTOK. Expected DNS record %s (%s) does not exist\n",
 				IBMDNSName, recordName, req.description)
-			log.Debugf("ClusterStatus: Missing required record: %s (%s)", recordName, req.description)
-			return
+			return fmt.Errorf("ClusterStatus: Missing required record: %s (%s)", recordName, req.description)
 		}
 
 		// TODO: Consider adding DNS lookup validation to verify record resolution
@@ -778,6 +771,8 @@ func (dns *IBMDNS) ClusterStatus() {
 	fmt.Printf("%s is OK.\n", IBMDNSName)
 	log.Debugf("ClusterStatus: All DNS records validated successfully for cluster %s.%s",
 		clusterName, baseDomain)
+
+	return nil
 }
 
 // Priority returns the execution priority for this service.

@@ -824,7 +824,7 @@ func findIpAddress(server servers.Server) (string, string, error) {
 		}
 	}
 
-	return "", "", nil
+	return "", "", fmt.Errorf("no IP address found for server %s", server.Name)
 }
 
 // dhcpdConf generates a DHCP server configuration file for cluster nodes.

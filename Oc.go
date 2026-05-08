@@ -132,18 +132,16 @@ func (oc *Oc) Run() error {
 //
 // This implements the RunnableObject interface.
 // Errors from individual commands are logged but don't stop execution.
-func (oc *Oc) ClusterStatus() {
+func (oc *Oc) ClusterStatus() error {
 	if oc == nil || oc.services == nil {
 		fmt.Println("Error: OpenShift cluster object not initialized")
-		log.Debugf("ClusterStatus: Oc or services is nil")
-		return
+		return fmt.Errorf("ClusterStatus: Oc or services is nil")
 	}
 
 	kubeConfig := oc.services.GetKubeConfig()
 	if kubeConfig == "" {
 		fmt.Println("Error: KUBECONFIG path is empty")
-		log.Debugf("ClusterStatus: KUBECONFIG is empty")
-		return
+		return fmt.Errorf("ClusterStatus: KUBECONFIG is empty")
 	}
 
 	log.Debugf("ClusterStatus: Checking OpenShift cluster status with KUBECONFIG=%s", kubeConfig)
@@ -225,6 +223,12 @@ func (oc *Oc) ClusterStatus() {
 
 	log.Debugf("ClusterStatus: Pipeline commands completed - success: %d, failed: %d", pipeSuccessCount, pipeFailCount)
 	log.Debugf("ClusterStatus: Total commands run: %d, total failed: %d", len(cmds)+len(pipeCmds), failCount+pipeFailCount)
+
+	if failCount > 0 || pipeFailCount > 0 {
+		// @TODO
+	}
+
+	return nil
 }
 
 // Priority returns the execution priority for this service.
