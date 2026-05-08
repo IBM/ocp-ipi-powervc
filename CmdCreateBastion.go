@@ -795,14 +795,24 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 func setupBastion(ctx context.Context, config *BastionConfig) error {
 	if config.IsRemoteSetup() {
 		fmt.Println("Setting up bastion remotely...")
-		if err := sendCreateBastion(config.ServerIP, config.Clouds[0], config.BastionName, config.DomainName); err != nil {
+		if err := sendCreateBastion(config.ServerIP,
+			config.Clouds[0],
+			config.BastionName,
+			config.DomainName
+		); err != nil {
 			return fmt.Errorf("remote setup failed: %w", err)
 		}
 		return nil
 	}
 
 	fmt.Println("Setting up bastion locally...")
-	if err := setupBastionServer(ctx, config.EnableHAProxy, config.Clouds, config.BastionName, config.DomainName, config.BastionRsa); err != nil {
+	if err := setupBastionServer(ctx,
+		config.EnableHAProxy,
+		config.Clouds,
+		config.BastionName,
+		config.DomainName,
+		config.BastionRsa
+	); err != nil {
 		return fmt.Errorf("local setup failed: %w", err)
 	}
 	return nil
