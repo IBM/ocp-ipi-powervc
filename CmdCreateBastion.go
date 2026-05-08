@@ -798,7 +798,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 		if err := sendCreateBastion(config.ServerIP,
 			config.Clouds[0],
 			config.BastionName,
-			config.DomainName
+			config.DomainName,
 		); err != nil {
 			return fmt.Errorf("remote setup failed: %w", err)
 		}
@@ -811,7 +811,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 		config.Clouds,
 		config.BastionName,
 		config.DomainName,
-		config.BastionRsa
+		config.BastionRsa,
 	); err != nil {
 		return fmt.Errorf("local setup failed: %w", err)
 	}
