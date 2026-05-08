@@ -654,6 +654,7 @@ func TestFindIpAddress(t *testing.T) {
 		expectedMAC    string
 		expectedIP     string
 		expectError    bool
+		errorMsg       string
 	}{
 		{
 			name: "valid server with IP",
@@ -680,7 +681,8 @@ func TestFindIpAddress(t *testing.T) {
 			},
 			expectedMAC: "",
 			expectedIP:  "",
-			expectError: false,
+			expectError: true,
+			errorMsg:    "no IP address found for server test-server",
 		},
 		{
 			name: "server with multiple networks",
@@ -717,6 +719,10 @@ func TestFindIpAddress(t *testing.T) {
 
 			if !tt.expectError && err != nil {
 				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
 			}
 
 			if macAddr != tt.expectedMAC {

@@ -465,8 +465,10 @@ func TestParseRhcosFlags_APIKeyFromEnv(t *testing.T) {
 
 // TestCreateBootstrapIgnition tests the ignition configuration generation
 func TestCreateBootstrapIgnition(t *testing.T) {
-	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		// Initialize logger for tests
+		log = initLogger(false)
+	}
 	
 	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
 	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
@@ -559,8 +561,10 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 
 // TestCreateBootstrapIgnition_SizeLimit tests that ignition config respects size limits
 func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
-	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		// Initialize logger for tests
+		log = initLogger(false)
+	}
 	
 	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
 	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
@@ -612,8 +616,10 @@ func TestIsServerNotFoundError(t *testing.T) {
 		},
 	}
 
-	// Initialize logger for tests
-	log = initLogger(false)
+	if log == nil {
+		// Initialize logger for tests
+		log = initLogger(false)
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -794,8 +800,13 @@ func TestSetupRhcosServer(t *testing.T) {
 				Name: "test-server",
 			},
 			expectError: true,
-			errorMsg:    "has no IP address",
+			errorMsg:    "failed to find IP address: no IP address found for server test-server",
 		},
+	}
+
+	if log == nil {
+		// Initialize logger for tests
+		log = initLogger(false)
 	}
 
 	for _, tt := range tests {
