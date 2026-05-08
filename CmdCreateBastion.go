@@ -759,7 +759,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	}
 
 	if !errors.Is(err, ErrServerNotFound) {
-		return fmt.Errorf("Unknown error found in ensureServerExists: %w", err)
+		return fmt.Errorf("unknown error found in ensureServerExists: %w", err)
 	}
 
 	// Server doesn't exist, create it
@@ -988,6 +988,7 @@ func createServerInstance(ctx context.Context, cloudName, bastionName, availabil
 
 	return newServer, nil
 }
+
 // deleteServer deletes a server instance by its ID.
 // Returns an error if the server cannot be deleted.
 func deleteServer(ctx context.Context, cloudName string, server *servers.Server) error {
