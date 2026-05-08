@@ -42,6 +42,12 @@ import (
 const (
 	// Server communication constants
 	serverPort = "8080"
+	
+	// Timeout constants
+	dialTimeout            = 10 * time.Second
+	writeTimeout           = 30 * time.Second
+	readTimeout            = 30 * time.Second
+	bastionCreationTimeout = 15 * time.Minute
 
 	// Command name constants
 	serverCmdCheckAlive      = "check-alive"
@@ -179,7 +185,7 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 
 	// Use net.Dialer with context for cancellation support
 	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout: dialTimeout,
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
@@ -208,7 +214,7 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 	}
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData, 30 * time.Second)
+	err = sendByteArray(conn, marshalledData, writeTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to send check-alive command: %w", err)
 	}
@@ -220,7 +226,7 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 	default:
 	}
 
-	response, err = receiveResponse(conn, 30 * time.Second)
+	response, err = receiveResponse(conn, readTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to receive response: %w", err)
 	}
@@ -251,6 +257,9 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 // Returns:
 //   - error: Any error encountered during the operation
 func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, serverName string, domainName string) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
 	if serverIP == "" {
 		return fmt.Errorf("server IP cannot be empty")
 	}
@@ -265,8 +274,10 @@ func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, s
 	}
 
 	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before sending create-bastion command: %w", err)
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled before sending create-bastion command: %w", ctx.Err())
+	default:
 	}
 
 	var (
@@ -289,8 +300,10 @@ func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, s
 
 	// Use net.JoinHostPort to properly handle IPv6 addresses
 	// Create a dialer that respects context
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
+	dialer := &net.Dialer{
+		Timeout: dialTimeout,
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
 	}
@@ -303,17 +316,19 @@ func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, s
 	log.Debugf("sendCreateBastion: Sending command: %s", string(marshalledData))
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData, 30 * time.Second)
+	err = sendByteArray(conn, marshalledData, writeTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to send create-bastion command: %w", err)
 	}
 
 	// Check context before waiting for response
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before receiving response: %w", err)
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled before receiving response: %w", ctx.Err())
+	default:
 	}
 
-	response, err = receiveResponse(conn, 15 * time.Minute)
+	response, err = receiveResponse(conn, bastionCreationTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to receive response: %w", err)
 	}
@@ -366,7 +381,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 
 	// Use net.Dialer with context for cancellation support
 	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout: dialTimeout,
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
@@ -424,11 +439,40 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	}
 
 	// Send the command to the server
-	err = sendByteArray(conn, marshalledData, 30 * time.Second)
+	err = sendByteArray(conn, marshalledData, writeTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to send metadata command: %w", err)
 	}
 
-	log.Debugf("sendMetadata: Metadata sent successfully")
+	// Check if context was cancelled before receiving
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before receive: %w", ctx.Err())
+	default:
+	}
+
+	// Wait for server acknowledgment
+	response, err := receiveResponse(conn, readTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to receive response: %w", err)
+	}
+	log.Debugf("sendMetadata: Received response: %s", response)
+
+	// Parse and validate response
+	var cmdOut struct {
+		Command string `json:"Command"`
+		Result  string `json:"Result"`
+	}
+	err = json.Unmarshal([]byte(response), &cmdOut)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	log.Debugf("sendMetadata: Parsed response: %+v", cmdOut)
+
+	if cmdOut.Result != "" {
+		return fmt.Errorf("server returned error: %s", cmdOut.Result)
+	}
+
+	log.Debugf("sendMetadata: Metadata processed successfully")
 	return nil
 }

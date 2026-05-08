@@ -1873,14 +1873,66 @@ func handleConnection(conn net.Conn, clouds cloudFlags) error {
 			}
 
 		case "create-metadata":
+			var (
+				cmd            struct {
+					Command string `json:"Command"`
+					Result  string `json:"Result"`
+				}
+				marshalledData []byte
+			)
+
 			go handleCreateMetadata(data, true, errChan)
 			result = <-errChan
 			log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
 
+			cmd.Command = "metadata-created"
+			if result != nil {
+				cmd.Result = result.Error()
+			}
+			log.Debugf("handleConnection: cmd = %+v", cmd)
+
+			marshalledData, err = json.Marshal(cmd)
+			if err != nil {
+				log.Debugf("handleConnection: json.Marshal returns %v", err)
+				return err
+			}
+			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
+
+			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			if err != nil {
+				return err
+			}
+
 		case "delete-metadata":
+			var (
+				cmd            struct {
+					Command string `json:"Command"`
+					Result  string `json:"Result"`
+				}
+				marshalledData []byte
+			)
+
 			go handleCreateMetadata(data, false, errChan)
 			result = <-errChan
 			log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+
+			cmd.Command = "metadata-deleted"
+			if result != nil {
+				cmd.Result = result.Error()
+			}
+			log.Debugf("handleConnection: cmd = %+v", cmd)
+
+			marshalledData, err = json.Marshal(cmd)
+			if err != nil {
+				log.Debugf("handleConnection: json.Marshal returns %v", err)
+				return err
+			}
+			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
+
+			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			if err != nil {
+				return err
+			}
 
 		case "create-bastion":
 			var (
