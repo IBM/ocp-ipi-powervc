@@ -237,20 +237,42 @@ func TestPrintUsage_CommandFormatting(t *testing.T) {
 	}
 }
 
-// TestMain_NoArguments verifies behavior when no arguments are provided
-func TestMain_NoArguments(t *testing.T) {
-	// This test verifies the logic that would be executed in main()
-	// We can't directly test main() as it calls os.Exit, but we can test the logic
+// TestRun_NoArguments verifies behavior when no arguments are provided
+func TestRun_NoArguments(t *testing.T) {
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	os.Stderr = w
 
-	if len([]string{}) == 0 {
-		// This is the condition checked in main when len(os.Args) == 1
-		// (os.Args[0] is the program name, so len==1 means no arguments)
-		t.Log("Verified that empty args array has length 0")
+	// Call run with no arguments
+	err = run([]string{}, "test-app")
+
+	w.Close()
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Should return an error
+	if err == nil {
+		t.Error("Expected error when no arguments provided, got nil")
+	}
+
+	// Should contain error message and usage
+	if !strings.Contains(output, "Error: No command specified") {
+		t.Error("Expected error message about no command specified")
+	}
+	if !strings.Contains(output, "Usage:") {
+		t.Error("Expected usage information in output")
 	}
 }
 
-// TestMain_VersionFlag verifies version flag handling logic
-func TestMain_VersionFlag(t *testing.T) {
+// TestRun_VersionFlag verifies version flag handling logic
+func TestRun_VersionFlag(t *testing.T) {
 	// Save original values
 	origVersion := version
 	origRelease := release
@@ -263,22 +285,153 @@ func TestMain_VersionFlag(t *testing.T) {
 	version = "v1.2.3"
 	release = "v1.2.0"
 
-	// Simulate the version flag check
-	args := []string{"program", versionFlag}
-	if len(args) == 2 && args[1] == versionFlag {
-		// This is what main() would do
-		expectedOutput := "version = v1.2.3\nrelease = v1.2.0\n"
-		actualOutput := "version = " + version + "\nrelease = " + release + "\n"
-		if actualOutput != expectedOutput {
-			t.Errorf("Expected version output %q, got %q", expectedOutput, actualOutput)
-		}
-	} else {
-		t.Error("Version flag condition not met")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"single dash version", []string{"-version"}},
+		{"double dash version", []string{"--version"}},
+		{"version with extra args", []string{"-version", "extra"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
+			os.Stdout = w
+
+			// Call run with version flag
+			err = run(tt.args, "test-app")
+
+			w.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			output := buf.String()
+
+			// Should not return an error
+			if err != nil {
+				t.Errorf("Expected no error for version flag, got: %v", err)
+			}
+
+			// Should contain version info
+			if !strings.Contains(output, "version = v1.2.3") {
+				t.Error("Expected version in output")
+			}
+			if !strings.Contains(output, "release = v1.2.0") {
+				t.Error("Expected release in output")
+			}
+		})
 	}
 }
 
-// TestMain_CommandDispatch verifies command name handling
-func TestMain_CommandDispatch(t *testing.T) {
+// TestRun_HelpFlag verifies help flag handling
+func TestRun_HelpFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"single dash help", []string{"-help"}},
+		{"double dash help", []string{"--help"}},
+		{"short help", []string{"-h"}},
+		{"help with extra args", []string{"-help", "extra"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Capture stderr
+			oldStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
+			os.Stderr = w
+
+			// Call run with help flag
+			err = run(tt.args, "test-app")
+
+			w.Close()
+			os.Stderr = oldStderr
+
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			output := buf.String()
+
+			// Should not return an error
+			if err != nil {
+				t.Errorf("Expected no error for help flag, got: %v", err)
+			}
+
+			// Should contain usage info
+			if !strings.Contains(output, "Usage:") {
+				t.Error("Expected usage information in output")
+			}
+			if !strings.Contains(output, "Available commands:") {
+				t.Error("Expected available commands in output")
+			}
+		})
+	}
+}
+
+// TestRun_UnknownCommand verifies unknown command handling
+func TestRun_UnknownCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		command string
+	}{
+		{"unknown command", []string{"unknown-command"}, "unknown-command"},
+		{"invalid command", []string{"invalid"}, "invalid"},
+		{"help without dash", []string{"help"}, "help"},
+		{"version without dash", []string{"version"}, "version"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Capture stderr
+			oldStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
+			os.Stderr = w
+
+			// Call run with unknown command
+			err = run(tt.args, "test-app")
+
+			w.Close()
+			os.Stderr = oldStderr
+
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			output := buf.String()
+
+			// Should return an error
+			if err == nil {
+				t.Error("Expected error for unknown command, got nil")
+			}
+
+			// Should contain error message
+			if !strings.Contains(output, "Error: Unknown command") {
+				t.Error("Expected unknown command error message")
+			}
+			if !strings.Contains(output, tt.command) {
+				t.Errorf("Expected command name %q in error message", tt.command)
+			}
+			if !strings.Contains(output, "Usage:") {
+				t.Error("Expected usage information in output")
+			}
+		})
+	}
+}
+
+// TestRun_CaseInsensitiveCommands verifies that commands are case-insensitive
+func TestRun_CaseInsensitiveCommands(t *testing.T) {
 	tests := []struct {
 		name        string
 		command     string
@@ -300,13 +453,7 @@ func TestMain_CommandDispatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			command := strings.ToLower(tt.command)
-			matched := false
-
-			switch command {
-			case cmdCheckAlive, cmdCreateBastion, cmdCreateCluster,
-				cmdCreateRhcos, cmdSendMetadata, cmdWatchInstallation, cmdWatchCreate:
-				matched = true
-			}
+			_, matched := commandHandlers[command]
 
 			if matched != tt.shouldMatch {
 				t.Errorf("Command %q: expected match=%v, got match=%v", tt.command, tt.shouldMatch, matched)

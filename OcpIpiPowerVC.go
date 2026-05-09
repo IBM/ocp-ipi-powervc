@@ -145,30 +145,22 @@ func printUsage(executableName string) {
 // run contains the main application logic and returns an error instead of calling os.Exit.
 // This makes the code more testable and provides consistent error handling.
 //
+// Parameters:
+//   - args: Command-line arguments (excluding the program name)
+//   - executableName: Name of the executable for usage messages
+//
 // Returns:
 //   - error: Any error encountered during execution, nil on success
-func run() error {
-	var (
-		executableName string
-		err            error
-	)
-
-	// Get executable name for usage messages
-	executablePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-	executableName = filepath.Base(executablePath)
-
+func run(args []string, executableName string) error {
 	// Handle no arguments case
-	if len(os.Args) == 1 {
+	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: No command specified\n\n")
 		printUsage(executableName)
 		return fmt.Errorf("no command specified")
 	}
 
 	// Handle version and help flags
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		if arg == versionFlag || arg == versionFlag2 {
 			fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
 			return nil
@@ -186,16 +178,16 @@ func run() error {
 	}
 
 	// Dispatch to appropriate command handler using the registry pattern
-	command := strings.ToLower(os.Args[1])
+	command := strings.ToLower(args[0])
 	handler, exists := commandHandlers[command]
 	if !exists {
-		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", args[0])
 		printUsage(executableName)
-		return fmt.Errorf("unknown command: %s", os.Args[1])
+		return fmt.Errorf("unknown command: %s", args[0])
 	}
 
 	// Execute the command handler
-	err = handler(flagSets[command], os.Args[2:])
+	err := handler(flagSets[command], args[1:])
 	if err != nil {
 		return fmt.Errorf("command '%s' failed: %w", command, err)
 	}
@@ -206,7 +198,16 @@ func run() error {
 // main is the entry point for the PowerVC-Tool application.
 // It calls run() and handles the exit code based on the returned error.
 func main() {
-	if err := run(); err != nil {
+	// Get executable name for usage messages
+	executablePath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to get executable path: %v\n", err)
+		os.Exit(exitError)
+	}
+	executableName := filepath.Base(executablePath)
+
+	// Call run with args (excluding program name) and executable name
+	if err := run(os.Args[1:], executableName); err != nil {
 		// Error message already printed by run() or command functions
 		os.Exit(exitError)
 	}
