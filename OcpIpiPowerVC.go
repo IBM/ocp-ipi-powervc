@@ -22,14 +22,8 @@
 // Usage:
 //   ocp-ipi-powervc-linux-${ARCH} <command> [flags]
 //
-// Available commands:
-//   check-alive        - Check if cluster nodes are alive
-//   create-bastion     - Create bastion host
-//   create-rhcos       - Create RHCOS image
-//   create-cluster     - Create OpenShift cluster
-//   send-metadata      - Send metadata to cluster
-//   watch-installation - Watch cluster installation progress
-//   watch-create       - Watch cluster creation process
+// Available commands are defined in the 'commands' registry variable.
+// Run the program with -h or --help to see the full list of commands and their descriptions.
 
 package main
 
@@ -65,6 +59,12 @@ const (
 	exitError   = 1
 )
 
+// Command represents a CLI command with its name and description.
+type Command struct {
+	Name        string
+	Description string
+}
+
 var (
 	// version is the build version, replaced at build time with:
 	//   -ldflags="-X main.version=$(git describe --always --long --dirty)"
@@ -73,9 +73,22 @@ var (
 	// release is the release tag, replaced at build time with:
 	//   -ldflags="-X main.release=$(git describe --tags --abbrev=0)"
 	release = "undefined"
+
+	// commands is the registry of all available commands.
+	// This serves as the single source of truth for command information.
+	commands = []Command{
+		{cmdCheckAlive,        "Check if cluster nodes are alive"},
+		{cmdCreateBastion,     "Create bastion host"},
+		{cmdCreateRhcos,       "Create RHCOS image"},
+		{cmdCreateCluster,     "Create OpenShift cluster"},
+		{cmdSendMetadata,      "Send metadata to cluster"},
+		{cmdWatchInstallation, "Watch cluster installation progress"},
+		{cmdWatchCreate,       "Watch cluster creation process"},
+	}
 )
 
 // printUsage displays the program usage information to stderr.
+// It uses the command registry to ensure consistency between documentation and runtime behavior.
 //
 // Parameters:
 //   - executableName: Name of the executable binary
@@ -85,13 +98,9 @@ func printUsage(executableName string) {
 	fmt.Fprintf(os.Stderr, "Usage: %s <command> [flags]\n", executableName)
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "Available commands:\n")
-	fmt.Fprintf(os.Stderr, "  %-20s Check if cluster nodes are alive\n", cmdCheckAlive)
-	fmt.Fprintf(os.Stderr, "  %-20s Create bastion host\n", cmdCreateBastion)
-	fmt.Fprintf(os.Stderr, "  %-20s Create RHCOS image\n", cmdCreateRhcos)
-	fmt.Fprintf(os.Stderr, "  %-20s Create OpenShift cluster\n", cmdCreateCluster)
-	fmt.Fprintf(os.Stderr, "  %-20s Send metadata to cluster\n", cmdSendMetadata)
-	fmt.Fprintf(os.Stderr, "  %-20s Watch cluster installation progress\n", cmdWatchInstallation)
-	fmt.Fprintf(os.Stderr, "  %-20s Watch cluster creation process\n", cmdWatchCreate)
+	for _, cmd := range commands {
+		fmt.Fprintf(os.Stderr, "  %-20s %s\n", cmd.Name, cmd.Description)
+	}
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "Use '%s <command> -h' for more information about a command.\n", executableName)
 }
