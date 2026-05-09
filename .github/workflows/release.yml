@@ -26,40 +26,28 @@ jobs:
       with:
         go-version-file: 'go.mod' # Automatically detects the Go version from go.mod
 
-    - name: Get OS and arch info
-      run: |
-        GOOSARCH=${{matrix.goosarch}}
-        GOOS=${GOOSARCH%/*}
-        GOARCH=${GOOSARCH#*/}
-        REPO=${{github.repository}}
-        BINARY_NAME=${REPO#*/}-$GOOS-$GOARCH
-        echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
-        echo "GOOS=$GOOS" >> $GITHUB_ENV
-        echo "GOARCH=$GOARCH" >> $GITHUB_ENV
+    - name: Build
+      run: make build
 
-    - name: Set version variable
-      run: echo "PROGRAM_VERSION="$(git describe --always --long --dirty) >> ${GITHUB_ENV}
-
-    - name: Set release variable
-      run: echo "PROGRAM_RELEASE="$(git describe --tags --abbrev=0) >> ${GITHUB_ENV}
-
-    - name: Build project
-      run: go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "$BINARY_NAME" *.go
+    - name: Release
+      run: make dist
 
     - name: Release binaries
       uses: softprops/action-gh-release@v3
       # https://github.com/softprops/action-gh-release
       with:
         files: |
-          ${{ env.BINARY_NAME }}
+          ocp-ipi-powervc-darwin-amd64
+          ocp-ipi-powervc-darwin-arm64
+          ocp-ipi-powervc-linux-amd64
+          ocp-ipi-powervc-linux-arm64
+          ocp-ipi-powervc-linux-ppc64le
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
     - name: Release scripts
       uses: softprops/action-gh-release@v3
       # https://github.com/softprops/action-gh-release
-      if: ${{ env.GOARCH == 'amd64' }}
-      # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
       with:
         files: |
           scripts/create-cluster.sh

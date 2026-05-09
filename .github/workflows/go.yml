@@ -22,7 +22,7 @@ jobs:
         go-version: '1.26.x'
 
     - name: Build
-      run: go build -v ./...
+      run: make build
 
     - name: Test
-      run: go test $(go list ./... 2>/dev/null| grep -v snippet) -v -timeout 1200s
+      run: make test
