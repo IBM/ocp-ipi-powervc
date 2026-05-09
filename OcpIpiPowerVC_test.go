@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -57,11 +58,24 @@ func TestConstants(t *testing.T) {
 
 // TestExitCodes verifies that exit codes are defined correctly
 func TestExitCodes(t *testing.T) {
-	if exitSuccess != 0 {
-		t.Errorf("Expected exitSuccess to be 0, got %d", exitSuccess)
+	tests := []struct {
+		name     string
+		exitCode int
+		expected int
+	}{
+		{"exitSuccess", exitSuccess, 0},
+		{"exitError", exitError, 1},
+		{"exitInvalidArgs", exitInvalidArgs, 2},
+		{"exitCommandNotFound", exitCommandNotFound, 3},
+		{"exitCommandFailed", exitCommandFailed, 4},
 	}
-	if exitError != 1 {
-		t.Errorf("Expected exitError to be 1, got %d", exitError)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.exitCode != tt.expected {
+				t.Errorf("Expected %s to be %d, got %d", tt.name, tt.expected, tt.exitCode)
+			}
+		})
 	}
 }
 
@@ -262,6 +276,14 @@ func TestRun_NoArguments(t *testing.T) {
 		t.Error("Expected error when no arguments provided, got nil")
 	}
 
+	// Should be an AppError with ErrorTypeInvalidArgs
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Error("Expected error to be *AppError type")
+	} else if appErr.Type != ErrorTypeInvalidArgs {
+		t.Errorf("Expected error type ErrorTypeInvalidArgs, got %v", appErr.Type)
+	}
+
 	// Should contain error message and usage
 	if !strings.Contains(output, "Error: No command specified") {
 		t.Error("Expected error message about no command specified")
@@ -416,6 +438,14 @@ func TestRun_UnknownCommand(t *testing.T) {
 				t.Error("Expected error for unknown command, got nil")
 			}
 
+			// Should be an AppError with ErrorTypeCommandNotFound
+			appErr, ok := err.(*AppError)
+			if !ok {
+				t.Error("Expected error to be *AppError type")
+			} else if appErr.Type != ErrorTypeCommandNotFound {
+				t.Errorf("Expected error type ErrorTypeCommandNotFound, got %v", appErr.Type)
+			}
+
 			// Should contain error message
 			if !strings.Contains(output, "Error: Unknown command") {
 				t.Error("Expected unknown command error message")
@@ -556,16 +586,80 @@ func TestMain_UnknownCommand(t *testing.T) {
 	}
 }
 
-// TestMain_GlobalVariables verifies global variable initialization
-func TestMain_GlobalVariables(t *testing.T) {
-	// Test shouldDebug default value
-	if shouldDebug {
-		t.Error("shouldDebug should default to false")
+// TestAppError verifies AppError type functionality
+func TestAppError(t *testing.T) {
+	tests := []struct {
+		name        string
+		errType     ErrorType
+		errMsg      string
+		expectedMsg string
+	}{
+		{
+			name:        "invalid args error",
+			errType:     ErrorTypeInvalidArgs,
+			errMsg:      "no command specified",
+			expectedMsg: "no command specified",
+		},
+		{
+			name:        "command not found error",
+			errType:     ErrorTypeCommandNotFound,
+			errMsg:      "unknown command: test",
+			expectedMsg: "unknown command: test",
+		},
+		{
+			name:        "command failed error",
+			errType:     ErrorTypeCommandFailed,
+			errMsg:      "command execution failed",
+			expectedMsg: "command execution failed",
+		},
+		{
+			name:        "generic error",
+			errType:     ErrorTypeGeneric,
+			errMsg:      "generic error occurred",
+			expectedMsg: "generic error occurred",
+		},
 	}
 
-	// Test that log variable can be nil initially
-	if log != nil {
-		t.Log("log variable is initialized (this is okay)")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseErr := fmt.Errorf("%s", tt.errMsg)
+			appErr := NewAppError(tt.errType, baseErr)
+
+			if appErr.Type != tt.errType {
+				t.Errorf("Expected error type %v, got %v", tt.errType, appErr.Type)
+			}
+
+			if appErr.Error() != tt.expectedMsg {
+				t.Errorf("Expected error message %q, got %q", tt.expectedMsg, appErr.Error())
+			}
+
+			if appErr.Unwrap() != baseErr {
+				t.Error("Unwrap() should return the original error")
+			}
+		})
+	}
+}
+
+// TestErrorType verifies ErrorType constants
+func TestErrorType(t *testing.T) {
+	tests := []struct {
+		name     string
+		errType  ErrorType
+		expected ErrorType
+	}{
+		{"ErrorTypeNone", ErrorTypeNone, 0},
+		{"ErrorTypeInvalidArgs", ErrorTypeInvalidArgs, 1},
+		{"ErrorTypeCommandNotFound", ErrorTypeCommandNotFound, 2},
+		{"ErrorTypeCommandFailed", ErrorTypeCommandFailed, 3},
+		{"ErrorTypeGeneric", ErrorTypeGeneric, 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.errType != tt.expected {
+				t.Errorf("Expected %s to be %d, got %d", tt.name, tt.expected, tt.errType)
+			}
+		})
 	}
 }
 
@@ -721,7 +815,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    false,
 			expectError:   true, // -version is not a valid flag for check-alive
-			expectedExit:  1,
+			expectedExit:  4,    // exitCommandFailed
 		},
 		{
 			name:          "version uppercase",
@@ -729,7 +823,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    true, // Shows usage on error
 			expectError:   true,
-			expectedExit:  1,
+			expectedExit:  3, // exitCommandNotFound
 		},
 		{
 			name:          "version without dash",
@@ -737,7 +831,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    true, // Shows usage on error
 			expectError:   true,
-			expectedExit:  1,
+			expectedExit:  3, // exitCommandNotFound
 		},
 		// Help flag tests
 		{
@@ -778,7 +872,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    false, // check-alive shows its own usage, not main help
 			expectError:   true,  // -help is not defined for check-alive
-			expectedExit:  1,
+			expectedExit:  4,     // exitCommandFailed
 		},
 		{
 			name:          "help uppercase",
@@ -786,7 +880,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    true, // Shows usage on error
 			expectError:   true,
-			expectedExit:  1,
+			expectedExit:  3, // exitCommandNotFound
 		},
 		{
 			name:          "help without dash",
@@ -794,7 +888,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    true, // Shows usage on error
 			expectError:   true,
-			expectedExit:  1,
+			expectedExit:  3, // exitCommandNotFound
 		},
 		// Edge cases
 		{
@@ -803,7 +897,7 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			expectVersion: false,
 			expectHelp:    true, // Shows usage on error
 			expectError:   true,
-			expectedExit:  1,
+			expectedExit:  2, // exitInvalidArgs
 		},
 		{
 			name:          "both version and help",

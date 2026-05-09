@@ -54,9 +54,12 @@ const (
 	helpFlag2 = "--help"
 	helpFlag3 = "-h"
 
-	// Exit codes
-	exitSuccess = 0
-	exitError   = 1
+	// Exit codes - Different codes allow scripts and automation to distinguish failure types
+	exitSuccess         = 0 // Command completed successfully
+	exitError           = 1 // Generic error
+	exitInvalidArgs     = 2 // Invalid command-line arguments
+	exitCommandNotFound = 3 // Unknown command specified
+	exitCommandFailed   = 4 // Command execution failed
 )
 
 // Command represents a CLI command with its metadata.
@@ -142,8 +145,46 @@ func printUsage(executableName string) {
 	fmt.Fprintf(os.Stderr, "Use '%s <command> -h' for more information about a command.\n", executableName)
 }
 
+// ErrorType represents different categories of errors with associated exit codes.
+type ErrorType int
+
+const (
+	// ErrorTypeNone indicates no error (success)
+	ErrorTypeNone ErrorType = iota
+	// ErrorTypeInvalidArgs indicates invalid command-line arguments
+	ErrorTypeInvalidArgs
+	// ErrorTypeCommandNotFound indicates an unknown command was specified
+	ErrorTypeCommandNotFound
+	// ErrorTypeCommandFailed indicates the command execution failed
+	ErrorTypeCommandFailed
+	// ErrorTypeGeneric indicates a generic error
+	ErrorTypeGeneric
+)
+
+// AppError wraps an error with a specific error type for proper exit code handling.
+type AppError struct {
+	Type ErrorType
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *AppError) Error() string {
+	return e.Err.Error()
+}
+
+// Unwrap implements the errors.Unwrap interface.
+func (e *AppError) Unwrap() error {
+	return e.Err
+}
+
+// NewAppError creates a new AppError with the specified type and error.
+func NewAppError(errType ErrorType, err error) *AppError {
+	return &AppError{Type: errType, Err: err}
+}
+
 // run contains the main application logic and returns an error instead of calling os.Exit.
 // This makes the code more testable and provides consistent error handling.
+// The returned error may be an *AppError with a specific error type for proper exit code handling.
 //
 // Parameters:
 //   - args: Command-line arguments (excluding the program name)
@@ -156,7 +197,7 @@ func run(args []string, executableName string) error {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: No command specified\n\n")
 		printUsage(executableName)
-		return fmt.Errorf("no command specified")
+		return NewAppError(ErrorTypeInvalidArgs, fmt.Errorf("no command specified"))
 	}
 
 	// Handle version and help flags (check only first argument for efficiency)
@@ -182,20 +223,26 @@ func run(args []string, executableName string) error {
 	if !exists {
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", args[0])
 		printUsage(executableName)
-		return fmt.Errorf("unknown command: %s", args[0])
+		return NewAppError(ErrorTypeCommandNotFound, fmt.Errorf("unknown command: %s", args[0]))
 	}
 
 	// Execute the command handler
 	err := handler(flagSets[command], args[1:])
 	if err != nil {
-		return fmt.Errorf("command '%s' failed: %w", command, err)
+		return NewAppError(ErrorTypeCommandFailed, fmt.Errorf("command '%s' failed: %w", command, err))
 	}
 
 	return nil
 }
 
 // main is the entry point for the PowerVC-Tool application.
-// It calls run() and handles the exit code based on the returned error.
+// It calls run() and handles the exit code based on the returned error type.
+// Different exit codes allow scripts and automation to distinguish between failure types:
+//   - 0: Success
+//   - 1: Generic error
+//   - 2: Invalid command-line arguments
+//   - 3: Unknown command specified
+//   - 4: Command execution failed
 func main() {
 	// Get executable name for usage messages
 	executablePath, err := os.Executable()
@@ -208,6 +255,20 @@ func main() {
 	// Call run with args (excluding program name) and executable name
 	if err := run(os.Args[1:], executableName); err != nil {
 		// Error message already printed by run() or command functions
+		// Determine exit code based on error type
+		if appErr, ok := err.(*AppError); ok {
+			switch appErr.Type {
+			case ErrorTypeInvalidArgs:
+				os.Exit(exitInvalidArgs)
+			case ErrorTypeCommandNotFound:
+				os.Exit(exitCommandNotFound)
+			case ErrorTypeCommandFailed:
+				os.Exit(exitCommandFailed)
+			default:
+				os.Exit(exitError)
+			}
+		}
+		// Generic error if not an AppError
 		os.Exit(exitError)
 	}
 	os.Exit(exitSuccess)
