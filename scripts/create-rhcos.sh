@@ -67,10 +67,6 @@ do
 done
 
 ARCH=$(uname -m)
-if [ "${ARCH}" == "x86_64" ]
-then
-	ARCH=amd64
-fi
 ${DEBUG} && echo "ARCH=${ARCH}"
 
 TMP_DIR=$(mktemp --directory)

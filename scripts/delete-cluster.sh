@@ -249,17 +249,14 @@ function confirm_action() {
 # Side Effects:
 #   - Sets and exports POWERVC_TOOL as readonly
 # Exit: Terminates script if architecture is unsupported
-# Supported Architectures: x86_64 (amd64), ppc64le, aarch64
+# Supported architectures: x86_64, amd64, ppc64le, aarch64
 #------------------------------------------------------------------------------
 function initialize_powervc_tool() {
 	local arch
 	arch="$(uname -m)"
 
 	case "${arch}" in
-		x86_64)
-			arch="amd64"
-			;;
-		ppc64le|aarch64)
+		x86_64|amd64|ppc64le|aarch64)
 			# Keep as-is
 			;;
 		*)

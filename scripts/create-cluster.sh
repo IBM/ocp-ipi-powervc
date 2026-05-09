@@ -448,7 +448,7 @@ trap cleanup_on_exit EXIT
 ################################################################################
 # initialize_powervc_tool: Determine architecture-specific tool binary
 # Detects system architecture and sets POWERVC_TOOL to appropriate binary name
-# Supported architectures: x86_64 (amd64), ppc64le, aarch64
+# Supported architectures: x86_64, amd64, ppc64le, aarch64
 # Sets: POWERVC_TOOL global variable
 # Exits: If architecture is unsupported
 ################################################################################
@@ -457,10 +457,7 @@ function initialize_powervc_tool() {
 	arch="$(uname -m)"
 
 	case "${arch}" in
-		x86_64)
-			arch="amd64"
-			;;
-		ppc64le|aarch64)
+		x86_64|amd64|ppc64le|aarch64)
 			# Keep as-is
 			;;
 		*)

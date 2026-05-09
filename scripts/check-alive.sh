@@ -47,7 +47,7 @@
 #   - Automatically restarts watch-installation on server failure
 #   - Logs all output with timestamps
 #   - Supports graceful shutdown on SIGINT/SIGTERM
-#   - Auto-detects system architecture (amd64/ppc64le)
+#   - Auto-detects system architecture (x86_64/amd64/ppc64le)
 #   - Auto-detects network interface for DHCP
 #
 # EXIT CODES:
