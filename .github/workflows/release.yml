@@ -30,18 +30,18 @@ jobs:
       run: make build
 
     - name: Release
-      run: make dist
+      run: make release
 
     - name: Release binaries
       uses: softprops/action-gh-release@v3
       # https://github.com/softprops/action-gh-release
       with:
         files: |
-          ocp-ipi-powervc-darwin-amd64
-          ocp-ipi-powervc-darwin-arm64
-          ocp-ipi-powervc-linux-amd64
-          ocp-ipi-powervc-linux-arm64
-          ocp-ipi-powervc-linux-ppc64le
+          dist/ocp-ipi-powervc-darwin-amd64
+          dist/ocp-ipi-powervc-darwin-arm64
+          dist/ocp-ipi-powervc-linux-amd64
+          dist/ocp-ipi-powervc-linux-arm64
+          dist/ocp-ipi-powervc-linux-ppc64le
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
