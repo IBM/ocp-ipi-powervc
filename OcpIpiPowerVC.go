@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// PowerVC-Tool is the main entry point for the OpenShift IPI PowerVC deployment tool.
+// OcpIpiPowerVC is the main entry point for the OpenShift IPI PowerVC deployment tool.
 // It provides a command-line interface for managing OpenShift cluster deployments on PowerVC.
 //
 // # Architecture Overview
@@ -26,7 +26,8 @@
 //
 // The tool operates in a client-server model where commands can be executed locally
 // or sent to a remote controller service for execution. This enables automated
-// cluster management and monitoring.
+// cluster management and monitoring.  Please note that the controller server needs
+// to be running somewhere on the network.
 //
 // # Required Environment Variables
 //
@@ -86,16 +87,12 @@
 //
 // # Build Instructions
 //
-// Standard build (uses actual module name from go.mod):
-//   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
+// Standard build:
+//   make build
 //
 // Development build (reinitialize module):
-//   /bin/rm go.*
-//   go mod init github.com/IBM/ocp-ipi-powervc
-//   go mod tidy
-//   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
-//
-// Note: Replace ${ARCH} with target architecture (e.g., amd64, ppc64le)
+//   make init
+//   make build
 //
 // # Usage
 //
