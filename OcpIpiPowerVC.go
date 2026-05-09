@@ -112,15 +112,8 @@ func printUsage(executableName string) {
 //   - error: Any error encountered during execution, nil on success
 func run() error {
 	var (
-		executableName          string
-		checkAliveFlags         *flag.FlagSet
-		createBastionFlags      *flag.FlagSet
-		createClusterFlags      *flag.FlagSet
-		createRhcosFlags        *flag.FlagSet
-		sendMetadataFlags       *flag.FlagSet
-		watchInstallationFlags  *flag.FlagSet
-		watchCreateClusterFlags *flag.FlagSet
-		err                     error
+		executableName string
+		err            error
 	)
 
 	// Get executable name for usage messages
@@ -149,38 +142,35 @@ func run() error {
 		}
 	}
 
-	// Initialize flag sets for each command
-	checkAliveFlags = flag.NewFlagSet(cmdCheckAlive, flag.ContinueOnError)
-	createBastionFlags = flag.NewFlagSet(cmdCreateBastion, flag.ContinueOnError)
-	createClusterFlags = flag.NewFlagSet(cmdCreateCluster, flag.ContinueOnError)
-	createRhcosFlags = flag.NewFlagSet(cmdCreateRhcos, flag.ContinueOnError)
-	sendMetadataFlags = flag.NewFlagSet(cmdSendMetadata, flag.ContinueOnError)
-	watchInstallationFlags = flag.NewFlagSet(cmdWatchInstallation, flag.ContinueOnError)
-	watchCreateClusterFlags = flag.NewFlagSet(cmdWatchCreate, flag.ContinueOnError)
+	// Initialize flag sets for each command using a map to reduce repetition
+	flagSets := make(map[string]*flag.FlagSet)
+	for _, cmd := range commands {
+		flagSets[cmd.Name] = flag.NewFlagSet(cmd.Name, flag.ContinueOnError)
+	}
 
 	// Dispatch to appropriate command handler
 	command := strings.ToLower(os.Args[1])
 	switch command {
 	case cmdCheckAlive:
-		err = checkAliveCommand(checkAliveFlags, os.Args[2:])
+		err = checkAliveCommand(flagSets[cmdCheckAlive], os.Args[2:])
 
 	case cmdCreateBastion:
-		err = createBastionCommand(createBastionFlags, os.Args[2:])
+		err = createBastionCommand(flagSets[cmdCreateBastion], os.Args[2:])
 
 	case cmdCreateCluster:
-		err = createClusterCommand(createClusterFlags, os.Args[2:])
+		err = createClusterCommand(flagSets[cmdCreateCluster], os.Args[2:])
 
 	case cmdCreateRhcos:
-		err = createRhcosCommand(createRhcosFlags, os.Args[2:])
+		err = createRhcosCommand(flagSets[cmdCreateRhcos], os.Args[2:])
 
 	case cmdSendMetadata:
-		err = sendMetadataCommand(sendMetadataFlags, os.Args[2:])
+		err = sendMetadataCommand(flagSets[cmdSendMetadata], os.Args[2:])
 
 	case cmdWatchInstallation:
-		err = watchInstallationCommand(watchInstallationFlags, os.Args[2:])
+		err = watchInstallationCommand(flagSets[cmdWatchInstallation], os.Args[2:])
 
 	case cmdWatchCreate:
-		err = watchCreateClusterCommand(watchCreateClusterFlags, os.Args[2:])
+		err = watchCreateClusterCommand(flagSets[cmdWatchCreate], os.Args[2:])
 
 	default:
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", os.Args[1])
