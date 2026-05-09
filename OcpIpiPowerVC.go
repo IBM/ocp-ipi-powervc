@@ -345,7 +345,7 @@ func run(args []string, executableName string) error {
 		return NewAppError(ErrorTypeInvalidArgs, fmt.Errorf("no command specified"))
 	}
 
-	// Handle version and help flags (check only first argument for efficiency)
+	// Handle version and help flags (must be first argument)
 	firstArg := args[0]
 	switch firstArg {
 	case versionFlag, versionFlag2:
