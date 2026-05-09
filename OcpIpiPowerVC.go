@@ -125,7 +125,24 @@ var (
 		cmdWatchInstallation: watchInstallationCommand,
 		cmdWatchCreate:       watchCreateClusterCommand,
 	}
+
+	// maxCommandLength is calculated from the longest command name in the registry.
+	// This is computed at initialization to provide a reasonable validation limit.
+	maxCommandLength = calculateMaxCommandLength()
 )
+
+// calculateMaxCommandLength returns the length of the longest command name plus a buffer.
+// This allows validation to adapt automatically as commands are added or removed.
+func calculateMaxCommandLength() int {
+	maxLen := 0
+	for _, cmd := range commands {
+		if len(cmd.Name) > maxLen {
+			maxLen = len(cmd.Name)
+		}
+	}
+	// Add 50% buffer for future commands (e.g., 18 chars -> 27 chars max)
+	return maxLen + (maxLen / 2)
+}
 
 // printUsage displays the program usage information to stderr.
 // It uses the command registry to ensure consistency between documentation and runtime behavior.
@@ -219,6 +236,15 @@ func run(args []string, executableName string) error {
 
 	// Dispatch to appropriate command handler using the registry pattern
 	command := strings.ToLower(args[0])
+
+	// Validate command name to prevent malformed input
+	// Max length is calculated from longest command name + 50% buffer
+	if len(command) > maxCommandLength || strings.ContainsAny(command, "/\\<>|&;$`\"'") {
+		fmt.Fprintf(os.Stderr, "Error: Invalid command name '%s'\n\n", args[0])
+		printUsage(executableName)
+		return NewAppError(ErrorTypeInvalidArgs, fmt.Errorf("invalid command name: %s", args[0]))
+	}
+
 	handler, exists := commandHandlers[command]
 	if !exists {
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", args[0])
