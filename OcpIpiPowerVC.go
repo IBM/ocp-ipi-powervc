@@ -59,11 +59,35 @@ const (
 	exitError   = 1
 )
 
-// Command represents a CLI command with its name and description.
+// Command represents a CLI command with its metadata.
+// It is used in the command registry to provide a single source of truth
+// for command information displayed in help text and usage messages.
+//
+// Fields:
+//   - Name: The command name as it appears on the command line (e.g., "check-alive")
+//   - Description: A brief description of what the command does, shown in help output
+//
+// Example:
+//   cmd := Command{
+//       Name:        "check-alive",
+//       Description: "Check if cluster nodes are alive",
+//   }
 type Command struct {
 	Name        string
 	Description string
 }
+
+// CommandHandler is a function type for command handler functions.
+// Each handler receives a FlagSet for parsing command-specific flags
+// and a slice of arguments to process.
+//
+// Parameters:
+//   - flags: FlagSet configured for the specific command
+//   - args: Command-line arguments to parse and process
+//
+// Returns:
+//   - error: Any error encountered during command execution, nil on success
+type CommandHandler func(*flag.FlagSet, []string) error
 
 var (
 	// version is the build version, replaced at build time with:
@@ -84,6 +108,19 @@ var (
 		{cmdSendMetadata,      "Send metadata to cluster"},
 		{cmdWatchInstallation, "Watch cluster installation progress"},
 		{cmdWatchCreate,       "Watch cluster creation process"},
+	}
+
+	// commandHandlers maps command names to their handler functions.
+	// This registry pattern allows for easy addition of new commands without
+	// modifying the dispatch logic, following the Open/Closed Principle.
+	commandHandlers = map[string]CommandHandler{
+		cmdCheckAlive:        checkAliveCommand,
+		cmdCreateBastion:     createBastionCommand,
+		cmdCreateCluster:     createClusterCommand,
+		cmdCreateRhcos:       createRhcosCommand,
+		cmdSendMetadata:      sendMetadataCommand,
+		cmdWatchInstallation: watchInstallationCommand,
+		cmdWatchCreate:       watchCreateClusterCommand,
 	}
 )
 
@@ -148,37 +185,17 @@ func run() error {
 		flagSets[cmd.Name] = flag.NewFlagSet(cmd.Name, flag.ContinueOnError)
 	}
 
-	// Dispatch to appropriate command handler
+	// Dispatch to appropriate command handler using the registry pattern
 	command := strings.ToLower(os.Args[1])
-	switch command {
-	case cmdCheckAlive:
-		err = checkAliveCommand(flagSets[cmdCheckAlive], os.Args[2:])
-
-	case cmdCreateBastion:
-		err = createBastionCommand(flagSets[cmdCreateBastion], os.Args[2:])
-
-	case cmdCreateCluster:
-		err = createClusterCommand(flagSets[cmdCreateCluster], os.Args[2:])
-
-	case cmdCreateRhcos:
-		err = createRhcosCommand(flagSets[cmdCreateRhcos], os.Args[2:])
-
-	case cmdSendMetadata:
-		err = sendMetadataCommand(flagSets[cmdSendMetadata], os.Args[2:])
-
-	case cmdWatchInstallation:
-		err = watchInstallationCommand(flagSets[cmdWatchInstallation], os.Args[2:])
-
-	case cmdWatchCreate:
-		err = watchCreateClusterCommand(flagSets[cmdWatchCreate], os.Args[2:])
-
-	default:
+	handler, exists := commandHandlers[command]
+	if !exists {
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", os.Args[1])
 		printUsage(executableName)
 		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
 
-	// Handle command execution errors
+	// Execute the command handler
+	err = handler(flagSets[command], os.Args[2:])
 	if err != nil {
 		return fmt.Errorf("command '%s' failed: %w", command, err)
 	}
