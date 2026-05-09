@@ -19,6 +19,8 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,6 +40,10 @@ func TestConstants(t *testing.T) {
 		{"watch-installation command", cmdWatchInstallation, "watch-installation"},
 		{"watch-create command", cmdWatchCreate, "watch-create"},
 		{"version flag", versionFlag, "-version"},
+		{"version flag 2", versionFlag2, "--version"},
+		{"help flag", helpFlag, "-help"},
+		{"help flag 2", helpFlag2, "--help"},
+		{"help flag 3", helpFlag3, "-h"},
 	}
 
 	for _, tt := range tests {
@@ -520,25 +526,186 @@ func TestMain_CommandArguments(t *testing.T) {
 	}
 }
 
-// TestMain_VersionFlagVariations verifies different version flag formats
+// TestMain_VersionFlagVariations verifies different version and help flag formats by executing the binary
 func TestMain_VersionFlagVariations(t *testing.T) {
+	// Build a test binary first
+	testBinary := filepath.Join(t.TempDir(), "test-binary")
+	buildCmd := exec.Command("go", "build", "-o", testBinary, ".")
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build test binary: %v\nOutput: %s", err, output)
+	}
+
 	tests := []struct {
-		name      string
-		args      []string
-		isVersion bool
+		name           string
+		args           []string
+		expectVersion  bool
+		expectHelp     bool
+		expectError    bool
+		expectedExit   int
 	}{
-		{"exact version flag", []string{"program", "-version"}, true},
-		{"version with extra args", []string{"program", "-version", "extra"}, false},
-		{"version uppercase", []string{"program", "-VERSION"}, false},
-		{"version without dash", []string{"program", "version"}, false},
-		{"double dash version", []string{"program", "--version"}, false},
+		// Version flag tests
+		{
+			name:          "single dash version flag",
+			args:          []string{"-version"},
+			expectVersion: true,
+			expectHelp:    false,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "double dash version flag",
+			args:          []string{"--version"},
+			expectVersion: true,
+			expectHelp:    false,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "version with extra args",
+			args:          []string{"-version", "extra"},
+			expectVersion: true,
+			expectHelp:    false,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "version flag after command",
+			args:          []string{"check-alive", "-version"},
+			expectVersion: true,
+			expectHelp:    false,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "version uppercase",
+			args:          []string{"-VERSION"},
+			expectVersion: false,
+			expectHelp:    true, // Shows usage on error
+			expectError:   true,
+			expectedExit:  1,
+		},
+		{
+			name:          "version without dash",
+			args:          []string{"version"},
+			expectVersion: false,
+			expectHelp:    true, // Shows usage on error
+			expectError:   true,
+			expectedExit:  1,
+		},
+		// Help flag tests
+		{
+			name:          "single dash help flag",
+			args:          []string{"-help"},
+			expectVersion: false,
+			expectHelp:    true,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "double dash help flag",
+			args:          []string{"--help"},
+			expectVersion: false,
+			expectHelp:    true,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "short help flag",
+			args:          []string{"-h"},
+			expectVersion: false,
+			expectHelp:    true,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "help with extra args",
+			args:          []string{"-help", "extra"},
+			expectVersion: false,
+			expectHelp:    true,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "help flag after command",
+			args:          []string{"check-alive", "-help"},
+			expectVersion: false,
+			expectHelp:    true,
+			expectError:   false,
+			expectedExit:  0,
+		},
+		{
+			name:          "help uppercase",
+			args:          []string{"-HELP"},
+			expectVersion: false,
+			expectHelp:    true, // Shows usage on error
+			expectError:   true,
+			expectedExit:  1,
+		},
+		{
+			name:          "help without dash",
+			args:          []string{"help"},
+			expectVersion: false,
+			expectHelp:    true, // Shows usage on error
+			expectError:   true,
+			expectedExit:  1,
+		},
+		// Edge cases
+		{
+			name:          "no arguments",
+			args:          []string{},
+			expectVersion: false,
+			expectHelp:    true, // Shows usage on error
+			expectError:   true,
+			expectedExit:  1,
+		},
+		{
+			name:          "both version and help",
+			args:          []string{"-version", "-help"},
+			expectVersion: true,
+			expectHelp:    false,
+			expectError:   false,
+			expectedExit:  0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			isVersion := len(tt.args) == 2 && tt.args[1] == versionFlag
-			if isVersion != tt.isVersion {
-				t.Errorf("Expected isVersion=%v, got %v for args %v", tt.isVersion, isVersion, tt.args)
+			cmd := exec.Command(testBinary, tt.args...)
+			output, err := cmd.CombinedOutput()
+			outputStr := string(output)
+
+			// Check exit code
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					t.Fatalf("Unexpected error type: %v", err)
+				}
+			}
+
+			if exitCode != tt.expectedExit {
+				t.Errorf("Expected exit code %d, got %d\nOutput: %s", tt.expectedExit, exitCode, outputStr)
+			}
+
+			// Check if version info is in output
+			hasVersion := strings.Contains(outputStr, "version =") && strings.Contains(outputStr, "release =")
+			if hasVersion != tt.expectVersion {
+				t.Errorf("Expected version output=%v, got %v\nOutput: %s", tt.expectVersion, hasVersion, outputStr)
+			}
+
+			// Check if help/usage info is in output
+			hasHelp := strings.Contains(outputStr, "Usage:") && strings.Contains(outputStr, "Available commands:")
+			if hasHelp != tt.expectHelp {
+				t.Errorf("Expected help output=%v, got %v\nOutput: %s", tt.expectHelp, hasHelp, outputStr)
+			}
+
+			// Check error expectations
+			if tt.expectError && exitCode == 0 {
+				t.Errorf("Expected error but command succeeded\nOutput: %s", outputStr)
+			}
+			if !tt.expectError && exitCode != 0 {
+				t.Errorf("Expected success but command failed with exit code %d\nOutput: %s", exitCode, outputStr)
 			}
 		})
 	}

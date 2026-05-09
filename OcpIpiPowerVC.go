@@ -53,9 +53,14 @@ const (
 	cmdWatchInstallation = "watch-installation"
 	cmdWatchCreate       = "watch-create"
 
-	// Version flag
+	// Version flags
 	versionFlag  = "-version"
 	versionFlag2 = "--version"
+
+	// Help flags
+	helpFlag  = "-help"
+	helpFlag2 = "--help"
+	helpFlag3 = "-h"
 
 	// Exit codes
 	exitSuccess = 0
@@ -129,10 +134,14 @@ func main() {
 		os.Exit(exitError)
 	}
 
-	// Handle version flag
+	// Handle version and help flags
 	for _, arg := range os.Args[1:] {
 		if arg == versionFlag || arg == versionFlag2 {
 			fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
+			os.Exit(exitSuccess)
+		}
+		if arg == helpFlag || arg == helpFlag2 || arg == helpFlag3 {
+			printUsage(executableName)
 			os.Exit(exitSuccess)
 		}
 	}
