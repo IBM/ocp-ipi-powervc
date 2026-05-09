@@ -718,10 +718,10 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 		{
 			name:          "version flag after command",
 			args:          []string{"check-alive", "-version"},
-			expectVersion: true,
+			expectVersion: false,
 			expectHelp:    false,
-			expectError:   false,
-			expectedExit:  0,
+			expectError:   true, // -version is not a valid flag for check-alive
+			expectedExit:  1,
 		},
 		{
 			name:          "version uppercase",
@@ -776,9 +776,9 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 			name:          "help flag after command",
 			args:          []string{"check-alive", "-help"},
 			expectVersion: false,
-			expectHelp:    true,
-			expectError:   false,
-			expectedExit:  0,
+			expectHelp:    false, // check-alive shows its own usage, not main help
+			expectError:   true,  // -help is not defined for check-alive
+			expectedExit:  1,
 		},
 		{
 			name:          "help uppercase",

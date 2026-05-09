@@ -159,16 +159,15 @@ func run(args []string, executableName string) error {
 		return fmt.Errorf("no command specified")
 	}
 
-	// Handle version and help flags
-	for _, arg := range args {
-		if arg == versionFlag || arg == versionFlag2 {
-			fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
-			return nil
-		}
-		if arg == helpFlag || arg == helpFlag2 || arg == helpFlag3 {
-			printUsage(executableName)
-			return nil
-		}
+	// Handle version and help flags (check only first argument for efficiency)
+	firstArg := args[0]
+	switch firstArg {
+	case versionFlag, versionFlag2:
+		fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
+		return nil
+	case helpFlag, helpFlag2, helpFlag3:
+		printUsage(executableName)
+		return nil
 	}
 
 	// Initialize flag sets for each command using a map to reduce repetition
