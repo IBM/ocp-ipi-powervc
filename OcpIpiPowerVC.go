@@ -15,15 +15,123 @@
 // PowerVC-Tool is the main entry point for the OpenShift IPI PowerVC deployment tool.
 // It provides a command-line interface for managing OpenShift cluster deployments on PowerVC.
 //
-// Build instructions:
-//   /bin/rm go.*; go mod init example/user/PowerVC-Tool; go mod tidy
+// # Architecture Overview
+//
+// This tool acts as a CLI dispatcher that coordinates multiple components:
+//   - OpenShift IPI Installer: Handles cluster provisioning
+//   - PowerVC/OpenStack: Provides infrastructure resources
+//   - HAProxy Bastion: Load balances cluster traffic
+//   - IBM Cloud DNS (optional): Manages DNS records
+//   - Controller Service: Monitors and manages cluster lifecycle
+//
+// The tool operates in a client-server model where commands can be executed locally
+// or sent to a remote controller service for execution. This enables automated
+// cluster management and monitoring.
+//
+// # Required Environment Variables
+//
+// Core variables (required for most operations):
+//   BASEDOMAIN         - DNS domain name for the cluster (e.g., "example.ibm.com")
+//   CLOUD              - OpenStack cloud name from ~/.config/openstack/clouds.yaml
+//   CLUSTER_NAME       - Name prefix for the OpenShift cluster
+//   CLUSTER_DIR        - Directory for installer files and cluster state
+//
+// Infrastructure variables:
+//   FLAVOR_NAME        - OpenStack flavor for VMs (e.g., "ocp-ipi")
+//   MACHINE_TYPE       - PowerPC machine type/availability zone (e.g., "s1022")
+//   NETWORK_NAME       - OpenStack network name for cluster VMs
+//   SSHKEY_NAME        - OpenStack SSH key name for bastion VM
+//
+// Bastion/HAProxy variables:
+//   BASTION_IMAGE_NAME - OS image for bastion VM (e.g., "CentOS-Stream2-GenericCloud")
+//   BASTION_USERNAME   - Default username for bastion VM (e.g., "cloud-user")
+//   BASTION_RSA        - Path to SSH private key for bastion access
+//
+// OpenShift installer variables:
+//   INSTALLER_SSHKEY   - Path to SSH public key for cluster nodes (~/.ssh/id_installer_rsa.pub)
+//   PULLSECRET_FILE    - Path to OpenShift pull secret file (~/.pullSecretCompact)
+//
+// Controller variables:
+//   CONTROLLER_IP      - IP address of the controller service
+//
+// Optional variables:
+//   IBMCLOUD_API_KEY   - IBM Cloud API key for DNS management (if using IBM Cloud DNS)
+//   DHCP_*             - DHCP configuration variables (if using local DHCP server)
+//
+// See docs/environment-variables.md for detailed setup instructions.
+//
+// # Configuration Requirements
+//
+// Before using this tool, ensure the following are configured:
+//
+// 1. OpenStack/PowerVC credentials:
+//    - Configure ~/.config/openstack/clouds.yaml with PowerVC credentials
+//    - Test access: openstack --os-cloud=<CLOUD> server list
+//
+// 2. SSH keys:
+//    - Generate installer key: ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_installer_rsa
+//    - Create OpenStack keypair: openstack keypair create --public-key ~/.ssh/id_installer_rsa.pub <SSHKEY_NAME>
+//
+// 3. OpenShift pull secret:
+//    - Download from https://console.redhat.com/openshift/install/pull-secret
+//    - Save as ~/.pullSecretCompact (single line, no whitespace)
+//
+// 4. OpenStack resources:
+//    - Create or identify appropriate flavor, network, and image
+//    - Ensure sufficient quota for cluster resources
+//
+// 5. DNS configuration:
+//    - Either set IBMCLOUD_API_KEY for IBM Cloud DNS
+//    - Or configure alternative DNS solution (CoreDNS, etc.)
+//
+// # Build Instructions
+//
+// Standard build (uses actual module name from go.mod):
 //   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
 //
-// Usage:
+// Development build (reinitialize module):
+//   /bin/rm go.*
+//   go mod init github.com/IBM/ocp-ipi-powervc
+//   go mod tidy
+//   go build -ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)" -o "ocp-ipi-powervc-linux-${ARCH}" *.go
+//
+// Note: Replace ${ARCH} with target architecture (e.g., amd64, ppc64le)
+//
+// # Usage
+//
 //   ocp-ipi-powervc-linux-${ARCH} <command> [flags]
+//   ocp-ipi-powervc-linux-${ARCH} --version
+//   ocp-ipi-powervc-linux-${ARCH} --help
 //
 // Available commands are defined in the 'commands' registry variable.
 // Run the program with -h or --help to see the full list of commands and their descriptions.
+//
+// # Documentation
+//
+// For detailed documentation, see:
+//   - README.md                           - Quick start and command reference
+//   - docs/README.md                      - Documentation index
+//   - docs/easy-installation.md           - Simple installation guide
+//   - docs/complex-installation.md        - Advanced installation scenarios
+//   - docs/environment-variables.md       - Environment variable setup
+//   - docs/controller.md                  - Controller service documentation
+//   - docs/configure-openstack.md         - OpenStack/PowerVC configuration
+//   - docs/IPI-installer.md               - IPI installer integration details
+//
+// # Related Packages
+//
+// This package coordinates with several other packages in the codebase:
+//   - CmdCheckAlive.go        - Health check command implementation
+//   - CmdCreateBastion.go     - Bastion VM creation
+//   - CmdCreateCluster.go     - Cluster creation orchestration
+//   - CmdCreateRhcos.go       - RHCOS test VM creation
+//   - CmdSendMetadata.go      - Metadata management
+//   - CmdWatchCreate.go       - Cluster creation monitoring
+//   - CmdWatchInstallation.go - Installation progress monitoring
+//   - OpenStack.go            - OpenStack API interactions
+//   - IBMCloud.go             - IBM Cloud DNS management
+//   - LoadBalancer.go         - HAProxy configuration
+//   - Services.go             - Service management utilities
 
 package main
 
