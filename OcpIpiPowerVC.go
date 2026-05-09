@@ -87,12 +87,35 @@
 //
 // # Build Instructions
 //
-// Standard build:
+// Using Makefile (recommended):
+//   make build                    # Build for current platform
+//   make build-all                # Build for all supported platforms
+//   make dev                      # Quick development cycle (clean, deps, build, test)
+//   make release                  # Prepare release (clean, test, build all platforms)
+//
+// Manual build (without Makefile):
+//   # Standard build with version info
+//   go build -ldflags="-X main.version=$(git describe --always --long --dirty) \
+//     -X main.release=$(git describe --tags --abbrev=0)" \
+//     -o ocp-ipi-powervc-linux-$(uname -m) *.go
+//
+//   # Simple build without version info
+//   go build -o ocp-ipi-powervc *.go
+//
+// Cross-platform builds:
+//   GOOS=linux GOARCH=amd64 go build -ldflags="..." -o ocp-ipi-powervc-linux-amd64 *.go
+//   GOOS=linux GOARCH=ppc64le go build -ldflags="..." -o ocp-ipi-powervc-linux-ppc64le *.go
+//   GOOS=darwin GOARCH=arm64 go build -ldflags="..." -o ocp-ipi-powervc-darwin-arm64 *.go
+//
+// First-time setup (reinitialize module):
+//   make init                     # Removes go.mod/go.sum and reinitializes
 //   make build
 //
-// Development build (reinitialize module):
-//   make init
-//   make build
+// Dependencies:
+//   make deps                     # Download and verify dependencies
+//   make tidy                     # Tidy Go modules
+//
+// See Makefile for all available targets and options.
 //
 // # Usage
 //
