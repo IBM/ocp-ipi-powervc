@@ -39,8 +39,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -75,12 +73,6 @@ var (
 	// release is the release tag, replaced at build time with:
 	//   -ldflags="-X main.release=$(git describe --tags --abbrev=0)"
 	release = "undefined"
-
-	// shouldDebug enables debug logging when set to true
-	shouldDebug = false
-
-	// log is the global logger instance used throughout the application
-	log *logrus.Logger
 )
 
 // printUsage displays the program usage information to stderr.
@@ -104,9 +96,12 @@ func printUsage(executableName string) {
 	fmt.Fprintf(os.Stderr, "Use '%s <command> -h' for more information about a command.\n", executableName)
 }
 
-// main is the entry point for the PowerVC-Tool application.
-// It parses command-line arguments and dispatches to the appropriate command handler.
-func main() {
+// run contains the main application logic and returns an error instead of calling os.Exit.
+// This makes the code more testable and provides consistent error handling.
+//
+// Returns:
+//   - error: Any error encountered during execution, nil on success
+func run() error {
 	var (
 		executableName          string
 		checkAliveFlags         *flag.FlagSet
@@ -122,8 +117,7 @@ func main() {
 	// Get executable name for usage messages
 	executablePath, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to get executable path: %v\n", err)
-		os.Exit(exitError)
+		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 	executableName = filepath.Base(executablePath)
 
@@ -131,18 +125,18 @@ func main() {
 	if len(os.Args) == 1 {
 		fmt.Fprintf(os.Stderr, "Error: No command specified\n\n")
 		printUsage(executableName)
-		os.Exit(exitError)
+		return fmt.Errorf("no command specified")
 	}
 
 	// Handle version and help flags
 	for _, arg := range os.Args[1:] {
 		if arg == versionFlag || arg == versionFlag2 {
 			fmt.Fprintf(os.Stdout, "version = %v\nrelease = %v\n", version, release)
-			os.Exit(exitSuccess)
+			return nil
 		}
 		if arg == helpFlag || arg == helpFlag2 || arg == helpFlag3 {
 			printUsage(executableName)
-			os.Exit(exitSuccess)
+			return nil
 		}
 	}
 
@@ -182,14 +176,23 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n\n", os.Args[1])
 		printUsage(executableName)
-		os.Exit(exitError)
+		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
 
 	// Handle command execution errors
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Command '%s' failed: %v\n", command, err)
-		os.Exit(exitError)
+		return fmt.Errorf("command '%s' failed: %w", command, err)
 	}
 
+	return nil
+}
+
+// main is the entry point for the PowerVC-Tool application.
+// It calls run() and handles the exit code based on the returned error.
+func main() {
+	if err := run(); err != nil {
+		// Error message already printed by run() or command functions
+		os.Exit(exitError)
+	}
 	os.Exit(exitSuccess)
 }
