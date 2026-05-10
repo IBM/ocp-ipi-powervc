@@ -973,3 +973,105 @@ func TestSendMetadataCommand_TimeoutWithDifferentOperations(t *testing.T) {
 		})
 	}
 }
+
+// TestSendMetadataCommand_ValidHostnames tests that valid hostnames are accepted by the validation
+func TestSendMetadataCommand_ValidHostnames(t *testing.T) {
+	// Create a valid metadata test file
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
+	defer os.Remove(tmpFile)
+
+	tests := []struct {
+		name     string
+		hostname string
+	}{
+		{name: "localhost", hostname: "localhost"},
+		{name: "FQDN", hostname: "server.example.com"},
+		{name: "subdomain", hostname: "api.cluster.example.com"},
+		{name: "multi-level subdomain", hostname: "api.prod.cluster.example.com"},
+		{name: "hostname with hyphen", hostname: "my-server.example.com"},
+		{name: "short hostname", hostname: "server"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--createMetadata", tmpFile,
+				"--serverIP", tt.hostname,
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			// Should fail at connection, not validation
+			if err != nil && strings.Contains(err.Error(), "invalid server IP") {
+				t.Errorf("Hostname %q should be valid but got validation error: %v",
+					tt.hostname, err)
+			}
+
+			// We expect connection errors since these are not real servers
+			// but we should NOT get validation errors
+			if err != nil && !strings.Contains(err.Error(), "metadata transmission") {
+				t.Logf("Got expected connection error for hostname %q: %v", tt.hostname, err)
+			}
+		})
+	}
+}
+
+// TestSendMetadataCommand_InvalidHostnames tests that invalid hostnames are rejected
+func TestSendMetadataCommand_InvalidHostnames(t *testing.T) {
+	// Create a valid metadata test file
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
+	defer os.Remove(tmpFile)
+
+	tests := []struct {
+		name     string
+		hostname string
+		errorMsg string
+	}{
+		{
+			name:     "empty hostname",
+			hostname: "",
+			errorMsg: "required flag --serverIP not specified",
+		},
+		{
+			name:     "hostname with spaces",
+			hostname: "server name.com",
+			errorMsg: "invalid IP address or hostname",
+		},
+		{
+			name:     "hostname with invalid characters",
+			hostname: "server@example.com",
+			errorMsg: "invalid IP address or hostname",
+		},
+		{
+			name:     "hostname starting with hyphen",
+			hostname: "-server.example.com",
+			errorMsg: "invalid IP address or hostname",
+		},
+		{
+			name:     "hostname ending with hyphen",
+			hostname: "server-.example.com",
+			errorMsg: "invalid IP address or hostname",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--createMetadata", tmpFile,
+				"--serverIP", tt.hostname,
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			if err == nil {
+				t.Fatalf("Expected error for invalid hostname %q, got nil", tt.hostname)
+			}
+
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+			}
+		})
+	}
+}
