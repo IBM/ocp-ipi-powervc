@@ -634,7 +634,14 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to find or create server: %w", err)
 	}
-	log.Debugf("Server ready: %s (ID: %s, Status: %s)", foundServer.Name, foundServer.ID, foundServer.Status)
+	log.Debugf("Server found: %s (ID: %s, Status: %s)", foundServer.Name, foundServer.ID, foundServer.Status)
+
+	// Validate server status before proceeding
+	if foundServer.Status != "ACTIVE" {
+		return fmt.Errorf("server %s is not in ACTIVE state (current status: %s). Cannot proceed with setup",
+			foundServer.Name, foundServer.Status)
+	}
+	log.Debugf("Server is ACTIVE and ready for setup")
 
 	// Track if this is a newly created server for cleanup on failure
 	var serverWasCreated bool
