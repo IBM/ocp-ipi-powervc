@@ -222,7 +222,13 @@ func (c *rhcosConfig) validate() error {
 	return nil
 }
 
-// validateSSHKey validates the SSH public key format and length
+// validateSSHKey validates the SSH public key format and length.
+// It performs comprehensive validation including:
+//   - Presence check
+//   - Length validation
+//   - Format validation (key type, base64 data, optional comment)
+//   - Base64 decoding validation
+//   - Key type verification
 func (c *rhcosConfig) validateSSHKey() error {
 	if c.SshPublicKey == "" {
 		return &ValidationError{
@@ -230,19 +236,102 @@ func (c *rhcosConfig) validateSSHKey() error {
 			Message: "is required",
 		}
 	}
-	if len(c.SshPublicKey) < minSSHKeyLength {
+
+	// Trim whitespace
+	key := strings.TrimSpace(c.SshPublicKey)
+
+	// Check minimum length
+	if len(key) < minSSHKeyLength {
 		return &ValidationError{
 			Field:   "SshPublicKey",
 			Message: fmt.Sprintf("appears invalid (too short, minimum %d characters)", minSSHKeyLength),
 		}
 	}
-	if !strings.HasPrefix(c.SshPublicKey, "ssh-") && !strings.HasPrefix(c.SshPublicKey, "ecdsa-") {
+
+	// Parse SSH key format: <key-type> <base64-data> [comment]
+	parts := strings.Fields(key)
+	if len(parts) < 2 {
 		return &ValidationError{
 			Field:   "SshPublicKey",
-			Message: "must start with 'ssh-' or 'ecdsa-'",
+			Message: "invalid format, expected: <key-type> <base64-data> [comment]",
 		}
 	}
+
+	keyType := parts[0]
+	keyData := parts[1]
+
+	// Validate key type
+	validKeyTypes := map[string]bool{
+		"ssh-rsa":             true,
+		"ssh-dss":             true,
+		"ssh-ed25519":         true,
+		"ecdsa-sha2-nistp256": true,
+		"ecdsa-sha2-nistp384": true,
+		"ecdsa-sha2-nistp521": true,
+		"sk-ssh-ed25519@openssh.com":      true,
+		"sk-ecdsa-sha2-nistp256@openssh.com": true,
+	}
+
+	if !validKeyTypes[keyType] {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: fmt.Sprintf("unsupported key type '%s', supported types: ssh-rsa, ssh-dss, ssh-ed25519, ecdsa-sha2-nistp256/384/521", keyType),
+		}
+	}
+
+	// Validate base64 encoding of key data
+	decodedData, err := base64.StdEncoding.DecodeString(keyData)
+	if err != nil {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: fmt.Sprintf("invalid base64 encoding in key data: %v", err),
+		}
+	}
+
+	// Validate decoded data is not empty
+	if len(decodedData) == 0 {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: "decoded key data is empty",
+		}
+	}
+
+	// Validate minimum key data size (varies by key type)
+	minKeyDataSize := getMinKeyDataSize(keyType)
+	if len(decodedData) < minKeyDataSize {
+		return &ValidationError{
+			Field:   "SshPublicKey",
+			Message: fmt.Sprintf("key data too short for %s (got %d bytes, minimum %d bytes)", keyType, len(decodedData), minKeyDataSize),
+		}
+	}
+
+	fmt.Printf("SSH key validation passed: type=%s, data_size=%d bytes", keyType, len(decodedData))
 	return nil
+}
+
+// getMinKeyDataSize returns the minimum expected size for decoded SSH key data
+// based on the key type. These are conservative estimates.
+func getMinKeyDataSize(keyType string) int {
+	switch keyType {
+	case "ssh-rsa":
+		return 256 // RSA-2048 minimum
+	case "ssh-dss":
+		return 128 // DSA-1024
+	case "ssh-ed25519":
+		return 32 // Ed25519 is 32 bytes
+	case "ecdsa-sha2-nistp256":
+		return 64 // NIST P-256
+	case "ecdsa-sha2-nistp384":
+		return 96 // NIST P-384
+	case "ecdsa-sha2-nistp521":
+		return 128 // NIST P-521
+	case "sk-ssh-ed25519@openssh.com":
+		return 32 // Ed25519 security key
+	case "sk-ecdsa-sha2-nistp256@openssh.com":
+		return 64 // ECDSA security key
+	default:
+		return 32 // Conservative default
+	}
 }
 
 // validatePasswordHash validates the password hash format and length
