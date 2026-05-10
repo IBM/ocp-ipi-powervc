@@ -47,6 +47,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
@@ -83,6 +85,14 @@ const (
 	progressStepSetup      = "Setting up server"
 	progressStepDNS        = "Configuring DNS"
 	progressStepComplete   = "Complete"
+
+	// File locking
+	fileLockTimeout = 30 * time.Second
+)
+
+var (
+	// knownHostsMutex protects concurrent access to known_hosts file
+	knownHostsMutex sync.Mutex
 )
 
 // ValidationError represents a configuration validation error
@@ -695,11 +705,16 @@ func isRetryableError(err error) bool {
 // known_hosts file. If the key is not found, it scans the server and adds it.
 // This prevents SSH from prompting for host key verification on first connection.
 //
+// The function uses both in-process mutex locking and file-level locking to prevent
+// race conditions when multiple processes or goroutines access the known_hosts file.
+//
 // The function:
 //  1. Ensures the .ssh directory exists with proper permissions
-//  2. Checks if the host key already exists using ssh-keygen
-//  3. If not found, scans the server using ssh-keyscan
-//  4. Appends the scanned key to known_hosts
+//  2. Acquires mutex lock to prevent concurrent in-process access
+//  3. Checks if the host key already exists using ssh-keygen
+//  4. If not found, scans the server using ssh-keyscan
+//  5. Acquires file lock before writing to known_hosts
+//  6. Atomically appends the scanned key to known_hosts
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
@@ -723,6 +738,12 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 
 	log.Debugf("Known hosts file: %s", knownHostsPath)
 
+	// Acquire mutex lock to prevent concurrent in-process access
+	knownHostsMutex.Lock()
+	defer knownHostsMutex.Unlock()
+
+	log.Debugf("Acquired lock for known_hosts operations")
+
 	// Check if host key already exists using ssh-keygen
 	// Exit code 0: key found, Exit code 1: key not found
 	_, err = runSplitCommand2([]string{
@@ -745,15 +766,9 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 			return fmt.Errorf("received empty host key from server %s", ipAddress)
 		}
 
-		// Append to known_hosts file
-		file, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_RDWR|os.O_CREATE, knownHostsFilePerms)
-		if err != nil {
-			return fmt.Errorf("failed to open known_hosts file: %w", err)
-		}
-		defer file.Close()
-
-		if _, err := file.Write(hostKey); err != nil {
-			return fmt.Errorf("failed to write to known_hosts: %w", err)
+		// Write to known_hosts file with file-level locking
+		if err := appendToKnownHostsWithLock(knownHostsPath, hostKey, ipAddress); err != nil {
+			return fmt.Errorf("failed to add SSH host key: %w", err)
 		}
 
 		log.Debugf("SSH host key added for %s (%d bytes)", ipAddress, len(hostKey))
@@ -764,6 +779,66 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 		log.Debugf("SSH host key already exists for %s", ipAddress)
 	}
 
+	return nil
+}
+
+// appendToKnownHostsWithLock appends a host key to the known_hosts file with file-level locking.
+// This prevents race conditions when multiple processes try to write to the file simultaneously.
+//
+// Parameters:
+//   - knownHostsPath: Path to the known_hosts file
+//   - hostKey: The SSH host key to append
+//   - ipAddress: IP address for logging purposes
+//
+// Returns:
+//   - error: Any error encountered during the operation
+func appendToKnownHostsWithLock(knownHostsPath string, hostKey []byte, ipAddress string) error {
+	// Open file with create flag
+	file, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_RDWR|os.O_CREATE, knownHostsFilePerms)
+	if err != nil {
+		return fmt.Errorf("failed to open known_hosts file: %w", err)
+	}
+	defer file.Close()
+
+	// Acquire exclusive file lock (flock)
+	log.Debugf("Acquiring file lock for %s", knownHostsPath)
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("failed to acquire file lock: %w", err)
+	}
+	defer func() {
+		// Release file lock
+		if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+			log.Warnf("Failed to release file lock: %v", err)
+		}
+		log.Debugf("Released file lock for %s", knownHostsPath)
+	}()
+
+	log.Debugf("Acquired file lock for %s", knownHostsPath)
+
+	// Double-check if key was added by another process while we were waiting for lock
+	// Read current file content and check for the IP address
+	currentContent, err := os.ReadFile(knownHostsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read known_hosts: %w", err)
+	}
+
+	// Check if the IP address already exists in the file
+	if strings.Contains(string(currentContent), ipAddress) {
+		log.Debugf("Host key for %s was already added by another process", ipAddress)
+		return nil
+	}
+
+	// Write the host key
+	if _, err := file.Write(hostKey); err != nil {
+		return fmt.Errorf("failed to write to known_hosts: %w", err)
+	}
+
+	// Ensure data is written to disk
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync known_hosts: %w", err)
+	}
+
+	log.Debugf("Successfully wrote host key for %s to known_hosts", ipAddress)
 	return nil
 }
 
