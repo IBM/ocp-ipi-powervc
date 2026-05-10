@@ -334,7 +334,13 @@ func getMinKeyDataSize(keyType string) int {
 	}
 }
 
-// validatePasswordHash validates the password hash format and length
+// validatePasswordHash validates the password hash format and length.
+// It performs comprehensive validation including:
+//   - Presence check
+//   - Length validation
+//   - Crypt format validation ($algorithm$salt$hash)
+//   - Algorithm verification
+//   - Component structure validation
 func (c *rhcosConfig) validatePasswordHash() error {
 	if c.PasswdHash == "" {
 		return &ValidationError{
@@ -342,19 +348,158 @@ func (c *rhcosConfig) validatePasswordHash() error {
 			Message: "is required",
 		}
 	}
-	if len(c.PasswdHash) < minPasswordHashLength {
+
+	hash := c.PasswdHash
+
+	// Check minimum length
+	if len(hash) < minPasswordHashLength {
 		return &ValidationError{
 			Field:   "PasswdHash",
 			Message: fmt.Sprintf("appears invalid (too short, minimum %d characters)", minPasswordHashLength),
 		}
 	}
-	if !strings.HasPrefix(c.PasswdHash, "$") {
+
+	// Must start with $
+	if !strings.HasPrefix(hash, "$") {
 		return &ValidationError{
 			Field:   "PasswdHash",
 			Message: "must be in crypt format (starting with $)",
 		}
 	}
+
+	// Parse crypt format: $algorithm$salt$hash
+	// Split by $ and validate structure
+	parts := strings.Split(hash, "$")
+
+	// parts[0] is empty (before first $)
+	// parts[1] is algorithm
+	// parts[2] is salt (may contain $ for some algorithms)
+	// parts[3+] is hash
+
+	if len(parts) < 4 {
+		return &ValidationError{
+			Field:   "PasswdHash",
+			Message: "invalid crypt format, expected: $algorithm$salt$hash",
+		}
+	}
+
+	algorithm := parts[1]
+
+	// Validate algorithm and structure
+	if err := validateCryptAlgorithm(algorithm, parts); err != nil {
+		return &ValidationError{
+			Field:   "PasswdHash",
+			Message: err.Error(),
+		}
+	}
+
+	log.Debugf("Password hash validation passed: algorithm=%s", algorithm)
 	return nil
+}
+
+// validateCryptAlgorithm validates the crypt algorithm and hash structure.
+// Supported algorithms:
+//   - 1: MD5 (legacy, not recommended)
+//   - 5: SHA-256
+//   - 6: SHA-512 (recommended)
+//   - 2a, 2b, 2y: bcrypt
+//   - yescrypt: yescrypt (modern)
+func validateCryptAlgorithm(algorithm string, parts []string) error {
+	switch algorithm {
+	case "1":
+		// MD5: $1$salt$hash
+		// Legacy, not recommended but still supported
+		if len(parts) < 4 {
+			return fmt.Errorf("invalid MD5 hash structure")
+		}
+		salt := parts[2]
+		hash := parts[3]
+		if len(salt) == 0 || len(salt) > 8 {
+			return fmt.Errorf("MD5 salt must be 1-8 characters, got %d", len(salt))
+		}
+		if len(hash) != 22 {
+			return fmt.Errorf("MD5 hash must be 22 characters, got %d", len(hash))
+		}
+		log.Warnf("Using MD5 password hash (algorithm $1$) - consider upgrading to SHA-512 ($6$)")
+		return nil
+
+	case "5":
+		// SHA-256: $5$[rounds=N$]salt$hash
+		if len(parts) < 4 {
+			return fmt.Errorf("invalid SHA-256 hash structure")
+		}
+		// Handle optional rounds parameter
+		saltIdx := 2
+		if strings.HasPrefix(parts[2], "rounds=") {
+			saltIdx = 3
+			if len(parts) < 5 {
+				return fmt.Errorf("invalid SHA-256 hash structure with rounds")
+			}
+		}
+		salt := parts[saltIdx]
+		hash := parts[saltIdx+1]
+		if len(salt) == 0 || len(salt) > 16 {
+			return fmt.Errorf("SHA-256 salt must be 1-16 characters, got %d", len(salt))
+		}
+		if len(hash) != 43 {
+			return fmt.Errorf("SHA-256 hash must be 43 characters, got %d", len(hash))
+		}
+		return nil
+
+	case "6":
+		// SHA-512: $6$[rounds=N$]salt$hash (recommended)
+		if len(parts) < 4 {
+			return fmt.Errorf("invalid SHA-512 hash structure")
+		}
+		// Handle optional rounds parameter
+		saltIdx := 2
+		if strings.HasPrefix(parts[2], "rounds=") {
+			saltIdx = 3
+			if len(parts) < 5 {
+				return fmt.Errorf("invalid SHA-512 hash structure with rounds")
+			}
+		}
+		salt := parts[saltIdx]
+		hash := parts[saltIdx+1]
+		if len(salt) == 0 || len(salt) > 16 {
+			return fmt.Errorf("SHA-512 salt must be 1-16 characters, got %d", len(salt))
+		}
+		if len(hash) != 86 {
+			return fmt.Errorf("SHA-512 hash must be 86 characters, got %d", len(hash))
+		}
+		return nil
+
+	case "2a", "2b", "2y":
+		// bcrypt: $2a$cost$salthash (salt and hash are combined)
+		if len(parts) < 4 {
+			return fmt.Errorf("invalid bcrypt hash structure")
+		}
+		cost := parts[2]
+		saltHash := parts[3]
+
+		// Validate cost (work factor)
+		if len(cost) != 2 {
+			return fmt.Errorf("bcrypt cost must be 2 digits, got %d", len(cost))
+		}
+
+		// bcrypt salt+hash is 53 characters (22 salt + 31 hash)
+		if len(saltHash) != 53 {
+			return fmt.Errorf("bcrypt salt+hash must be 53 characters, got %d", len(saltHash))
+		}
+		return nil
+
+	case "yescrypt":
+		// yescrypt: $yescrypt$params$salt$hash
+		// Modern algorithm, structure varies
+		if len(parts) < 5 {
+			return fmt.Errorf("invalid yescrypt hash structure")
+		}
+		// Basic validation - yescrypt has complex parameter encoding
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported hash algorithm '%s', supported: 1 (MD5), 5 (SHA-256), 6 (SHA-512), 2a/2b/2y (bcrypt), yescrypt", algorithm)
+	}
 }
 
 // parseRhcosFlags parses command-line flags and constructs a validated rhcosConfig.
