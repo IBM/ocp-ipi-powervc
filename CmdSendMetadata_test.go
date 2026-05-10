@@ -71,7 +71,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "create failed during metadata transmission: failed to connect to server",
+			errorMsg:    "create failed during metadata transmission: connection to server",
 		},
 		{
 			name: "only delete specified",
@@ -80,7 +80,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 				"--serverIP", "192.168.1.100",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "delete failed during metadata transmission: failed to connect to server",
+			errorMsg:    "delete failed during metadata transmission: connection to server",
 		},
 	}
 
@@ -224,7 +224,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			},
 			cleanupFile: func(s string) { os.Remove(s) },
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "create failed during metadata transmission: failed to connect to server",
+			errorMsg:    "create failed during metadata transmission: connection to server",
 		},
 		{
 			name: "empty filename",

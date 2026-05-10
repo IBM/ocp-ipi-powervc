@@ -385,7 +385,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
 	if err != nil {
-		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
+		return fmt.Errorf("connection to server %s:%s failed: %w", serverIP, serverPort, err)
 	}
 	defer conn.Close()
 
@@ -399,7 +399,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	// Read metadata file (using os.ReadFile instead of deprecated ioutil.ReadFile)
 	content, err = os.ReadFile(metadataFile)
 	if err != nil {
-		return fmt.Errorf("failed to read metadata file %s: %w", metadataFile, err)
+		return fmt.Errorf("reading metadata file %s: %w", metadataFile, err)
 	}
 	log.Debugf("sendMetadata: Read %d bytes from metadata file", len(content))
 
@@ -414,7 +414,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 
 	err = json.Unmarshal(content, &cmd.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal metadata from file: %w", err)
+		return fmt.Errorf("unmarshaling metadata from file: %w", err)
 	}
 	log.Debugf("sendMetadata: Parsed metadata command: %s (metadata payload redacted)", cmd.Command)
 
@@ -427,7 +427,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 
 	marshalledData, err = json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("marshaling command: %w", err)
 	}
 	log.Debugf("sendMetadata: Sending command: %s (%d bytes, payload redacted)", cmd.Command, len(marshalledData))
 
@@ -441,7 +441,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	// Send the command to the server
 	err = sendByteArray(conn, marshalledData, writeTimeout)
 	if err != nil {
-		return fmt.Errorf("failed to send metadata command: %w", err)
+		return fmt.Errorf("sending metadata command: %w", err)
 	}
 
 	// Check if context was cancelled before receiving
@@ -454,7 +454,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	// Wait for server acknowledgment
 	response, err := receiveResponse(conn, readTimeout)
 	if err != nil {
-		return fmt.Errorf("failed to receive response: %w", err)
+		return fmt.Errorf("receiving response: %w", err)
 	}
 	log.Debugf("sendMetadata: Received response: %s", response)
 
@@ -465,7 +465,7 @@ func sendMetadata(ctx context.Context, metadataFile string, serverIP string, sho
 	}
 	err = json.Unmarshal([]byte(response), &cmdOut)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal response: %w", err)
+		return fmt.Errorf("unmarshaling response: %w", err)
 	}
 	log.Debugf("sendMetadata: Parsed response: %+v", cmdOut)
 
