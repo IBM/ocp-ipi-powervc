@@ -679,49 +679,6 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	return config, nil
 }
 
-// getBastionIPFilePath generates a unique temporary file path for storing the bastion IP address.
-// The file path is constructed using the system's temporary directory and includes the current
-// process ID to ensure uniqueness across multiple concurrent executions.
-//
-// The function verifies that the temporary directory exists and is writable before returning
-// the path to prevent errors during subsequent file operations.
-//
-// Returns:
-//   - string: The full path to the bastion IP file (e.g., "/tmp/bastionIp-12345")
-//   - error: An error if the temporary directory doesn't exist or isn't writable
-//
-// Example:
-//   path, err := getBastionIPFilePath()
-//   if err != nil {
-//       return fmt.Errorf("failed to get bastion IP file path: %w", err)
-//   }
-//   // path might be: "/tmp/bastionIp-54321"
-func getBastionIPFilePath() (string, error) {
-    tmpDir := os.TempDir()
-
-    // Verify the temporary directory exists
-    info, err := os.Stat(tmpDir)
-    if err != nil {
-	return "", fmt.Errorf("temporary directory does not exist: %w", err)
-    }
-
-    // Verify it's actually a directory
-    if !info.IsDir() {
-	return "", fmt.Errorf("temporary path is not a directory: %s", tmpDir)
-    }
-
-    // Verify the directory is writable by attempting to create a test file
-    testFile := filepath.Join(tmpDir, fmt.Sprintf(".write-test-%d", os.Getpid()))
-    f, err := os.Create(testFile)
-    if err != nil {
-	return "", fmt.Errorf("temporary directory is not writable: %w", err)
-    }
-    f.Close()
-    os.Remove(testFile)
-
-    return filepath.Join(tmpDir, fmt.Sprintf("bastionIp-%d", os.Getpid())), nil
-}
-
 // createBastionCommand is the main entry point for the create-bastion command.
 // It orchestrates the entire bastion creation process:
 //  1. Parse and validate configuration
