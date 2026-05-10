@@ -43,6 +43,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -782,7 +783,18 @@ func setupRhcosServer(ctx context.Context, server servers.Server) error {
 		return fmt.Errorf("server %s has no IP address", server.Name)
 	}
 
-	log.Debugf("Server IP address: %s", ipAddress)
+	// Validate IP address format
+	ip := net.ParseIP(ipAddress)
+	if ip == nil {
+		return fmt.Errorf("invalid IP address format: %s", ipAddress)
+	}
+
+	// Log IP version information
+	if ip.To4() == nil {
+		log.Warnf("Using IPv6 address: %s", ipAddress)
+	} else {
+		log.Debugf("Server IP address (IPv4): %s", ipAddress)
+	}
 
 	// Check context before SSH operations
 	if err := ctx.Err(); err != nil {
