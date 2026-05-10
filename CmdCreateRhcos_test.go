@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,8 +32,15 @@ import (
 
 // TestRhcosConfig_Validate tests the validation logic for rhcosConfig
 func TestRhcosConfig_Validate(t *testing.T) {
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	if log == nil {
+		// Initialize logger for tests
+		log = initLogger(false)
+	}
+
+	// Valid RSA SSH key (2048-bit) - generated with ssh-keygen
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	// Valid SHA-512 password hash (86 characters) - generated with crypt
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	tests := []struct {
 		name        string
@@ -177,7 +185,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: "invalid-prefix AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
 			},
 			expectError: true,
-			errorMsg:    "validation error for field 'SshPublicKey': must start with 'ssh-' or 'ecdsa-'",
+			errorMsg:    "validation error for field 'SshPublicKey': unsupported key type 'invalid-prefix'",
 		},
 		{
 			name: "valid ecdsa key",
@@ -263,8 +271,8 @@ func TestRhcosConfig_Validate(t *testing.T) {
 
 // TestParseRhcosFlags tests the flag parsing logic
 func TestParseRhcosFlags(t *testing.T) {
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	tests := []struct {
 		name        string
@@ -425,8 +433,8 @@ func TestParseRhcosFlags(t *testing.T) {
 
 // TestParseRhcosFlags_APIKeyFromEnv tests that API key is loaded from environment
 func TestParseRhcosFlags_APIKeyFromEnv(t *testing.T) {
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	// Save original env var
 	originalAPIKey := os.Getenv("IBMCLOUD_API_KEY")
@@ -470,8 +478,8 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 		log = initLogger(false)
 	}
 
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	tests := []struct {
 		name        string
@@ -566,8 +574,8 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 		log = initLogger(false)
 	}
 
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	data, err := createBootstrapIgnition(validPasswdHash, validSSHKey)
 	if err != nil {
@@ -587,7 +595,7 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 		encodedSize, float64(encodedSize)/float64(novaUserDataMaxSize)*100, novaUserDataMaxSize)
 }
 
-// TestIsServerNotFoundError tests the server not found error detection
+// TestIsServerNotFoundError tests the server not found error detection using errors.Is
 func TestIsServerNotFoundError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -611,7 +619,17 @@ func TestIsServerNotFoundError(t *testing.T) {
 		},
 		{
 			name:     "actual server not found error",
-			err:      errors.New(serverNotFoundPrefix + "server-123"),
+			err:      ErrServerNotFound,
+			expected: true,
+		},
+		{
+			name:     "wrapped server not found error",
+			err:      errors.New("failed to find server: " + ErrServerNotFound.Error()),
+			expected: false, // String matching won't work, need proper wrapping
+		},
+		{
+			name:     "properly wrapped server not found error",
+			err:      fmt.Errorf("failed to find server: %w", ErrServerNotFound),
 			expected: true,
 		},
 	}
@@ -623,7 +641,7 @@ func TestIsServerNotFoundError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isServerNotFoundError(tt.err)
+			result := errors.Is(tt.err, ErrServerNotFound)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v for error: %v", tt.expected, result, tt.err)
 			}
@@ -774,9 +792,6 @@ func TestRhcosConstants(t *testing.T) {
 	if sshDirPerms != 0700 {
 		t.Errorf("sshDirPerms should be 0700, got %o", sshDirPerms)
 	}
-	if serverNotFoundPrefix == "" {
-		t.Error("serverNotFoundPrefix should not be empty")
-	}
 	if minSSHKeyLength != 100 {
 		t.Errorf("minSSHKeyLength should be 100, got %d", minSSHKeyLength)
 	}
@@ -832,8 +847,8 @@ func TestSetupRhcosServer(t *testing.T) {
 
 // TestRhcosConfig_EdgeCases tests edge cases in configuration
 func TestRhcosConfig_EdgeCases(t *testing.T) {
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	tests := []struct {
 		name        string
@@ -901,8 +916,8 @@ func TestRhcosConfig_EdgeCases(t *testing.T) {
 
 // TestParseRhcosFlags_DebugFlagVariations tests various debug flag formats
 func TestParseRhcosFlags_DebugFlagVariations(t *testing.T) {
-	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 user@host"
-	validPasswdHash := "$6$rounds=4096$saltsaltsal$hashhashhashhashhashhashhashhashhashhashhashhash"
+	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
+	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
 	tests := []struct {
 		name        string
