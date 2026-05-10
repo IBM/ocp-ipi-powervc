@@ -408,6 +408,11 @@ func printProgress(step string) {
 //   - servers.Server: The found or newly created server
 //   - error: Any error encountered during search or creation
 func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return servers.Server{}, fmt.Errorf("context cancelled before finding server: %w", err)
+	}
+
 	log.Debugf("Looking for existing server: %s", config.RhcosName)
 
 	foundServer, err := findServer(ctx, config.Clouds, config.RhcosName)
@@ -415,6 +420,11 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 		// Check if error is due to server not found
 		if !isServerNotFoundError(err) {
 			return servers.Server{}, fmt.Errorf("error searching for server: %w", err)
+		}
+
+		// Check context before creating server
+		if err := ctx.Err(); err != nil {
+			return servers.Server{}, fmt.Errorf("context cancelled before creating server: %w", err)
 		}
 
 		// Server not found, create it
@@ -435,6 +445,11 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 		}
 
 		fmt.Println("Server created successfully!")
+
+		// Check context before retrieving server
+		if err := ctx.Err(); err != nil {
+			return servers.Server{}, fmt.Errorf("context cancelled before retrieving server: %w", err)
+		}
 
 		// Retrieve the newly created server with retry
 		log.Debugf("Retrieving newly created server: %s", config.RhcosName)
@@ -495,6 +510,11 @@ func isServerNotFoundError(err error) bool {
 // Returns:
 //   - error: Any error encountered during DNS configuration, nil on success or skip
 func configureDNS(ctx context.Context, config *rhcosConfig) error {
+	// Check context before DNS configuration
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before DNS configuration: %w", err)
+	}
+
 	if config.APIKey == "" {
 		fmt.Fprintln(os.Stderr, "Warning: IBMCLOUD_API_KEY not set. DNS configuration skipped.")
 		fmt.Fprintln(os.Stderr, "Ensure DNS is configured through another method.")
@@ -521,6 +541,11 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 // Returns:
 //   - error: Any error encountered during setup, nil on success
 func setupRhcosServer(ctx context.Context, server servers.Server) error {
+	// Check context before starting setup
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before server setup: %w", err)
+	}
+
 	log.Debugf("Setting up RHCOS server: %s (ID: %s)", server.Name, server.ID)
 
 	// Get server IP address
@@ -533,6 +558,11 @@ func setupRhcosServer(ctx context.Context, server servers.Server) error {
 	}
 
 	log.Debugf("Server IP address: %s", ipAddress)
+
+	// Check context before SSH operations
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before SSH setup: %w", err)
+	}
 
 	// Add SSH host key to known_hosts if not already present
 	if err := ensureSSHHostKey(ctx, ipAddress); err != nil {
@@ -563,7 +593,7 @@ func setupRhcosServerWithRetry(ctx context.Context, server servers.Server) error
 }
 
 // retryOperation performs an operation with exponential backoff retry logic.
-// It retries transient failures up to maxRetryAttempts times.
+// It retries transient failures up to maxRetryAttempts times and respects context cancellation.
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
@@ -578,6 +608,14 @@ func retryOperation(ctx context.Context, operationName string, operation func() 
 	delay := retryInitialDelay
 
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+		// Check if context is already cancelled before attempting operation
+		select {
+		case <-ctx.Done():
+			return servers.Server{}, fmt.Errorf("operation '%s' cancelled before attempt %d: %w", operationName, attempt, ctx.Err())
+		default:
+			// Context is still valid, proceed with operation
+		}
+
 		result, err := operation()
 		if err == nil {
 			if attempt > 1 {
@@ -602,7 +640,7 @@ func retryOperation(ctx context.Context, operationName string, operation func() 
 					delay = retryMaxDelay
 				}
 			case <-ctx.Done():
-				return servers.Server{}, fmt.Errorf("operation '%s' cancelled: %w", operationName, ctx.Err())
+				return servers.Server{}, fmt.Errorf("operation '%s' cancelled during retry: %w", operationName, ctx.Err())
 			}
 		} else {
 			break
