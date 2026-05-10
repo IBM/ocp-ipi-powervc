@@ -65,9 +65,6 @@ const (
 	knownHostsFilePerms       = 0644
 	sshDirPerms               = 0700
 
-	// Error message patterns
-	serverNotFoundPrefix = "could not find server named"
-
 	// SSH key validation
 	minSSHKeyLength       = 100 // Minimum reasonable SSH public key length
 	minPasswordHashLength = 13  // Minimum crypt hash length
@@ -428,7 +425,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 	foundServer, err := findServer(ctx, config.Clouds, config.RhcosName)
 	if err != nil {
 		// Check if error is due to server not found
-		if !isServerNotFoundError(err) {
+		if !errors.Is(err, ErrServerNotFound) {
 			return servers.Server{}, fmt.Errorf("error searching for server: %w", err)
 		}
 
@@ -491,22 +488,6 @@ func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig, 
 	return retryOperation(ctx, "find or create server", func() (servers.Server, error) {
 		return findOrCreateRhcosServer(ctx, config, userData)
 	})
-}
-
-// isServerNotFoundError determines if an error indicates a server was not found.
-// This helper function provides consistent error detection across the codebase.
-//
-// Parameters:
-//   - err: The error to check
-//
-// Returns:
-//   - bool: true if the error indicates server not found, false otherwise
-func isServerNotFoundError(err error) bool {
-	log.Debugf("isServerNotFoundError: err = %+v\n", err)
-	if err == nil {
-		return false
-	}
-	return strings.HasPrefix(err.Error(), serverNotFoundPrefix)
 }
 
 // configureDNS sets up DNS records for the RHCOS server using IBM Cloud DNS.
