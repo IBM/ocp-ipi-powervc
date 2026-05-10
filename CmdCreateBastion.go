@@ -40,11 +40,13 @@ import (
 )
 
 const (
-	defaultAvailZone  = "s1022"
-	maxSSHRetries     = 10
-	sshRetryDelay     = 15 * time.Second
-	filePermReadWrite = 0644
-	sshUser           = "cloud-user"
+	defaultAvailZone     = "s1022"
+	maxSSHRetries        = 10
+	sshRetryDelay        = 15 * time.Second
+	filePermReadWrite    = 0644
+	sshUser              = "cloud-user"
+	cleanupPortTimeout   = 30 * time.Second
+	cleanupServerTimeout = 60 * time.Second
 )
 
 // ============================================================================
@@ -861,7 +863,7 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 	// Cleanup port on failure
 	// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
 	cleanupPort := func(createdPort *ports.Port) {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupPortTimeout)
 		defer cancel()
 
 		if deleteErr := deleteNetworkPort(cleanupCtx, cloudName, createdPort); deleteErr != nil {
@@ -871,7 +873,7 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 
 	cleanupServerAndPort := func(server *servers.Server, createdPort *ports.Port) {
 		// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupServerTimeout)
 		defer cancel()
 
 		// Delete server first
