@@ -823,3 +823,138 @@ func TestSendMetadataCommand_ValidMetadataContent(t *testing.T) {
 		})
 	}
 }
+
+
+// TestSendMetadataCommand_TimeoutFlag tests the timeout flag functionality
+func TestSendMetadataCommand_TimeoutFlag(t *testing.T) {
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
+	defer os.Remove(tmpFile)
+
+	tests := []struct {
+		name        string
+		timeout     string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "valid timeout - 5m",
+			timeout:     "5m",
+			expectError: true, // Will fail at connection, not timeout parsing
+			errorMsg:    "connection to server",
+		},
+		{
+			name:        "valid timeout - 10m",
+			timeout:     "10m",
+			expectError: true,
+			errorMsg:    "connection to server",
+		},
+		{
+			name:        "valid timeout - 30s",
+			timeout:     "30s",
+			expectError: true,
+			errorMsg:    "connection to server",
+		},
+		{
+			name:        "valid timeout - 1h",
+			timeout:     "1h",
+			expectError: true,
+			errorMsg:    "connection to server",
+		},
+		{
+			name:        "invalid timeout format",
+			timeout:     "invalid",
+			expectError: true,
+			errorMsg:    "timeout parsing",
+		},
+		{
+			name:        "negative timeout",
+			timeout:     "-5m",
+			expectError: true,
+			errorMsg:    "timeout must be positive",
+		},
+		{
+			name:        "zero timeout",
+			timeout:     "0s",
+			expectError: true,
+			errorMsg:    "timeout must be positive",
+		},
+		{
+			name:        "empty timeout uses default",
+			timeout:     "",
+			expectError: true,
+			errorMsg:    "connection to server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--createMetadata", tmpFile,
+				"--serverIP", "192.168.1.100",
+			}
+			if tt.timeout != "" {
+				args = append(args, "--timeout", tt.timeout)
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestSendMetadataCommand_TimeoutWithDifferentOperations tests timeout with create and delete
+func TestSendMetadataCommand_TimeoutWithDifferentOperations(t *testing.T) {
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
+	defer os.Remove(tmpFile)
+
+	tests := []struct {
+		name      string
+		operation string
+		timeout   string
+	}{
+		{
+			name:      "create with custom timeout",
+			operation: "createMetadata",
+			timeout:   "2m",
+		},
+		{
+			name:      "delete with custom timeout",
+			operation: "deleteMetadata",
+			timeout:   "3m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--" + tt.operation, tmpFile,
+				"--serverIP", "192.168.1.100",
+				"--timeout", tt.timeout,
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			// Should fail at connection, not timeout parsing
+			if err == nil {
+				t.Fatal("Expected connection error, got nil")
+			}
+			if strings.Contains(err.Error(), "timeout parsing") {
+				t.Errorf("Should not fail at timeout parsing. Got: %v", err)
+			}
+		})
+	}
+}

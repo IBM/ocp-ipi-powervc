@@ -26,13 +26,14 @@
 //   - deleteMetadata: Path to metadata file for deletion (mutually exclusive with createMetadata)
 //   - serverIP: IP address of the remote server (required)
 //   - shouldDebug: Enable debug output (true/false, default: false)
+//   - timeout: Timeout for send operation (e.g., 5m, 10m, 30s, default: 5m)
 //
 // Example usage:
-//   # Create metadata
+//   # Create metadata with default timeout
 //   ./tool send-metadata --createMetadata metadata.json --serverIP 192.168.1.100
 //
-//   # Delete metadata
-//   ./tool send-metadata --deleteMetadata metadata.json --serverIP 192.168.1.100
+//   # Delete metadata with custom timeout
+//   ./tool send-metadata --deleteMetadata metadata.json --serverIP 192.168.1.100 --timeout 10m
 
 package main
 
@@ -52,18 +53,21 @@ const (
 	flagSendDeleteMetadata = "deleteMetadata"
 	flagSendServerIP       = "serverIP"
 	flagSendShouldDebug    = "shouldDebug"
+	flagSendTimeout        = "timeout"
 
 	// Flag default values
 	defaultSendCreateMetadata = ""
 	defaultSendDeleteMetadata = ""
 	defaultSendServerIP       = ""
 	defaultSendShouldDebug    = "false"
+	defaultSendTimeout        = "5m"
 
 	// Usage messages
 	usageSendCreateMetadata = "Create the metadata from this file"
 	usageSendDeleteMetadata = "Delete the metadata from this file"
 	usageSendServerIP       = "The IP address of the server to send the command to"
 	usageSendShouldDebug    = "Enable debug output (true/false)"
+	usageSendTimeout        = "Timeout for send operation (e.g., 5m, 10m, 30s)"
 
 	// Operation names
 	operationCreate  = "create"
@@ -73,9 +77,6 @@ const (
 
 	// Error message prefix
 	errPrefixSend = "Error: "
-
-	// Timeout for send metadata operation
-	sendMetadataTimeout = 5 * time.Minute
 )
 
 // operationType represents the type of metadata operation to perform
@@ -233,6 +234,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	ptrDeleteMetadata := sendMetadataFlags.String(flagSendDeleteMetadata, defaultSendDeleteMetadata, usageSendDeleteMetadata)
 	ptrServerIP := sendMetadataFlags.String(flagSendServerIP, defaultSendServerIP, usageSendServerIP)
 	ptrShouldDebug := sendMetadataFlags.String(flagSendShouldDebug, defaultSendShouldDebug, usageSendShouldDebug)
+	ptrTimeout := sendMetadataFlags.String(flagSendTimeout, defaultSendTimeout, usageSendTimeout)
 
 	// Parse flags
 	if err := sendMetadataFlags.Parse(args); err != nil {
@@ -262,6 +264,17 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		return newSendMetadataError("send-metadata", "debug flag parsing", err)
 	}
 
+	// Parse timeout flag
+	timeout, err := time.ParseDuration(strings.TrimSpace(*ptrTimeout))
+	if err != nil {
+		return newSendMetadataError("send-metadata", "timeout parsing",
+			fmt.Errorf("invalid timeout value %q: %w", *ptrTimeout, err))
+	}
+	if timeout <= 0 {
+		return newSendMetadataError("send-metadata", "timeout validation",
+			fmt.Errorf("timeout must be positive, got %v", timeout))
+	}
+
 	// Initialize logger
 	log = initLogger(shouldDebug)
 	if shouldDebug {
@@ -282,9 +295,10 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	log.Printf("[INFO] Starting send-metadata command")
 	log.Printf("[INFO] Operation: %s", opType)
 	log.Printf("[INFO] Metadata file: %s", metadataFile)
+	log.Printf("[INFO] Timeout: %v", timeout)
 
 	// Create context with timeout for the operation
-	ctx, cancel := context.WithTimeout(context.Background(), sendMetadataTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Validate metadata file exists and is readable
@@ -336,7 +350,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		metadataFile,
 		serverIP)
 
-	log.Printf("[INFO] Sending metadata to server (timeout: %v)...", sendMetadataTimeout)
+	log.Printf("[INFO] Sending metadata to server (timeout: %v)...", timeout)
 	startTime := time.Now()
 
 	// Send metadata command to server with context
