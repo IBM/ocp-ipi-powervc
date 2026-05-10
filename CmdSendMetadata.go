@@ -190,6 +190,73 @@ func validateMetadataContent(filePath string) error {
 	return nil
 }
 
+// sendMetadataWithRetry attempts to send metadata with exponential backoff retry logic.
+// It will retry transient failures up to maxRetries times with increasing delays between attempts.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - metadataFile: Path to the metadata file
+//   - serverIP: IP address or hostname of the server
+//   - shouldCreate: true for create operation, false for delete
+//
+// Returns:
+//   - error: Any error encountered, or nil on success
+func sendMetadataWithRetry(ctx context.Context, metadataFile, serverIP string, shouldCreate bool) error {
+	var lastErr error
+	backoff := initialRetryDelay
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Wait before retry (skip on first attempt)
+		if attempt > 0 {
+			log.Printf("[INFO] Retry attempt %d/%d after %v delay", attempt, maxRetries, backoff)
+
+			// Wait with context cancellation support
+			select {
+			case <-time.After(backoff):
+				// Continue with retry
+			case <-ctx.Done():
+				return fmt.Errorf("operation cancelled during retry backoff: %w", ctx.Err())
+			}
+
+			// Increase backoff for next retry (exponential backoff)
+			backoff = time.Duration(float64(backoff) * retryMultiplier)
+			if backoff > maxRetryDelay {
+				backoff = maxRetryDelay
+			}
+		}
+
+		// Attempt to send metadata
+		log.Debugf("Attempting to send metadata (attempt %d/%d)", attempt+1, maxRetries+1)
+		err := sendMetadata(ctx, metadataFile, serverIP, shouldCreate)
+
+		// Success - return immediately
+		if err == nil {
+			if attempt > 0 {
+				log.Printf("[INFO] Metadata sent successfully after %d retries", attempt)
+			}
+			return nil
+		}
+
+		// Check if error is retryable
+		if !isRetryableError(err) {
+			log.Printf("[INFO] Non-retryable error encountered: %v", err)
+			return err
+		}
+
+		// Store error for potential final return
+		lastErr = err
+		log.Printf("[WARN] Retryable error encountered: %v", err)
+
+		// Check if we've exhausted retries
+		if attempt == maxRetries {
+			break
+		}
+	}
+
+	// All retries exhausted
+	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
+}
+
 // sendMetadataCommand executes the send-metadata command with the given flags and arguments.
 //
 // This function handles both metadata creation and deletion operations. It validates
@@ -359,8 +426,8 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	}
 	startTime := time.Now()
 
-	// Send metadata command to server with context
-	if err := sendMetadata(ctx, metadataFile, serverIP, shouldCreateMetadata); err != nil {
+	// Send metadata command to server with context and retry logic
+	if err := sendMetadataWithRetry(ctx, metadataFile, serverIP, shouldCreateMetadata); err != nil {
 		return newSendMetadataError(opType.String(), "metadata transmission", err)
 	}
 

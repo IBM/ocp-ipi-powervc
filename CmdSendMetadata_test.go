@@ -54,6 +54,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 				"--createMetadata", tmpFile,
 				"--deleteMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 			},
 			expectError: true,
 			errorMsg:    "cannot specify both --createMetadata and --deleteMetadata",
@@ -69,18 +70,20 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 			args: []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "create failed during metadata transmission: connection to server",
+			errorMsg:    "create failed during metadata transmission: operation cancelled during retry backoff: context deadline exceeded",
 		},
 		{
 			name: "only delete specified",
 			args: []string{
 				"--deleteMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 			},
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "delete failed during metadata transmission: connection to server",
+			errorMsg:    "delete failed during metadata transmission: operation cancelled during retry backoff: context deadline exceeded",
 		},
 	}
 
@@ -224,7 +227,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			},
 			cleanupFile: func(s string) { os.Remove(s) },
 			expectError: true, // Will fail at connection stage
-			errorMsg:    "create failed during metadata transmission: connection to server",
+			errorMsg:    "create failed during metadata transmission: operation cancelled during retry backoff: context deadline exceeded",
 		},
 		{
 			name: "empty filename",
@@ -245,6 +248,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 			args := []string{
 				"--createMetadata", filePath,
+				"--timeout", "1s",
 				"--serverIP", "192.168.1.100",
 			}
 			err := sendMetadataCommand(flagSet, args)
@@ -290,6 +294,7 @@ func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 				"--shouldDebug", tt.debugValue,
 			}
 			err := sendMetadataCommand(flagSet, args)
@@ -328,6 +333,7 @@ func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 				"--shouldDebug", tt.debugValue,
 			}
 
@@ -349,6 +355,7 @@ func TestSendMetadataCommand_CreateOperation(t *testing.T) {
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 	args := []string{
 		"--createMetadata", tmpFile,
+		"--timeout", "1s",
 		"--serverIP", "192.168.1.100",
 	}
 
@@ -376,6 +383,7 @@ func TestSendMetadataCommand_DeleteOperation(t *testing.T) {
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
 	args := []string{
 		"--deleteMetadata", tmpFile,
+		"--timeout", "1s",
 		"--serverIP", "192.168.1.100",
 	}
 
@@ -520,6 +528,7 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 			name: "whitespace in createMetadata",
 			args: []string{
 				"--createMetadata", "  " + tmpFile + "  ",
+				"--timeout", "1s",
 				"--serverIP", "192.168.1.100",
 			},
 			shouldOK: true,
@@ -528,6 +537,7 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 			name: "whitespace in serverIP",
 			args: []string{
 				"--createMetadata", tmpFile,
+				"--timeout", "1s",
 				"--serverIP", "  192.168.1.100  ",
 			},
 			shouldOK: true,
@@ -536,6 +546,7 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 			name: "only whitespace in createMetadata",
 			args: []string{
 				"--createMetadata", "   ",
+				"--timeout", "1s",
 				"--serverIP", "192.168.1.100",
 			},
 			shouldOK: false,
@@ -585,6 +596,7 @@ func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", tt.serverIP,
+				"--timeout", "1s",
 			}
 			err := sendMetadataCommand(flagSet, args)
 
@@ -616,6 +628,7 @@ func TestSendMetadataCommand_ValidIPv6Addresses(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", tt.serverIP,
+				"--timeout", "1s",
 			}
 			err := sendMetadataCommand(flagSet, args)
 
@@ -738,6 +751,7 @@ func TestSendMetadataCommand_InvalidMetadataContent(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 			}
 
 			err := sendMetadataCommand(flagSet, args)
@@ -812,6 +826,7 @@ func TestSendMetadataCommand_ValidMetadataContent(t *testing.T) {
 			args := []string{
 				"--createMetadata", tmpFile,
 				"--serverIP", "192.168.1.100",
+				"--timeout", "1s",
 			}
 
 			err := sendMetadataCommand(flagSet, args)
@@ -943,7 +958,7 @@ func TestSendMetadataCommand_TimeoutWithDifferentOperations(t *testing.T) {
 			args := []string{
 				"--" + tt.operation, tmpFile,
 				"--serverIP", "192.168.1.100",
-				"--timeout", tt.timeout,
+				"--timeout", "1s",
 			}
 
 			err := sendMetadataCommand(flagSet, args)

@@ -381,7 +381,10 @@ func TestCheckAliveCommand_ValidIPv6Addresses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			flagSet := flag.NewFlagSet("check-alive", flag.ContinueOnError)
-			args := []string{"--serverIP", tt.serverIP}
+			args := []string{
+				"--serverIP", tt.serverIP,
+				"--timeout", "1s",
+			}
 			err := checkAliveCommand(flagSet, args)
 
 			// Should fail at connection stage, not validation
