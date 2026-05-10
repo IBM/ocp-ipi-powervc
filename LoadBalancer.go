@@ -47,11 +47,10 @@ const (
 
 	// HAProxy configuration and service constants
 	haproxyConfigPath     = "/etc/haproxy/haproxy.cfg"
-	haproxyService        = "haproxy.service"
+	haproxyServiceName    = "haproxy.service"
 	haproxyConfigPerms    = "646"
 	haproxySelinuxSetting = "haproxy_connect_any"
 	haproxyPackageName    = "haproxy"
-	haproxyServiceName    = "haproxy.service"
 
 	// SSH command constants
 	sshKeyscanCmd = "ssh-keyscan"
@@ -353,7 +352,7 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 			sudoCmd,
 			systemctlCmd,
 			systemctlStatusCmd,
-			haproxyService,
+			haproxyServiceName,
 			systemctlNoPager,
 			systemctlLongLines,
 		})
