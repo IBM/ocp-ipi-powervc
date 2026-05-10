@@ -350,7 +350,13 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 		metadataFile,
 		serverIP)
 
-	log.Printf("[INFO] Sending metadata to server (timeout: %v)...", timeout)
+	deadline, ok := ctx.Deadline()
+	if ok {
+		log.Printf("[INFO] Sending metadata to server (timeout: %v, deadline: %v)...",
+			timeout, deadline.Format(time.RFC3339))
+	} else {
+		log.Printf("[INFO] Sending metadata to server (timeout: %v)...", timeout)
+	}
 	startTime := time.Now()
 
 	// Send metadata command to server with context
