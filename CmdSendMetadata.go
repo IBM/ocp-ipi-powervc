@@ -234,12 +234,21 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	log.Printf("[INFO] Operation: %s", opType)
 	log.Printf("[INFO] Metadata file: %s", metadataFile)
 
+	// Create context with timeout for the operation
+	ctx, cancel := context.WithTimeout(context.Background(), sendMetadataTimeout)
+	defer cancel()
+
 	// Validate metadata file exists and is readable
 	log.Printf("[INFO] Validating metadata file...")
 	if err := validateFileExists(metadataFile); err != nil {
 		return newSendMetadataError(opType.String(), "file validation", err)
 	}
 	log.Printf("[INFO] Metadata file validated successfully")
+
+	// Check if context was cancelled after file validation
+	if err := ctx.Err(); err != nil {
+		return newSendMetadataError(opType.String(), "operation cancelled", err)
+	}
 
 	// Validate required server IP flag
 	serverIP := strings.TrimSpace(*ptrServerIP)
@@ -256,14 +265,15 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	}
 	log.Printf("[INFO] Server IP validated successfully")
 
+	// Check if context was cancelled after IP validation
+	if err := ctx.Err(); err != nil {
+		return newSendMetadataError(opType.String(), "operation cancelled", err)
+	}
+
 	log.Debugf("sendMetadataCommand: operation=%s, file=%s, server=%s",
 		opType,
 		metadataFile,
 		serverIP)
-
-	// Create context with timeout for the operation
-	ctx, cancel := context.WithTimeout(context.Background(), sendMetadataTimeout)
-	defer cancel()
 
 	log.Printf("[INFO] Sending metadata to server (timeout: %v)...", sendMetadataTimeout)
 	startTime := time.Now()
