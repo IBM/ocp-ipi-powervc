@@ -38,6 +38,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -138,6 +139,54 @@ func newSendMetadataError(operation, phase string, cause error) error {
 		phase:     phase,
 		cause:     cause,
 	}
+}
+
+// validateMetadataContent validates the JSON structure and required fields of a metadata file.
+// This function reads and parses the metadata file to ensure it contains valid JSON with
+// all required fields before attempting to send it to the server.
+//
+// Parameters:
+//   - filePath: Path to the metadata JSON file
+//
+// Returns:
+//   - error: Any error encountered during reading, parsing, or validation
+//
+// The function validates:
+//   - File can be read
+//   - Content is valid JSON
+//   - Required fields are present and non-empty (ClusterName, InfraID)
+//   - At least one platform metadata is present (OpenStack or PowerVC)
+func validateMetadataContent(filePath string) error {
+	// Read the file
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read metadata file: %w", err)
+	}
+
+	// Parse JSON structure
+	var metadata CreateMetadata
+	if err := json.Unmarshal(content, &metadata); err != nil {
+		return fmt.Errorf("invalid JSON format: %w", err)
+	}
+
+	// Validate required fields
+	if strings.TrimSpace(metadata.ClusterName) == "" {
+		return fmt.Errorf("required field 'clusterName' is missing or empty")
+	}
+
+	if strings.TrimSpace(metadata.InfraID) == "" {
+		return fmt.Errorf("required field 'infraID' is missing or empty")
+	}
+
+	// Validate that at least one platform metadata exists
+	hasOpenStack := metadata.OpenStack != nil && strings.TrimSpace(metadata.OpenStack.Cloud) != ""
+	hasPowerVC := metadata.PowerVC != nil && strings.TrimSpace(metadata.PowerVC.Cloud) != ""
+
+	if !hasOpenStack && !hasPowerVC {
+		return fmt.Errorf("metadata must contain either 'openstack' or 'powervc' platform configuration")
+	}
+
+	return nil
 }
 
 // sendMetadataCommand executes the send-metadata command with the given flags and arguments.
@@ -246,6 +295,18 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	log.Printf("[INFO] Metadata file validated successfully")
 
 	// Check if context was cancelled after file validation
+	if err := ctx.Err(); err != nil {
+		return newSendMetadataError(opType.String(), "operation cancelled", err)
+	}
+
+	// Validate metadata content (JSON structure and required fields)
+	log.Printf("[INFO] Validating metadata content...")
+	if err := validateMetadataContent(metadataFile); err != nil {
+		return newSendMetadataError(opType.String(), "metadata content validation", err)
+	}
+	log.Printf("[INFO] Metadata content validated successfully")
+
+	// Check if context was cancelled after content validation
 	if err := ctx.Err(); err != nil {
 		return newSendMetadataError(opType.String(), "operation cancelled", err)
 	}

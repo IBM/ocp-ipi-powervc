@@ -38,8 +38,8 @@ func TestSendMetadataCommand_NilFlagSet(t *testing.T) {
 
 // TestSendMetadataCommand_MutualExclusivity tests that create and delete flags are mutually exclusive
 func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
-	// Create a temporary test file
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	// Create a valid metadata test file
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -107,7 +107,7 @@ func TestSendMetadataCommand_MutualExclusivity(t *testing.T) {
 
 // TestSendMetadataCommand_MissingServerIP tests that serverIP is required
 func TestSendMetadataCommand_MissingServerIP(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -157,7 +157,7 @@ func TestSendMetadataCommand_MissingServerIP(t *testing.T) {
 
 // TestSendMetadataCommand_InvalidServerIP tests that invalid IP addresses are rejected
 func TestSendMetadataCommand_InvalidServerIP(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -220,7 +220,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 		{
 			name: "valid file",
 			setupFile: func(t *testing.T) string {
-				return createTempTestFile(t, "valid-metadata.json", `{"test": "data"}`)
+				return createValidMetadataFile(t, "valid-metadata.json")
 			},
 			cleanupFile: func(s string) { os.Remove(s) },
 			expectError: true, // Will fail at connection stage
@@ -267,7 +267,7 @@ func TestSendMetadataCommand_FileValidation(t *testing.T) {
 
 // TestSendMetadataCommand_InvalidDebugFlag tests that invalid debug flag values are rejected
 func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -307,7 +307,7 @@ func TestSendMetadataCommand_InvalidDebugFlag(t *testing.T) {
 
 // TestSendMetadataCommand_ValidDebugFlags tests that valid debug flag values are accepted
 func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -343,7 +343,7 @@ func TestSendMetadataCommand_ValidDebugFlags(t *testing.T) {
 
 // TestSendMetadataCommand_CreateOperation tests create metadata operation
 func TestSendMetadataCommand_CreateOperation(t *testing.T) {
-	tmpFile := createTempTestFile(t, "create-metadata.json", `{"test": "create"}`)
+	tmpFile := createValidMetadataFile(t, "create-metadata.json")
 	defer os.Remove(tmpFile)
 
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -370,7 +370,7 @@ func TestSendMetadataCommand_CreateOperation(t *testing.T) {
 
 // TestSendMetadataCommand_DeleteOperation tests delete metadata operation
 func TestSendMetadataCommand_DeleteOperation(t *testing.T) {
-	tmpFile := createTempTestFile(t, "delete-metadata.json", `{"test": "delete"}`)
+	tmpFile := createValidMetadataFile(t, "delete-metadata.json")
 	defer os.Remove(tmpFile)
 
 	flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
@@ -508,7 +508,7 @@ func TestSendMetadataCommand_FlagDefaults(t *testing.T) {
 
 // TestSendMetadataCommand_WhitespaceHandling tests that whitespace is properly trimmed
 func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -566,7 +566,7 @@ func TestSendMetadataCommand_WhitespaceHandling(t *testing.T) {
 
 // TestSendMetadataCommand_ValidIPv4Addresses tests various valid IPv4 formats
 func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -598,7 +598,7 @@ func TestSendMetadataCommand_ValidIPv4Addresses(t *testing.T) {
 
 // TestSendMetadataCommand_ValidIPv6Addresses tests various valid IPv6 formats
 func TestSendMetadataCommand_ValidIPv6Addresses(t *testing.T) {
-	tmpFile := createTempTestFile(t, "test-metadata.json", `{"test": "data"}`)
+	tmpFile := createValidMetadataFile(t, "test-metadata.json")
 	defer os.Remove(tmpFile)
 
 	tests := []struct {
@@ -664,4 +664,162 @@ func createTempTestFile(t *testing.T, name, content string) string {
 	return filePath
 }
 
+// Helper function to create a valid metadata test file with required fields
+func createValidMetadataFile(t *testing.T, name string) string {
+	t.Helper()
+
+	validMetadata := `{
+  "clusterName": "test-cluster",
+  "clusterID": "12345678-1234-1234-1234-123456789012",
+  "infraID": "test-cluster-abcde",
+  "openstack": {
+    "cloud": "test-cloud",
+    "identifier": {
+      "openshiftClusterID": "test-cluster-id"
+    }
+  }
+}`
+
+	return createTempTestFile(t, name, validMetadata)
+}
+
 // Made with Bob
+
+// TestSendMetadataCommand_InvalidMetadataContent tests that invalid metadata content is rejected
+func TestSendMetadataCommand_InvalidMetadataContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		errorMsg string
+	}{
+		{
+			name:     "missing clusterName",
+			content:  `{"infraID": "test-infra", "openstack": {"cloud": "test"}}`,
+			errorMsg: "required field 'clusterName' is missing or empty",
+		},
+		{
+			name:     "missing infraID",
+			content:  `{"clusterName": "test-cluster", "openstack": {"cloud": "test"}}`,
+			errorMsg: "required field 'infraID' is missing or empty",
+		},
+		{
+			name:     "missing platform metadata",
+			content:  `{"clusterName": "test-cluster", "infraID": "test-infra"}`,
+			errorMsg: "metadata must contain either 'openstack' or 'powervc' platform configuration",
+		},
+		{
+			name:     "invalid JSON",
+			content:  `{"clusterName": "test-cluster", "infraID": "test-infra"`,
+			errorMsg: "invalid JSON format",
+		},
+		{
+			name:     "empty clusterName",
+			content:  `{"clusterName": "", "infraID": "test-infra", "openstack": {"cloud": "test"}}`,
+			errorMsg: "required field 'clusterName' is missing or empty",
+		},
+		{
+			name:     "empty infraID",
+			content:  `{"clusterName": "test-cluster", "infraID": "", "openstack": {"cloud": "test"}}`,
+			errorMsg: "required field 'infraID' is missing or empty",
+		},
+		{
+			name:     "whitespace-only clusterName",
+			content:  `{"clusterName": "   ", "infraID": "test-infra", "openstack": {"cloud": "test"}}`,
+			errorMsg: "required field 'clusterName' is missing or empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := createTempTestFile(t, "invalid-metadata.json", tt.content)
+			defer os.Remove(tmpFile)
+
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--createMetadata", tmpFile,
+				"--serverIP", "192.168.1.100",
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			if err == nil {
+				t.Fatal("Expected error for invalid metadata content, got nil")
+			}
+
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Errorf("Expected error to contain %q, got: %v", tt.errorMsg, err)
+			}
+
+			// Verify it failed at content validation, not connection
+			if strings.Contains(err.Error(), "failed to connect to server") {
+				t.Errorf("Should fail at content validation, not connection. Got: %v", err)
+			}
+		})
+	}
+}
+
+// TestSendMetadataCommand_ValidMetadataContent tests that valid metadata content is accepted
+func TestSendMetadataCommand_ValidMetadataContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "valid OpenStack metadata",
+			content: `{
+				"clusterName": "test-cluster",
+				"infraID": "test-infra",
+				"openstack": {
+					"cloud": "test-cloud",
+					"identifier": {"openshiftClusterID": "test-id"}
+				}
+			}`,
+		},
+		{
+			name: "valid PowerVC metadata",
+			content: `{
+				"clusterName": "test-cluster",
+				"infraID": "test-infra",
+				"powervc": {
+					"cloud": "test-cloud",
+					"identifier": {"openshiftClusterID": "test-id"}
+				}
+			}`,
+		},
+		{
+			name: "both OpenStack and PowerVC metadata",
+			content: `{
+				"clusterName": "test-cluster",
+				"infraID": "test-infra",
+				"openstack": {
+					"cloud": "openstack-cloud",
+					"identifier": {"openshiftClusterID": "test-id"}
+				},
+				"powervc": {
+					"cloud": "powervc-cloud",
+					"identifier": {"openshiftClusterID": "test-id"}
+				}
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := createTempTestFile(t, "valid-metadata.json", tt.content)
+			defer os.Remove(tmpFile)
+
+			flagSet := flag.NewFlagSet("send-metadata", flag.ContinueOnError)
+			args := []string{
+				"--createMetadata", tmpFile,
+				"--serverIP", "192.168.1.100",
+			}
+
+			err := sendMetadataCommand(flagSet, args)
+
+			// Should fail at connection stage, not content validation
+			if err != nil && strings.Contains(err.Error(), "metadata content validation") {
+				t.Errorf("Should not fail at content validation for valid metadata. Got: %v", err)
+			}
+		})
+	}
+}
