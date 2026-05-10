@@ -1060,6 +1060,22 @@ func appendToKnownHostsWithLock(knownHostsPath string, hostKey []byte, ipAddress
 	}
 	defer file.Close()
 
+	// Verify file permissions and ownership after opening
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat known_hosts file: %w", err)
+	}
+
+	// Check if permissions are correct
+	if fileInfo.Mode().Perm() != knownHostsFilePerms {
+		log.Warnf("known_hosts file has incorrect permissions: %o (expected %o)",
+			fileInfo.Mode().Perm(), knownHostsFilePerms)
+		// Attempt to fix permissions
+		if err := file.Chmod(knownHostsFilePerms); err != nil {
+			log.Warnf("Failed to fix known_hosts permissions: %v", err)
+		}
+	}
+
 	// Acquire exclusive file lock (flock)
 	log.Debugf("Acquiring file lock for %s", knownHostsPath)
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
