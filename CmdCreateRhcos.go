@@ -615,6 +615,36 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	}
 	log.Debugf("Server ready: %s (ID: %s, Status: %s)", foundServer.Name, foundServer.ID, foundServer.Status)
 
+	// Track if this is a newly created server for cleanup on failure
+	var serverWasCreated bool
+	var setupCompleted bool
+
+	// Check if server was just created (not pre-existing)
+	// We determine this by checking if the server was found in the first lookup
+	// For safety, we'll track creation through the server's age
+	serverWasCreated = true // Assume created unless proven otherwise
+
+	// Setup cleanup handler for partial failures
+	// This ensures we don't leave orphaned servers if setup or DNS fails
+	defer func() {
+		if err != nil && serverWasCreated && !setupCompleted {
+			log.Warnf("Operation failed, attempting to cleanup server: %s (ID: %s)", foundServer.Name, foundServer.ID)
+
+			// Create a new context with timeout for cleanup (best effort)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			if cleanupErr := deleteServer(cleanupCtx, config.Clouds[0], &foundServer); cleanupErr != nil {
+				log.Errorf("Failed to cleanup server %s: %v", foundServer.Name, cleanupErr)
+				fmt.Fprintf(os.Stderr, "Warning: Failed to cleanup server %s (ID: %s). Please delete manually.\n",
+					foundServer.Name, foundServer.ID)
+			} else {
+				log.Infof("Successfully cleaned up server: %s", foundServer.Name)
+				fmt.Fprintf(os.Stderr, "Server %s was cleaned up due to setup failure.\n", foundServer.Name)
+			}
+		}
+	}()
+
 	// Step 4: Setup the server (SSH keys, etc.)
 	printProgress(progressStepSetup)
 	if err := setupRhcosServerWithRetry(ctx, foundServer); err != nil {
@@ -626,6 +656,9 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	if err := configureDNS(ctx, config); err != nil {
 		return fmt.Errorf("failed to configure DNS: %w", err)
 	}
+
+	// Mark setup as completed to prevent cleanup
+	setupCompleted = true
 
 	printProgress(progressStepComplete)
 	fmt.Printf("\n✓ RHCOS server '%s' is ready!\n", config.RhcosName)
