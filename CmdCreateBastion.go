@@ -1087,14 +1087,28 @@ func addServerKnownHosts(ctx context.Context, ipAddress string) error {
 }
 
 // removeHostKey removes a host's key from known_hosts file.
-// This function intentionally ignores errors as the host key may not exist.
+// It returns an error only if the removal fails for reasons other than the key not existing.
+// "Not found" errors are ignored since the key may not exist yet.
 func removeHostKey(knownHostsPath, ipAddress string) error {
-	outb, _ := runSplitCommand2([]string{
+	outb, err := runSplitCommand2([]string{
 		"ssh-keygen",
 		"-f", knownHostsPath,
 		"-R", ipAddress,
 	})
-	log.Debugf("removeHostKey: output = %q", strings.TrimSpace(string(outb)))
+
+	output := strings.TrimSpace(string(outb))
+	log.Debugf("removeHostKey: output = %q", output)
+
+	if err != nil {
+		// Ignore "not found" errors - the host key may not exist yet
+		if strings.Contains(output, "not found") ||
+		   strings.Contains(output, "No such file or directory") {
+			log.Debugf("removeHostKey: host key not found (expected), ignoring error")
+			return nil
+		}
+		return fmt.Errorf("failed to remove host key for %s: %w", ipAddress, err)
+	}
+
 	return nil
 }
 
