@@ -155,6 +155,10 @@ type rhcosConfig struct {
 
 	// APIKey is the IBM Cloud API key for DNS configuration (from IBMCLOUD_API_KEY env var)
 	APIKey string
+
+	// Timeout specifies the maximum duration for the entire operation
+	// Defaults to rhcosDefaultTimeout if not specified
+	Timeout time.Duration
 }
 
 // validate performs comprehensive validation of the RHCOS configuration.
@@ -527,6 +531,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	ptrSshPublicKey := createRhcosFlags.String("sshPublicKey", "", "The contents of the SSH public key to use")
 	ptrDomainName := createRhcosFlags.String("domainName", "", "The DNS domain to use (optional)")
 	ptrShouldDebug := createRhcosFlags.String("shouldDebug", "false", "Enable debug output")
+	ptrTimeout := createRhcosFlags.String("timeout", "15m", "Maximum duration for the operation (e.g., 15m, 30m, 1h)")
 
 	if err := createRhcosFlags.Parse(args); err != nil {
 		return nil, fmt.Errorf("failed to parse flags: %w", err)
@@ -550,6 +555,16 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 		return nil, err
 	}
 	config.ShouldDebug = debug
+
+	// Parse timeout duration
+	timeout, err := time.ParseDuration(*ptrTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timeout value '%s': %w (use format like 15m, 30m, 1h)", *ptrTimeout, err)
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("timeout must be positive, got: %s", *ptrTimeout)
+	}
+	config.Timeout = timeout
 
 	// Validate configuration
 	if err := config.validate(); err != nil {
@@ -595,9 +610,15 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 			config.Clouds, config.RhcosName, config.FlavorName, config.ImageName, config.NetworkName)
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), rhcosDefaultTimeout)
+	// Create context with timeout (use configured timeout or default)
+	timeout := config.Timeout
+	if timeout == 0 {
+		timeout = rhcosDefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+
+	log.Debugf("Operation timeout set to: %s", timeout)
 
 	// Step 2: Generate ignition user data
 	printProgress(progressStepIgnition)
