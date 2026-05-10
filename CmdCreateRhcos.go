@@ -394,7 +394,7 @@ func (c *rhcosConfig) validatePasswordHash() error {
 		}
 	}
 
-	log.Debugf("Password hash validation passed: algorithm=%s", algorithm)
+	fmt.Printf("Password hash validation passed: algorithm=%s\n", algorithm)
 	return nil
 }
 
@@ -421,7 +421,7 @@ func validateCryptAlgorithm(algorithm string, parts []string) error {
 		if len(hash) != 22 {
 			return fmt.Errorf("MD5 hash must be 22 characters, got %d", len(hash))
 		}
-		log.Warnf("Using MD5 password hash (algorithm $1$) - consider upgrading to SHA-512 ($6$)")
+		fmt.Println("WARN: Using MD5 password hash (algorithm $1$) - consider upgrading to SHA-512 ($6$)")
 		return nil
 
 	case "5":
