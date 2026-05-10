@@ -293,7 +293,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	}
 
 	log.Printf("[INFO] Starting send-metadata command")
-	log.Printf("[INFO] Operation: %s", opType)
+	log.Printf("[INFO] Operation: %s", opType.String())
 	log.Printf("[INFO] Metadata file: %s", metadataFile)
 	log.Printf("[INFO] Timeout: %v", timeout)
 
@@ -346,7 +346,7 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	}
 
 	log.Debugf("sendMetadataCommand: operation=%s, file=%s, server=%s",
-		opType,
+		opType.String(),
 		metadataFile,
 		serverIP)
 
