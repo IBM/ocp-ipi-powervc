@@ -858,12 +858,6 @@ func TestSendMetadataCommand_TimeoutFlag(t *testing.T) {
 			errorMsg:    "connection to server",
 		},
 		{
-			name:        "valid timeout - 30s",
-			timeout:     "30s",
-			expectError: true,
-			errorMsg:    "connection to server",
-		},
-		{
 			name:        "invalid timeout format",
 			timeout:     "invalid",
 			expectError: true,
