@@ -55,7 +55,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 		{
 			name:     "empty cloud",
 			args:     []string{"--cloud", ""},
-			errorMsg: "--cloud is empty",
+			errorMsg: "cloud name cannot be empty",
 		},
 		{
 			name:     "missing domainName",
@@ -1054,6 +1054,88 @@ func TestGetServerSet_DifferenceOperations(t *testing.T) {
 	}
 	if deleted.Len() != 1 {
 		t.Errorf("Expected 1 deleted server, got %d", deleted.Len())
+	}
+}
+// TestWatchInstallationCommand_InvalidCloudNames tests that invalid cloud names are rejected
+func TestWatchInstallationCommand_InvalidCloudNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		cloudName string
+		errorMsg  string
+	}{
+		{
+			name:      "cloud name with path traversal",
+			cloudName: "../etc/passwd",
+			errorMsg:  "invalid cloud name format (only alphanumeric, dash, underscore, period allowed)",
+		},
+		{
+			name:      "cloud name with double dots",
+			cloudName: "my..cloud",
+			errorMsg:  "cloud name contains path traversal sequence",
+		},
+		{
+			name:      "cloud name with double slashes",
+			cloudName: "my//cloud",
+			errorMsg:  "invalid cloud name format (only alphanumeric, dash, underscore, period allowed)",
+		},
+		{
+			name:      "cloud name with special characters",
+			cloudName: "my@cloud",
+			errorMsg:  "invalid cloud name format",
+		},
+		{
+			name:      "cloud name with semicolon",
+			cloudName: "cloud;ls",
+			errorMsg:  "invalid cloud name format",
+		},
+		{
+			name:      "cloud name starting with period",
+			cloudName: ".mycloud",
+			errorMsg:  "cloud name cannot start or end with period or dash",
+		},
+		{
+			name:      "cloud name ending with period",
+			cloudName: "mycloud.",
+			errorMsg:  "cloud name cannot start or end with period or dash",
+		},
+		{
+			name:      "cloud name starting with dash",
+			cloudName: "-mycloud",
+			errorMsg:  "cloud name cannot start or end with period or dash",
+		},
+		{
+			name:      "cloud name ending with dash",
+			cloudName: "mycloud-",
+			errorMsg:  "cloud name cannot start or end with period or dash",
+		},
+		{
+			name:      "cloud name with space",
+			cloudName: "my cloud",
+			errorMsg:  "invalid cloud name format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
+			args := []string{
+				"--cloud", tt.cloudName,
+				"--domainName", "example.com",
+				"--bastionMetadata", "/tmp/metadata",
+				"--bastionUsername", "core",
+				"--bastionRsa", "/tmp/key.rsa",
+			}
+
+			err := watchInstallationCommand(flagSet, args)
+
+			if err == nil {
+				t.Fatalf("Expected error for cloud name %q, got nil", tt.cloudName)
+			}
+
+			if !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Errorf("Expected error message to contain %q, got: %v", tt.errorMsg, err)
+			}
+		})
 	}
 }
 
