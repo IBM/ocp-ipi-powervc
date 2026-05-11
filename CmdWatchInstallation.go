@@ -60,9 +60,11 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
@@ -127,10 +129,9 @@ const (
 	errPrefixWatchInstallation = "Error: "
 
 	// Timing constants
-	watchSleepDuration    = 30 * time.Second
-	watchContextTimeout   = 5 * time.Minute
-	watchLongTimeout      = 24 * time.Hour
-	bastionContextTimeout = 10 * time.Minute
+	watchSleepDuration       = 30 * time.Second
+	watchIterationTimeout    = 5 * time.Minute
+	bastionContextTimeout    = 10 * time.Minute
 
 	// Network constants
 	listenPort = ":8080"
@@ -222,33 +223,26 @@ type bastionInformation struct {
 //   })
 func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
-		preLog              strings.Builder
-		apiKey              string
-		clouds              cloudFlags
-		ptrDomainName       *string
-		ptrBastionMetadata  *string
-		ptrBastionUsername  *string
-		ptrBastionRsa       *string
-		ptrDhcpInterface    *string
-		ptrDhcpSubnet       *string
-		ptrDhcpNetmask      *string
-		ptrDhcpRouter       *string
-		ptrDhcpDnsServers   *string
-		ptrDhcpServerId     *string
-		ptrStatsUser        *string
-		ptrStatsPassword    *string
-		ptrEnableDhcpd      *string
-		ptrShouldDebug      *string
-		enableDhcpd         = false
-		ctx                 context.Context
-		cancel              context.CancelFunc
-		knownServers        = sets.Set[string]{}
-		newServerSet        sets.Set[string]
-		addedServersSet     sets.Set[string]
-		deletedServerSet    sets.Set[string]
-		allServers          []servers.Server
-		bastionInformations []bastionInformation
-		err                 error
+		preLog             strings.Builder
+		apiKey             string
+		clouds             cloudFlags
+		ptrDomainName      *string
+		ptrBastionMetadata *string
+		ptrBastionUsername *string
+		ptrBastionRsa      *string
+		ptrDhcpInterface   *string
+		ptrDhcpSubnet      *string
+		ptrDhcpNetmask     *string
+		ptrDhcpRouter      *string
+		ptrDhcpDnsServers  *string
+		ptrDhcpServerId    *string
+		ptrStatsUser       *string
+		ptrStatsPassword   *string
+		ptrEnableDhcpd     *string
+		ptrShouldDebug     *string
+		enableDhcpd        = false
+		knownServers       = sets.Set[string]{}
+		err                error
 	)
 
 
@@ -373,163 +367,219 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
 
-	// Create initial context with timeout
-	ctx, cancel = context.WithTimeout(context.TODO(), watchContextTimeout)
-	defer cancel()
+	// Set up signal handling for graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Create error channel for listener goroutine
+	listenerErrChan := make(chan error, 1)
 
 	// Spawn metadata listener goroutine
 	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
 	go func() {
 		if err := listenForCommands(clouds); err != nil {
 			log.Errorf("Command listener failed: %v", err)
-			os.Exit(1)
+			listenerErrChan <- err
 		}
 	}()
 
-	// Enter infinite monitoring loop
+	// Enter monitoring loop with graceful shutdown support
 	log.Printf("[INFO] Entering monitoring loop")
-	for {
-		log.Printf("[INFO] Waking up to check for changes")
+	ticker := time.NewTicker(watchSleepDuration)
+	defer ticker.Stop()
 
-		// Create new context for this iteration
-		ctx, cancel = context.WithTimeout(context.Background(), watchLongTimeout)
-		// Note: cancel() is called at the end of this iteration or on error return
-
-		// Gather bastion information from metadata directories
-		log.Printf("[INFO] Gathering bastion information from: %s", *ptrBastionMetadata)
-		bastionInformations, err = gatherBastionInformations(*ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa)
-		if err != nil {
-			cancel() // Release context resources before returning
-			return fmt.Errorf("failed to gather bastion information: %w", err)
-		}
-		log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
-		log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
-
-		// Retrieve all servers from OpenStack
-		log.Printf("[INFO] Retrieving all servers from clouds: %+v", clouds)
-		allServers, err = getAllServers(ctx, clouds)
-		if err != nil {
-			cancel() // Release context resources before returning
-			return fmt.Errorf("failed to get all servers: %w", err)
-		}
-		log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
-
-		// Detect changes in server set
-		newServerSet = getServerSet(allServers)
-		addedServersSet = newServerSet.Difference(knownServers)
-		deletedServerSet = knownServers.Difference(newServerSet)
-		log.Debugf("knownServers     = %+v", knownServers)
-		log.Debugf("newServerSet     = %+v", newServerSet)
-		log.Debugf("addedServersSet  = %+v", addedServersSet)
-		log.Debugf("deletedServerSet = %+v", deletedServerSet)
-
-		// If no changes detected, sleep and continue
-		if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
-			log.Printf("[INFO] No server changes detected")
-			log.Printf("[INFO] Sleeping for %v", watchSleepDuration)
-
-			cancel() // Release context resources before sleeping
-			time.Sleep(watchSleepDuration)
-			continue
-		}
-
-		// Update known servers set
-		log.Printf("[INFO] Server changes detected: %d added, %d deleted", addedServersSet.Len(), deletedServerSet.Len())
-		knownServers = newServerSet
-
-		// Update bastion configurations
-		log.Printf("[INFO] Updating bastion configurations")
-		err = updateBastionInformations(ctx, clouds, bastionInformations)
-		if err != nil {
-			cancel() // Release context resources before returning
-			return fmt.Errorf("failed to update bastion information: %w", err)
-		}
-		log.Printf("[INFO] Bastion configurations updated successfully")
-
-		// Update DHCP configuration if enabled
-		log.Debugf("enableDhcpd = %v", enableDhcpd)
-		if enableDhcpd {
-			log.Printf("[INFO] Updating DHCP configuration")
-			filename := "/tmp/dhcpd.conf"
-			err = dhcpdConf(ctx,
-				filename,
-				clouds,
-				*ptrDomainName,
-				*ptrDhcpInterface,
-				*ptrDhcpSubnet,
-				*ptrDhcpNetmask,
-				*ptrDhcpRouter,
-				*ptrDhcpDnsServers,
-				*ptrDhcpServerId,
-			)
-			if err != nil {
-				cancel() // Release context resources before returning
-				return fmt.Errorf("failed to generate DHCP configuration: %w", err)
-			}
-			log.Printf("[INFO] DHCP configuration generated: %s", filename)
-
-			log.Printf("[INFO] Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
-			err = runSplitCommand([]string{
-				"sudo",
-				"/usr/bin/cp",
-				filename,
-				"/etc/dhcp/dhcpd.conf",
-			})
-			if err != nil {
-				cancel() // Release context resources before returning
-				return fmt.Errorf("failed to copy DHCP configuration: %w", err)
-			}
-
-			log.Printf("[INFO] Restarting DHCP service")
-			err = runSplitCommand([]string{
-				"sudo",
-				"systemctl",
-				"restart",
-				"dhcpd.service",
-			})
-			if err != nil {
-				cancel() // Release context resources before returning
-				return fmt.Errorf("failed to restart DHCP service: %w", err)
-			}
-			log.Printf("[INFO] DHCP service restarted successfully")
-		}
-
-		// Update HAProxy configuration
-		log.Printf("[INFO] Updating HAProxy configuration")
-		err = haproxyCfg(ctx, clouds, bastionInformations, *ptrStatsUser, *ptrStatsPassword)
-		if err != nil {
-			cancel() // Release context resources before returning
-			return fmt.Errorf("failed to update HAProxy configuration: %w", err)
-		}
-		log.Printf("[INFO] HAProxy configuration updated successfully")
-
-		// Update DNS records if API key is available
-		if apiKey != "" {
-			log.Printf("[INFO] Updating DNS records")
-			err = dnsRecords(ctx,
-				clouds,
-				apiKey,
-				*ptrDomainName,
-				bastionInformations,
-				knownServers,
-				addedServersSet,
-				deletedServerSet,
-			)
-			if err != nil {
-				cancel() // Release context resources before returning
-				return fmt.Errorf("failed to update DNS records: %w", err)
-			}
-			log.Printf("[INFO] DNS records updated successfully")
-		} else {
-			log.Printf("[INFO] Skipping DNS updates (no API key provided)")
-		}
-
-		// Sleep before next iteration
-		log.Printf("[INFO] Iteration complete, sleeping for %v", watchSleepDuration)
-
-		cancel() // Release context resources before sleeping
-		time.Sleep(watchSleepDuration)
+	// Perform initial check immediately
+	if err := performMonitoringIteration(ctx, clouds, *ptrDomainName, *ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa, enableDhcpd, *ptrDhcpInterface, *ptrDhcpSubnet, *ptrDhcpNetmask, *ptrDhcpRouter, *ptrDhcpDnsServers, *ptrDhcpServerId, *ptrStatsUser, *ptrStatsPassword, apiKey, &knownServers); err != nil {
+		log.Errorf("[ERROR] Initial monitoring iteration failed: %v", err)
+		// Continue to loop rather than failing immediately
 	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[INFO] Received shutdown signal, cleaning up...")
+			return performGracefulShutdown()
+
+		case err := <-listenerErrChan:
+			log.Errorf("[ERROR] Listener failed: %v", err)
+			return fmt.Errorf("command listener failed: %w", err)
+
+		case <-ticker.C:
+			log.Printf("[INFO] Waking up to check for changes")
+
+			if err := performMonitoringIteration(ctx, clouds, *ptrDomainName, *ptrBastionMetadata, *ptrBastionUsername, *ptrBastionRsa, enableDhcpd, *ptrDhcpInterface, *ptrDhcpSubnet, *ptrDhcpNetmask, *ptrDhcpRouter, *ptrDhcpDnsServers, *ptrDhcpServerId, *ptrStatsUser, *ptrStatsPassword, apiKey, &knownServers); err != nil {
+				log.Errorf("[ERROR] Monitoring iteration failed: %v", err)
+				// Continue monitoring despite errors
+			}
+		}
+	}
+}
+
+// performMonitoringIteration executes a single monitoring iteration.
+//
+// This function performs all the monitoring tasks for one iteration:
+//   - Gathers bastion information
+//   - Retrieves all servers from OpenStack
+//   - Detects server changes
+//   - Updates configurations (bastion, DHCP, HAProxy, DNS)
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - clouds: Cloud names to query
+//   - domainName: DNS domain name
+//   - bastionMetadata: Path to bastion metadata directory
+//   - bastionUsername: SSH username for bastion
+//   - bastionRsa: Path to RSA key
+//   - enableDhcpd: Whether DHCP is enabled
+//   - dhcpInterface, dhcpSubnet, dhcpNetmask, dhcpRouter, dhcpDnsServers, dhcpServerId: DHCP configuration
+//   - statsUser, statsPassword: HAProxy stats credentials
+//   - apiKey: IBM Cloud API key for DNS
+//   - knownServers: Pointer to set of known servers (updated by this function)
+//
+// Returns:
+//   - error: Any error encountered during the iteration
+func performMonitoringIteration(ctx context.Context, clouds cloudFlags, domainName string, bastionMetadata string, bastionUsername string, bastionRsa string, enableDhcpd bool, dhcpInterface string, dhcpSubnet string, dhcpNetmask string, dhcpRouter string, dhcpDnsServers string, dhcpServerId string, statsUser string, statsPassword string, apiKey string, knownServers *sets.Set[string]) error {
+	// Create iteration context with timeout
+	iterCtx, iterCancel := context.WithTimeout(ctx, watchIterationTimeout)
+	defer iterCancel()
+
+	// Gather bastion information from metadata directories
+	log.Printf("[INFO] Gathering bastion information from: %s", bastionMetadata)
+	bastionInformations, err := gatherBastionInformations(bastionMetadata, bastionUsername, bastionRsa)
+	if err != nil {
+		return fmt.Errorf("failed to gather bastion information: %w", err)
+	}
+	log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
+	log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
+
+	// Retrieve all servers from OpenStack
+	log.Printf("[INFO] Retrieving all servers from clouds: %+v", clouds)
+	allServers, err := getAllServers(iterCtx, clouds)
+	if err != nil {
+		return fmt.Errorf("failed to get all servers: %w", err)
+	}
+	log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
+
+	// Detect changes in server set
+	newServerSet := getServerSet(allServers)
+	addedServersSet := newServerSet.Difference(*knownServers)
+	deletedServerSet := knownServers.Difference(newServerSet)
+	log.Debugf("knownServers     = %+v", *knownServers)
+	log.Debugf("newServerSet     = %+v", newServerSet)
+	log.Debugf("addedServersSet  = %+v", addedServersSet)
+	log.Debugf("deletedServerSet = %+v", deletedServerSet)
+
+	// If no changes detected, return early
+	if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
+		log.Printf("[INFO] No server changes detected")
+		return nil
+	}
+
+	// Update known servers set
+	log.Printf("[INFO] Server changes detected: %d added, %d deleted", addedServersSet.Len(), deletedServerSet.Len())
+	*knownServers = newServerSet
+
+	// Update bastion configurations
+	log.Printf("[INFO] Updating bastion configurations")
+	err = updateBastionInformations(iterCtx, clouds, bastionInformations)
+	if err != nil {
+		return fmt.Errorf("failed to update bastion information: %w", err)
+	}
+	log.Printf("[INFO] Bastion configurations updated successfully")
+
+	// Update DHCP configuration if enabled
+	log.Debugf("enableDhcpd = %v", enableDhcpd)
+	if enableDhcpd {
+		log.Printf("[INFO] Updating DHCP configuration")
+		filename := "/tmp/dhcpd.conf"
+		err = dhcpdConf(iterCtx,
+			filename,
+			clouds,
+			domainName,
+			dhcpInterface,
+			dhcpSubnet,
+			dhcpNetmask,
+			dhcpRouter,
+			dhcpDnsServers,
+			dhcpServerId,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to generate DHCP configuration: %w", err)
+		}
+		log.Printf("[INFO] DHCP configuration generated: %s", filename)
+
+		log.Printf("[INFO] Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
+		err = runSplitCommand([]string{
+			"sudo",
+			"/usr/bin/cp",
+			filename,
+			"/etc/dhcp/dhcpd.conf",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to copy DHCP configuration: %w", err)
+		}
+
+		log.Printf("[INFO] Restarting DHCP service")
+		err = runSplitCommand([]string{
+			"sudo",
+			"systemctl",
+			"restart",
+			"dhcpd.service",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to restart DHCP service: %w", err)
+		}
+		log.Printf("[INFO] DHCP service restarted successfully")
+	}
+
+	// Update HAProxy configuration
+	log.Printf("[INFO] Updating HAProxy configuration")
+	err = haproxyCfg(iterCtx, clouds, bastionInformations, statsUser, statsPassword)
+	if err != nil {
+		return fmt.Errorf("failed to update HAProxy configuration: %w", err)
+	}
+	log.Printf("[INFO] HAProxy configuration updated successfully")
+
+	// Update DNS records if API key is available
+	if apiKey != "" {
+		log.Printf("[INFO] Updating DNS records")
+		err = dnsRecords(iterCtx,
+			clouds,
+			apiKey,
+			domainName,
+			bastionInformations,
+			*knownServers,
+			addedServersSet,
+			deletedServerSet,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update DNS records: %w", err)
+		}
+		log.Printf("[INFO] DNS records updated successfully")
+	} else {
+		log.Printf("[INFO] Skipping DNS updates (no API key provided)")
+	}
+
+	log.Printf("[INFO] Iteration complete")
+	return nil
+}
+
+// performGracefulShutdown performs cleanup operations before exiting.
+//
+// This function is called when a shutdown signal is received and performs
+// any necessary cleanup operations before the program exits.
+//
+// Returns:
+//   - error: Any error encountered during shutdown (currently always returns nil)
+func performGracefulShutdown() error {
+	log.Printf("[INFO] Performing graceful shutdown...")
+	// Add any cleanup operations here:
+	// - Close connections
+	// - Flush logs
+	// - Save state
+	// - Clean up temporary files
+	log.Printf("[INFO] Shutdown complete")
+	return nil
 }
 
 // gatherBastionInformations walks a directory tree to find all metadata.json files
@@ -2144,7 +2194,7 @@ func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 	log.Debugf("handleCreateBastion: cmd.ServerName = %s", cmd.ServerName)
 	log.Debugf("handleCreateBastion: cmd.DomainName = %s", cmd.DomainName)
 
-	ctx, cancel = context.WithTimeout(context.TODO(), bastionContextTimeout)
+	ctx, cancel = context.WithTimeout(context.Background(), bastionContextTimeout)
 	defer cancel()
 
 	// @HACK need to add enableHAProxy to the command structure
