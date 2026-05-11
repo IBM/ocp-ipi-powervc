@@ -137,7 +137,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	// Parse and validate flags
 	config, err := parseWatchCreateFlags(&preLog, watchCreateClusterFlags, args)
 	if err != nil {
-		return err
+		return fmt.Errorf("%sfailed to parse and validate flags: %w", errPrefixWatchCreate, err)
 	}
 
 	// Initialize logger with debug mode if enabled
@@ -158,12 +158,12 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 
 	// Validate IBM Cloud API key if provided
 	if err := validateIBMCloudAPIKey(config.apiKey); err != nil {
-		return err
+		return fmt.Errorf("%sfailed to validate IBM Cloud API key: %w", errPrefixWatchCreate, err)
 	}
 
 	// Validate metadata file
 	if err := validateMetadataFile(config.metadata); err != nil {
-		return err
+		return fmt.Errorf("%sfailed to validate metadata file: %w", errPrefixWatchCreate, err)
 	}
 
 	// Execute check-alive command with 15 minute timeout
@@ -177,7 +177,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	// Load metadata and create services
 	services, err := initializeServices(config)
 	if err != nil {
-		return err
+		return fmt.Errorf("%sfailed to initialize services: %w", errPrefixWatchCreate, err)
 	}
 	defer func() {
 		if err := services.Close(); err != nil {
@@ -193,7 +193,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 
 	// Sort and query status
 	if err := queryComponentStatus(ctx, robjsCluster); err != nil {
-		return err
+		return fmt.Errorf("%sfailed to query component status: %w", errPrefixWatchCreate, err)
 	}
 
 	log.Printf("[INFO] Status query completed for all components")
@@ -239,7 +239,7 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 
 	// Validate required flags
 	if err := validateRequiredFlags(preLog, cloud, *ptrMetadata, *ptrBastionUsername, *ptrBastionRsa); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	// Get API key from environment
