@@ -62,6 +62,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -180,6 +181,144 @@ type bastionInformation struct {
 	InfraID     string // Infrastructure ID of the cluster
 	IPAddress   string // IP address of the bastion server
 	NumVMs      int    // Number of VMs in the cluster
+}
+
+// validateIPAddress validates that a string is a valid IPv4 address.
+//
+// Parameters:
+//   - ip: The IP address string to validate
+//
+// Returns:
+//   - error: An error if the IP address is invalid, nil otherwise
+func validateIPAddress(ip string) error {
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP address: %s", ip)
+	}
+	return nil
+}
+
+// validateNetmask validates that a string is a valid IPv4 netmask.
+//
+// A valid netmask must be a valid IP address and must have all 1s followed by all 0s
+// in binary representation (e.g., 255.255.255.0 is valid, 255.255.0.255 is not).
+//
+// Parameters:
+//   - netmask: The netmask string to validate
+//
+// Returns:
+//   - error: An error if the netmask is invalid, nil otherwise
+func validateNetmask(netmask string) error {
+	ip := net.ParseIP(netmask)
+	if ip == nil {
+		return fmt.Errorf("invalid netmask: %s", netmask)
+	}
+
+	// Convert to 4-byte representation
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return fmt.Errorf("netmask must be IPv4: %s", netmask)
+	}
+
+	// Verify it's a valid netmask (all 1s followed by all 0s in binary)
+	// Convert to uint32 and verify
+	maskUint := uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
+
+	// A valid netmask has all 1s on the left, all 0s on the right
+	// Invert it, add 1, should be a power of 2 (or 0 for all 1s mask)
+	inverted := ^maskUint
+	if inverted != 0 && (inverted&(inverted+1)) != 0 {
+		return fmt.Errorf("netmask has non-contiguous bits: %s", netmask)
+	}
+
+	return nil
+}
+
+// validateDomainName validates that a string is a valid DNS domain name.
+//
+// The validation follows RFC 1035 rules:
+//   - Maximum length of 253 characters
+//   - Labels separated by dots
+//   - Each label: 1-63 characters, alphanumeric and hyphens
+//   - Labels cannot start or end with hyphen
+//
+// Parameters:
+//   - domain: The domain name string to validate
+//
+// Returns:
+//   - error: An error if the domain name is invalid, nil otherwise
+func validateDomainName(domain string) error {
+	if len(domain) == 0 {
+		return fmt.Errorf("domain name cannot be empty")
+	}
+
+	if len(domain) > 253 {
+		return fmt.Errorf("domain name too long (max 253 characters): %s", domain)
+	}
+
+	// RFC 1035 domain name validation
+	// Each label must be 1-63 characters, alphanumeric and hyphens
+	// Cannot start or end with hyphen
+	domainRegex := regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)
+	if !domainRegex.MatchString(domain) {
+		return fmt.Errorf("invalid domain name format: %s", domain)
+	}
+
+	return nil
+}
+
+// validateDNSServerList validates a comma-separated list of DNS server IP addresses.
+//
+// Parameters:
+//   - servers: Comma-separated list of DNS server IP addresses
+//
+// Returns:
+//   - error: An error if any DNS server IP is invalid, nil otherwise
+func validateDNSServerList(servers string) error {
+	if servers == "" {
+		return fmt.Errorf("DNS server list cannot be empty")
+	}
+
+	serverList := strings.Split(servers, ",")
+	for _, server := range serverList {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			return fmt.Errorf("DNS server list contains empty entry")
+		}
+		if err := validateIPAddress(server); err != nil {
+			return fmt.Errorf("invalid DNS server in list: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateInterfaceName validates that a string is a valid network interface name.
+//
+// Valid interface names contain only alphanumeric characters, hyphens, underscores,
+// and periods. This prevents command injection through interface names.
+//
+// Parameters:
+//   - iface: The interface name string to validate
+//
+// Returns:
+//   - error: An error if the interface name is invalid, nil otherwise
+func validateInterfaceName(iface string) error {
+	if iface == "" {
+		return fmt.Errorf("interface name cannot be empty")
+	}
+
+	// Allow alphanumeric, dash, underscore, and period (common in interface names)
+	ifaceRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	if !ifaceRegex.MatchString(iface) {
+		return fmt.Errorf("invalid interface name (only alphanumeric, dash, underscore, period allowed): %s", iface)
+	}
+
+	// Additional safety: reject names that look like command injection attempts
+	if strings.Contains(iface, "..") || strings.Contains(iface, "//") {
+		return fmt.Errorf("interface name contains suspicious patterns: %s", iface)
+	}
+
+	return nil
 }
 
 // watchInstallationCommand executes the watch-installation command with the given flags and arguments.
@@ -359,10 +498,54 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		log.Println(line)
 	}
 
+	// Validate DHCP configuration parameters if DHCP is enabled
 	if enableDhcpd {
-		// @TODO validate flags for malicious strings
-		// Implement helper functions like isValidIP(), isValidNetmask()/isValidCIDR(), sanitizeDomainName(), and sanitizeDNSList()
+		log.Debugf("[INFO] Validating DHCP configuration parameters")
+
+		// Validate interface name
+		if err := validateInterfaceName(*ptrDhcpInterface); err != nil {
+			return fmt.Errorf("%sinvalid DHCP interface: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP interface validated: %s", *ptrDhcpInterface)
+
+		// Validate subnet IP address
+		if err := validateIPAddress(*ptrDhcpSubnet); err != nil {
+			return fmt.Errorf("%sinvalid DHCP subnet: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP subnet validated: %s", *ptrDhcpSubnet)
+
+		// Validate netmask
+		if err := validateNetmask(*ptrDhcpNetmask); err != nil {
+			return fmt.Errorf("%sinvalid DHCP netmask: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP netmask validated: %s", *ptrDhcpNetmask)
+
+		// Validate router IP address
+		if err := validateIPAddress(*ptrDhcpRouter); err != nil {
+			return fmt.Errorf("%sinvalid DHCP router: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP router validated: %s", *ptrDhcpRouter)
+
+		// Validate DNS servers list
+		if err := validateDNSServerList(*ptrDhcpDnsServers); err != nil {
+			return fmt.Errorf("%sinvalid DHCP DNS servers: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP DNS servers validated: %s", *ptrDhcpDnsServers)
+
+		// Validate DHCP server ID (should be an IP address)
+		if err := validateIPAddress(*ptrDhcpServerId); err != nil {
+			return fmt.Errorf("%sinvalid DHCP server ID: %w", errPrefixWatchInstallation, err)
+		}
+		log.Debugf("[INFO] DHCP server ID validated: %s", *ptrDhcpServerId)
+
+		log.Printf("[INFO] All DHCP configuration parameters validated successfully")
 	}
+
+	// Validate domain name
+	if err := validateDomainName(*ptrDomainName); err != nil {
+		return fmt.Errorf("%sinvalid domain name: %w", errPrefixWatchInstallation, err)
+	}
+	log.Debugf("[INFO] Domain name validated: %s", *ptrDomainName)
 
 	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
