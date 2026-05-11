@@ -65,6 +65,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -2185,6 +2186,11 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 //   - delete-metadata: Delete cluster metadata
 //   - create-bastion: Create bastion server
 func listenForCommands(ctx context.Context, clouds cloudFlags) error {
+	var (
+		closeOnce sync.Once
+		closeErr  error
+	)
+
 	log.Debugf("listenForCommands")
 
 	// Listen for incoming connections on configured port
@@ -2192,13 +2198,24 @@ func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 	if err != nil {
 		return fmt.Errorf("failed to start listener on %s: %w", listenPort, err)
 	}
-	defer ln.Close()
+
+	// Ensure listener is closed exactly once
+	closeListener := func() {
+		closeOnce.Do(func() {
+			log.Printf("[INFO] Closing listener...")
+			closeErr = ln.Close()
+			if closeErr != nil {
+				log.Errorf("[ERROR] Failed to close listener: %v", closeErr)
+			}
+		})
+	}
+	defer closeListener()
 
 	// Close listener when context is cancelled
 	go func() {
 		<-ctx.Done()
-		log.Printf("[INFO] Context cancelled, closing listener...")
-		ln.Close()
+		log.Printf("[INFO] Context cancelled, initiating listener shutdown...")
+		closeListener()
 	}()
 
 	// Accept incoming connections and handle them
@@ -2211,6 +2228,8 @@ func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 				log.Printf("[INFO] Listener shutting down gracefully")
 				return nil
 			default:
+				// Unexpected error during Accept
+				log.Errorf("[ERROR] Failed to accept connection: %v", err)
 				return fmt.Errorf("failed to accept connection: %w", err)
 			}
 		}
