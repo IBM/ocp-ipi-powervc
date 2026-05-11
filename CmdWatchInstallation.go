@@ -1217,6 +1217,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		if err != nil {
 			return err
 		}
+		defer file.Close() // Guaranteed cleanup
 
 		fmt.Fprintf(file, "#\n")
 		fmt.Fprintf(file, "global\n")
@@ -1311,7 +1312,10 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			}
 		}
 
-		file.Close() // Close before scp/ssh operations
+		// Sync file to disk before using in external commands
+		if err := file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync haproxy config: %w", err)
+		}
 
 		err = runSplitCommand([]string{
 			"scp",
