@@ -953,11 +953,23 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		log.Debugf("updateBastionInformations: NEW bastionInformation = %+v", bastionInformations[i])
 
 		if previousVMs == 0 && currentVMs > 0 {
-			// First time for this bastion
+			// First time for this bastion - cluster is being created
+			log.Printf("[INFO] Cluster %s (InfraID: %s) is initializing with %d VMs on bastion %s",
+				bastionInformations[i].ClusterName,
+				bastionInformations[i].InfraID,
+				currentVMs,
+				bastionIpAddress)
+			log.Printf("[INFO] Bastion server: %s at %s", bastionServer.Name, bastionIpAddress)
 		}
 
 		if currentVMs == 0 && previousVMs > 0 {
-			// Last time for this bastion
+			// Last time for this bastion - cluster is being deleted
+			log.Printf("[INFO] Cluster %s (InfraID: %s) is being deleted (had %d VMs) from bastion %s",
+				bastionInformations[i].ClusterName,
+				bastionInformations[i].InfraID,
+				previousVMs,
+				bastionIpAddress)
+			log.Printf("[INFO] All cluster VMs have been removed")
 		}
 	}
 
