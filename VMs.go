@@ -177,6 +177,10 @@ func (vms *VMs) ClusterStatus() error {
 	)
 
 	ctx, cancel = vms.services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", VMsName)
+		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
+	}
 	defer cancel()
 
 	cloud := vms.services.GetCloud()
