@@ -376,11 +376,14 @@ func queryComponentStatus(ctx context.Context, robjsCluster []RunnableObject) er
 	log.Printf("[INFO] Objects sorted successfully")
 
 	log.Printf("[INFO] Querying status of %d components", len(robjsCluster))
+	var errs []error
+	successCount := 0
+
 	for i, robj := range robjsCluster {
 		// Check if context was cancelled
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("operation cancelled: %w", ctx.Err())
+			return fmt.Errorf("operation cancelled after %d/%d components: %w", successCount, len(robjsCluster), ctx.Err())
 		default:
 		}
 
@@ -389,10 +392,21 @@ func queryComponentStatus(ctx context.Context, robjsCluster []RunnableObject) er
 			robjObjectName = fmt.Sprintf("unknown-component-%d", i)
 		}
 		log.Printf("[INFO] Querying status of component %d/%d: %s", i+1, len(robjsCluster), robjObjectName)
+
 		err = robj.ClusterStatus()
 		if err != nil {
-			log.Debugf("ERROR: %s returned %v", robjObjectName, err)
+			log.Printf("[ERROR] Component %s failed: %v", robjObjectName, err)
+			errs = append(errs, fmt.Errorf("%s: %w", robjObjectName, err))
+		} else {
+			log.Printf("[INFO] Component %s status query completed successfully", robjObjectName)
+			successCount++
 		}
+	}
+
+	// Report results
+	if len(errs) > 0 {
+		log.Printf("[WARN] Status query completed with %d errors out of %d components", len(errs), len(robjsCluster))
+		return fmt.Errorf("%sfailed to query status for %d/%d components: %v", errPrefixWatchCreate, len(errs), len(robjsCluster), errs)
 	}
 
 	return nil
