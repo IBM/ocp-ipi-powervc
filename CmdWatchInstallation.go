@@ -560,7 +560,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Spawn metadata listener goroutine
 	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
 	go func() {
-		if err := listenForCommands(clouds); err != nil {
+		if err := listenForCommands(ctx, clouds); err != nil {
 			log.Errorf("Command listener failed: %v", err)
 			listenerErrChan <- err
 		}
@@ -2008,21 +2008,22 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 // listenForCommands starts a TCP server that listens for incoming command connections.
 //
 // Parameters:
+//   - ctx: Context for cancellation and graceful shutdown
 //   - clouds: The cloud names to pass to connection handlers
 //
 // Returns:
 //   - error: Any error encountered starting the listener or accepting connections
 //
 // The function listens on the configured port (listenPort constant) and spawns
-// a new goroutine to handle each incoming connection. It runs indefinitely until
-// an error occurs.
+// a new goroutine to handle each incoming connection. The listener will gracefully
+// shut down when the context is cancelled.
 //
 // Supported commands include:
 //   - check-alive: Health check command
 //   - create-metadata: Create cluster metadata
 //   - delete-metadata: Delete cluster metadata
 //   - create-bastion: Create bastion server
-func listenForCommands(clouds cloudFlags) error {
+func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 	log.Debugf("listenForCommands")
 
 	// Listen for incoming connections on configured port
@@ -2030,22 +2031,38 @@ func listenForCommands(clouds cloudFlags) error {
 	if err != nil {
 		return fmt.Errorf("failed to start listener on %s: %w", listenPort, err)
 	}
+	defer ln.Close()
+
+	// Close listener when context is cancelled
+	go func() {
+		<-ctx.Done()
+		log.Printf("[INFO] Context cancelled, closing listener...")
+		ln.Close()
+	}()
 
 	// Accept incoming connections and handle them
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			return fmt.Errorf("failed to accept connection: %w", err)
+			// Check if error is due to context cancellation
+			select {
+			case <-ctx.Done():
+				log.Printf("[INFO] Listener shutting down gracefully")
+				return nil
+			default:
+				return fmt.Errorf("failed to accept connection: %w", err)
+			}
 		}
 
 		// Handle the connection in a new goroutine
-		go handleConnection(conn, clouds)
+		go handleConnection(ctx, conn, clouds)
 	}
 }
 
 // handleConnection processes a single client connection and dispatches commands.
 //
 // Parameters:
+//   - ctx: Context for cancellation
 //   - conn: Network connection to the client
 //   - clouds: The cloud names for command execution
 //
@@ -2054,11 +2071,11 @@ func listenForCommands(clouds cloudFlags) error {
 //
 // The function reads JSON-formatted commands from the connection, parses the
 // command header to determine the command type, and dispatches to the appropriate
-// handler function. It continues reading commands until the connection is closed
-// or an error occurs.
+// handler function. It continues reading commands until the connection is closed,
+// an error occurs, or the context is cancelled.
 //
 // Command format: JSON object with "command" field indicating the operation type.
-func handleConnection(conn net.Conn, clouds cloudFlags) error {
+func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) error {
 	var (
 		data      string
 		cmdHeader CommandHeader
