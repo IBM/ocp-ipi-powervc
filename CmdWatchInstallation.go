@@ -1054,16 +1054,20 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		clusterName, infraID, err = getMetadataClusterName(bastionInformation.Metadata)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				return err
+				// Unexpected error reading metadata - this is a serious issue
+				log.Errorf("[ERROR] Failed to read metadata from %s: %v", bastionInformation.Metadata, err)
+				return fmt.Errorf("failed to read metadata from %s: %w", bastionInformation.Metadata, err)
 			}
+			// Metadata file doesn't exist - cluster may have been deleted
+			log.Debugf("[INFO] Metadata file not found (cluster may be deleted): %s", bastionInformation.Metadata)
 			err = nil
 			continue
 		}
 
 		bastionServer, err = findServerInList(allServers, clusterName)
 		if err != nil {
-			log.Debugf("updateBastionInformations: findServerInList returns %v", err)
-			// Skip it
+			// Bastion server not found in OpenStack - may be temporarily unavailable or deleted
+			log.Warnf("[WARN] Bastion server %q not found in server list: %v", clusterName, err)
 			err = nil
 			continue
 		}
@@ -1071,16 +1075,22 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 
 		_, bastionIpAddress, err = findIpAddress(bastionServer)
 		log.Debugf("updateBastionInformations: bastionIpAddress = %s", bastionIpAddress)
-		if err != nil || bastionIpAddress == "" {
-			log.Debugf("ERROR: bastionIpAddress is EMPTY! (%v)", err)
+		if err != nil {
+			// Failed to get IP address - network configuration issue
+			log.Warnf("[WARN] Failed to get IP address for bastion %s: %v", bastionServer.Name, err)
+			continue
+		}
+		if bastionIpAddress == "" {
+			// No IP address assigned yet - bastion may still be booting
+			log.Warnf("[WARN] Bastion %s has no IP address assigned yet", bastionServer.Name)
 			continue
 		}
 
 		err = addServerKnownHosts(ctx, bastionIpAddress)
 		if err != nil {
-			log.Debugf("updateBastionInformations: addServerKnownHosts returns %v", err)
-			// Skip it
-			continue
+			// Failed to add to known_hosts - SSH configuration issue, but not critical
+			log.Warnf("[WARN] Failed to add bastion %s (%s) to known_hosts: %v", bastionServer.Name, bastionIpAddress, err)
+			// Continue anyway - this is not critical for monitoring
 		}
 
 		currentVMs := 0
