@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -181,6 +182,7 @@ func BubbleSort(input []RunnableObject) []RunnableObject {
 // The function reports progress to stderr and logs detailed information for debugging.
 //
 // Parameters:
+//   - ctx: The context
 //   - services: Services instance containing configuration and API clients
 //   - robjsFuncs: Array of constructor function entries to create runnable objects
 //
@@ -193,7 +195,7 @@ func BubbleSort(input []RunnableObject) []RunnableObject {
 //       {NRO: NewIBMDNS, Name: "IBM DNS"},
 //       {NRO: NewLoadBalancer, Name: "Load Balancer"},
 //   })
-func initializeRunnableObjects(services *Services, robjsFuncs []NewRunnableObjectsEntry) ([]RunnableObject, error) {
+func initializeRunnableObjects(ctx context.Context, services *Services, robjsFuncs []NewRunnableObjectsEntry) ([]RunnableObject, error) {
 	if services == nil {
 		return nil, fmt.Errorf("services cannot be nil")
 	}
@@ -208,6 +210,13 @@ func initializeRunnableObjects(services *Services, robjsFuncs []NewRunnableObjec
 
 	// Loop through New functions which return an array of runnable objects.
 	for i, nroe := range robjsFuncs {
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+		default:
+		}
+
 		if nroe.NRO == nil {
 			log.Debugf("initializeRunnableObjects: Skipping entry %d with nil constructor", i)
 			continue
@@ -239,6 +248,13 @@ func initializeRunnableObjects(services *Services, robjsFuncs []NewRunnableObjec
 
 		// Process successfully created objects
 		for j, robj := range robjsResult {
+			// Check if context was cancelled
+			select {
+			case <-ctx.Done():
+				return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+			default:
+			}
+
 			if robj == nil {
 				log.Debugf("initializeRunnableObjects: Skipping nil object at index %d for %s", j, nroe.Name)
 				continue
@@ -269,6 +285,13 @@ func initializeRunnableObjects(services *Services, robjsFuncs []NewRunnableObjec
 
 	// Run each object
 	for i, robj := range robjsCluster {
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+		default:
+		}
+
 		robjObjectName, err := robj.ObjectName()
 		if err != nil {
 			robjObjectName = fmt.Sprintf("unknown-object-%d", i)

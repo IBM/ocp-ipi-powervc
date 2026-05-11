@@ -38,11 +38,13 @@
 package main
 
 import (
+	"context"
 	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -164,6 +166,10 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		return err
 	}
 
+	// Execute check-alive command with 15 minute timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
 	// Initialize components
 	robjsFuncs := buildComponentList(config)
 	log.Printf("[INFO] Initialized %d components", len(robjsFuncs))
@@ -175,13 +181,13 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	}
 
 	// Initialize and execute runnable objects
-	robjsCluster, err := initializeRunnableObjects(services, robjsFuncs)
+	robjsCluster, err := initializeRunnableObjects(ctx, services, robjsFuncs)
 	if err != nil {
 		return fmt.Errorf("%sfailed to initialize runnable objects: %w", errPrefixWatchCreate, err)
 	}
 
 	// Sort and query status
-	if err := queryComponentStatus(robjsCluster); err != nil {
+	if err := queryComponentStatus(ctx, robjsCluster); err != nil {
 		return err
 	}
 
@@ -345,7 +351,7 @@ func initializeServices(config *watchCreateConfig) (*Services, error) {
 }
 
 // queryComponentStatus sorts components by priority and queries their status
-func queryComponentStatus(robjsCluster []RunnableObject) error {
+func queryComponentStatus(ctx context.Context, robjsCluster []RunnableObject) error {
 	if len(robjsCluster) == 0 {
 		log.Printf("[INFO] No components to query")
 		return nil
@@ -356,6 +362,13 @@ func queryComponentStatus(robjsCluster []RunnableObject) error {
 
 	// Log sorted order in debug mode
 	for _, robj := range robjsCluster {
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("operation cancelled: %w", ctx.Err())
+		default:
+		}
+
 		if robjObjectName, err := robj.ObjectName(); err == nil {
 			log.Debugf("Sorted component: %s", robjObjectName)
 		}
@@ -364,6 +377,13 @@ func queryComponentStatus(robjsCluster []RunnableObject) error {
 
 	log.Printf("[INFO] Querying status of %d components", len(robjsCluster))
 	for i, robj := range robjsCluster {
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("operation cancelled: %w", ctx.Err())
+		default:
+		}
+
 		robjObjectName, err := robj.ObjectName()
 		if err != nil {
 			robjObjectName = fmt.Sprintf("unknown-component-%d", i)
