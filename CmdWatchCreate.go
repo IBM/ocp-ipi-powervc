@@ -166,6 +166,18 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 		return fmt.Errorf("%sfailed to validate metadata file: %w", errPrefixWatchCreate, err)
 	}
 
+	// Validate bastion RSA file
+	if err := validateBastionRsaFile(config.bastionRsa); err != nil {
+		return fmt.Errorf("%sfailed to validate bastion RSA file: %w", errPrefixWatchCreate, err)
+	}
+
+	// Validate kubeconfig file if provided
+	if config.kubeConfig != "" {
+		if err := validateKubeConfigFile(config.kubeConfig); err != nil {
+			return fmt.Errorf("%sfailed to validate kubeconfig file: %w", errPrefixWatchCreate, err)
+		}
+	}
+
 	// Execute check-alive command with 15 minute timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -303,6 +315,54 @@ func validateMetadataFile(metadataPath string) error {
 		return fmt.Errorf("%sfailed to read metadata file '%s': %w", errPrefixWatchCreate, metadataPath, err)
 	}
 	log.Printf("[INFO] Metadata file validated successfully")
+	return nil
+}
+
+// validateBastionRsaFile validates that the bastion RSA file exists and is readable
+func validateBastionRsaFile(rsaPath string) error {
+	fileInfo, err := os.Stat(rsaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%sbastion RSA file '%s' does not exist", errPrefixWatchCreate, rsaPath)
+		}
+		return fmt.Errorf("%sbastion RSA file '%s' is not accessible: %w", errPrefixWatchCreate, rsaPath, err)
+	}
+
+	// Check if it's a regular file
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("%sbastion RSA file '%s' is not a regular file", errPrefixWatchCreate, rsaPath)
+	}
+
+	// Check if file is readable
+	if _, err := os.ReadFile(rsaPath); err != nil {
+		return fmt.Errorf("%sbastion RSA file '%s' is not readable: %w", errPrefixWatchCreate, rsaPath, err)
+	}
+
+	log.Printf("[INFO] Bastion RSA file validated successfully")
+	return nil
+}
+
+// validateKubeConfigFile validates that the kubeconfig file exists and is readable
+func validateKubeConfigFile(kubeConfigPath string) error {
+	fileInfo, err := os.Stat(kubeConfigPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%skubeconfig file '%s' does not exist", errPrefixWatchCreate, kubeConfigPath)
+		}
+		return fmt.Errorf("%skubeconfig file '%s' is not accessible: %w", errPrefixWatchCreate, kubeConfigPath, err)
+	}
+
+	// Check if it's a regular file
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("%skubeconfig file '%s' is not a regular file", errPrefixWatchCreate, kubeConfigPath)
+	}
+
+	// Check if file is readable
+	if _, err := os.ReadFile(kubeConfigPath); err != nil {
+		return fmt.Errorf("%skubeconfig file '%s' is not readable: %w", errPrefixWatchCreate, kubeConfigPath, err)
+	}
+
+	log.Printf("[INFO] Kubeconfig file validated successfully")
 	return nil
 }
 
