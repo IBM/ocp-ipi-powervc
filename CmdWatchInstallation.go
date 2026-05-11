@@ -2270,7 +2270,7 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 		}
 		log.Debugf("handleConnection: cmdHeader = %+v", cmdHeader)
 
-		errChan = make(chan error)
+		errChan = make(chan error, 1) // Buffered channel to prevent goroutine leak
 
 		switch cmdHeader.Command {
 		case "check-alive":
@@ -2279,9 +2279,28 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 				marshalledData []byte
 			)
 
-			go handleCheckAlive(data, errChan)
-			result = <-errChan
-			log.Debugf("handleConnection: result from handleCheckAlive is %v", result)
+			// Launch handler with panic recovery
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("[ERROR] Panic in handleCheckAlive: %v", r)
+						errChan <- fmt.Errorf("handler panicked: %v", r)
+					}
+				}()
+				handleCheckAlive(data, errChan)
+			}()
+
+			// Wait for result with timeout
+			select {
+			case result = <-errChan:
+				log.Debugf("handleConnection: result from handleCheckAlive is %v", result)
+			case <-time.After(2 * time.Minute):
+				log.Errorf("[ERROR] Timeout waiting for handleCheckAlive response")
+				result = fmt.Errorf("command timeout")
+			case <-ctx.Done():
+				log.Debugf("handleConnection: context cancelled while waiting for handleCheckAlive")
+				return ctx.Err()
+			}
 
 			cmd.Command = "is-alive"
 			if result != nil {
@@ -2308,9 +2327,28 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 				marshalledData []byte
 			)
 
-			go handleCreateMetadata(data, true, errChan)
-			result = <-errChan
-			log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+			// Launch handler with panic recovery
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("[ERROR] Panic in handleCreateMetadata: %v", r)
+						errChan <- fmt.Errorf("handler panicked: %v", r)
+					}
+				}()
+				handleCreateMetadata(data, true, errChan)
+			}()
+
+			// Wait for result with timeout
+			select {
+			case result = <-errChan:
+				log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+			case <-time.After(2 * time.Minute):
+				log.Errorf("[ERROR] Timeout waiting for handleCreateMetadata response")
+				result = fmt.Errorf("command timeout")
+			case <-ctx.Done():
+				log.Debugf("handleConnection: context cancelled while waiting for handleCreateMetadata")
+				return ctx.Err()
+			}
 
 			cmd.Command = "metadata-created"
 			if result != nil {
@@ -2339,9 +2377,28 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 				marshalledData []byte
 			)
 
-			go handleCreateMetadata(data, false, errChan)
-			result = <-errChan
-			log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+			// Launch handler with panic recovery
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("[ERROR] Panic in handleCreateMetadata (delete): %v", r)
+						errChan <- fmt.Errorf("handler panicked: %v", r)
+					}
+				}()
+				handleCreateMetadata(data, false, errChan)
+			}()
+
+			// Wait for result with timeout
+			select {
+			case result = <-errChan:
+				log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+			case <-time.After(2 * time.Minute):
+				log.Errorf("[ERROR] Timeout waiting for handleCreateMetadata (delete) response")
+				result = fmt.Errorf("command timeout")
+			case <-ctx.Done():
+				log.Debugf("handleConnection: context cancelled while waiting for handleCreateMetadata (delete)")
+				return ctx.Err()
+			}
 
 			cmd.Command = "metadata-deleted"
 			if result != nil {
@@ -2367,9 +2424,28 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 				marshalledData []byte
 			)
 
-			go handleCreateBastion(data, clouds, errChan)
-			result = <-errChan
-			log.Debugf("handleConnection: result from handleCreateBastion is %v", result)
+			// Launch handler with panic recovery
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("[ERROR] Panic in handleCreateBastion: %v", r)
+						errChan <- fmt.Errorf("handler panicked: %v", r)
+					}
+				}()
+				handleCreateBastion(data, clouds, errChan)
+			}()
+
+			// Wait for result with timeout (longer timeout for bastion creation)
+			select {
+			case result = <-errChan:
+				log.Debugf("handleConnection: result from handleCreateBastion is %v", result)
+			case <-time.After(15 * time.Minute):
+				log.Errorf("[ERROR] Timeout waiting for handleCreateBastion response")
+				result = fmt.Errorf("command timeout")
+			case <-ctx.Done():
+				log.Debugf("handleConnection: context cancelled while waiting for handleCreateBastion")
+				return ctx.Err()
+			}
 
 			cmd.Command = "bastion-created"
 			if result != nil {
