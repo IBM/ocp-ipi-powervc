@@ -540,11 +540,20 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	if len(clouds) == 0 {
 		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationCloud)
 	}
-	for _, cloud := range clouds {
+
+	// Cloud names are validated in the cloudFlags.Set() method during flag parsing,
+	// but we add an additional check here for completeness and logging
+	for i, cloud := range clouds {
 		if cloud == "" {
 			return fmt.Errorf("%s--%s is empty", errPrefixWatchInstallation, flagWatchInstallationCloud)
 		}
+		// Re-validate to ensure no bypass of the Set() validation
+		if err := validateCloudName(cloud); err != nil {
+			return fmt.Errorf("%sinvalid cloud name at index %d: %w", errPrefixWatchInstallation, i, err)
+		}
+		fmt.Fprintf(&preLog, "[INFO] Cloud name validated: %s\n", cloud)
 	}
+
 	if ptrDomainName == nil || *ptrDomainName == "" {
 		return fmt.Errorf("%s--%s not specified", errPrefixWatchInstallation, flagWatchInstallationDomainName)
 	}

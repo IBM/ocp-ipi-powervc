@@ -102,7 +102,59 @@ func (c *cloudFlags) String() string {
 }
 
 func (c *cloudFlags) Set(value string) error {
+	// Validate cloud name before adding
+	if err := validateCloudName(value); err != nil {
+		return err
+	}
 	*c = append(*c, value)
+	return nil
+}
+
+// validateCloudName validates a cloud name for security and correctness.
+//
+// Valid cloud names must:
+//   - Not be empty
+//   - Be 1-253 characters long
+//   - Contain only alphanumeric characters, hyphens, underscores, and periods
+//   - Not contain path traversal sequences or command injection patterns
+//
+// Parameters:
+//   - cloudName: The cloud name string to validate
+//
+// Returns:
+//   - error: An error if the cloud name is invalid, nil otherwise
+func validateCloudName(cloudName string) error {
+	if cloudName == "" {
+		return fmt.Errorf("cloud name cannot be empty")
+	}
+
+	if len(cloudName) > 253 {
+		return fmt.Errorf("cloud name too long (max 253 characters): %d", len(cloudName))
+	}
+
+	// Allow alphanumeric, dash, underscore, and period (common in cloud names)
+	// This matches typical OpenStack cloud naming conventions
+	cloudNameRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	if !cloudNameRegex.MatchString(cloudName) {
+		return fmt.Errorf("invalid cloud name format (only alphanumeric, dash, underscore, period allowed): %s", cloudName)
+	}
+
+	// Reject path traversal attempts
+	if strings.Contains(cloudName, "..") {
+		return fmt.Errorf("cloud name contains path traversal sequence: %s", cloudName)
+	}
+
+	// Reject patterns that could be used for command injection
+	if strings.Contains(cloudName, "//") {
+		return fmt.Errorf("cloud name contains suspicious pattern: %s", cloudName)
+	}
+
+	// Reject names that start or end with special characters
+	if strings.HasPrefix(cloudName, ".") || strings.HasPrefix(cloudName, "-") ||
+		strings.HasSuffix(cloudName, ".") || strings.HasSuffix(cloudName, "-") {
+		return fmt.Errorf("cloud name cannot start or end with period or dash: %s", cloudName)
+	}
+
 	return nil
 }
 
