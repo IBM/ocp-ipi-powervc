@@ -168,7 +168,7 @@ const (
 	cmdCheckAlive        = "check-alive"
 	cmdCreateBastion     = "create-bastion"
 	cmdCreateRhcos       = "create-rhcos"
-	cmdCreateCluster     = "create-cluster"
+	cmdCreateCluster     = "broken-create-cluster"
 	cmdSendMetadata      = "send-metadata"
 	cmdWatchInstallation = "watch-installation"
 	cmdWatchCreate       = "watch-create"
@@ -284,7 +284,7 @@ func printUsage(executableName string) {
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "Available commands:\n")
 	for _, cmd := range commands {
-		fmt.Fprintf(os.Stderr, "  %-20s %s\n", cmd.Name, cmd.Description)
+		fmt.Fprintf(os.Stderr, "  %-22s %s\n", cmd.Name, cmd.Description)
 	}
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "Use '%s <command> -h' for more information about a command.\n", executableName)
