@@ -292,6 +292,119 @@ func validateDNSServerList(servers string) error {
 	return nil
 }
 
+// validateHAProxyUsername validates a HAProxy statistics username.
+//
+// Valid usernames must:
+//   - Be 1-64 characters long
+//   - Contain only alphanumeric characters, hyphens, underscores, and periods
+//   - Not contain characters that could cause HAProxy config injection
+//
+// Parameters:
+//   - username: The username string to validate
+//
+// Returns:
+//   - error: An error if the username is invalid, nil otherwise
+func validateHAProxyUsername(username string) error {
+	if username == "" {
+		return nil // Empty username is allowed (disables stats)
+	}
+
+	if len(username) > 64 {
+		return fmt.Errorf("username too long (max 64 characters): %d", len(username))
+	}
+
+	// Allow alphanumeric, dash, underscore, and period
+	usernameRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	if !usernameRegex.MatchString(username) {
+		return fmt.Errorf("invalid username format (only alphanumeric, dash, underscore, period allowed): %s", username)
+	}
+
+	// Reject suspicious patterns that could be used for injection
+	if strings.Contains(username, "..") || strings.Contains(username, "--") {
+		return fmt.Errorf("username contains suspicious patterns: %s", username)
+	}
+
+	return nil
+}
+
+// validateHAProxyPassword validates a HAProxy statistics password.
+//
+// Valid passwords must:
+//   - Be 1-128 characters long
+//   - Not contain characters that could cause HAProxy config injection
+//   - Not contain newlines, carriage returns, or null bytes
+//   - Not contain unescaped quotes or backslashes
+//
+// Parameters:
+//   - password: The password string to validate
+//
+// Returns:
+//   - error: An error if the password is invalid, nil otherwise
+func validateHAProxyPassword(password string) error {
+	if password == "" {
+		return nil // Empty password is allowed (disables stats)
+	}
+
+	if len(password) > 128 {
+		return fmt.Errorf("password too long (max 128 characters): %d", len(password))
+	}
+
+	// Reject control characters and characters that could break HAProxy config
+	for i, r := range password {
+		if r == '\n' || r == '\r' || r == '\x00' {
+			return fmt.Errorf("password contains invalid control character at position %d", i)
+		}
+		// Reject unescaped quotes and backslashes that could break config
+		if r == '"' || r == '\'' || r == '\\' {
+			return fmt.Errorf("password contains invalid character '%c' at position %d (quotes and backslashes not allowed)", r, i)
+		}
+		// Reject hash/comment characters that could inject config
+		if r == '#' {
+			return fmt.Errorf("password contains invalid character '#' at position %d", i)
+		}
+	}
+
+	return nil
+}
+
+// validateHAProxyCredentials validates both username and password together.
+//
+// This function ensures that if one credential is provided, both must be provided,
+// and both must pass individual validation.
+//
+// Parameters:
+//   - username: The username to validate
+//   - password: The password to validate
+//
+// Returns:
+//   - error: An error if the credentials are invalid, nil otherwise
+func validateHAProxyCredentials(username, password string) error {
+	// Both empty is valid (stats disabled)
+	if username == "" && password == "" {
+		return nil
+	}
+
+	// If one is provided, both must be provided
+	if username == "" && password != "" {
+		return fmt.Errorf("password provided but username is empty")
+	}
+	if username != "" && password == "" {
+		return fmt.Errorf("username provided but password is empty")
+	}
+
+	// Validate username
+	if err := validateHAProxyUsername(username); err != nil {
+		return fmt.Errorf("invalid HAProxy stats username: %w", err)
+	}
+
+	// Validate password
+	if err := validateHAProxyPassword(password); err != nil {
+		return fmt.Errorf("invalid HAProxy stats password: %w", err)
+	}
+
+	return nil
+}
+
 // validateInterfaceName validates that a string is a valid network interface name.
 //
 // Valid interface names contain only alphanumeric characters, hyphens, underscores,
@@ -546,6 +659,16 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		return fmt.Errorf("%sinvalid domain name: %w", errPrefixWatchInstallation, err)
 	}
 	log.Debugf("[INFO] Domain name validated: %s", *ptrDomainName)
+
+	// Validate HAProxy stats credentials
+	if err := validateHAProxyCredentials(*ptrStatsUser, *ptrStatsPassword); err != nil {
+		return fmt.Errorf("%sinvalid HAProxy stats credentials: %w", errPrefixWatchInstallation, err)
+	}
+	if *ptrStatsUser != "" && *ptrStatsPassword != "" {
+		log.Printf("[INFO] HAProxy stats enabled with username: %s", *ptrStatsUser)
+	} else {
+		log.Printf("[INFO] HAProxy stats disabled (no credentials provided)")
+	}
 
 	// Store bastion RSA key path in global variable
 	bastionRsa = *ptrBastionRsa
