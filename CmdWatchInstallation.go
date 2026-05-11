@@ -783,6 +783,20 @@ func performGracefulShutdown() error {
 func gatherBastionInformations(rootPath string, username string, installerRsa string) (bastionInformations []bastionInformation, err error) {
 	bastionInformations = make([]bastionInformation, 0)
 
+	// Validate root path (allow absolute paths for root directory)
+	if err = validatePath(rootPath, true); err != nil {
+		return nil, fmt.Errorf("invalid root path: %w", err)
+	}
+
+	// Ensure path exists and is a directory
+	info, err := os.Stat(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot access root path: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("root path is not a directory: %s", rootPath)
+	}
+
 	err = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Handle the error (e.g., permission denied)
@@ -835,6 +849,11 @@ func getMetadataClusterName(filename string) (clusterName string, infraID string
 		content  []byte
 		metadata MinimalMetadata
 	)
+
+	// Validate filename (allow absolute paths as they come from WalkDir)
+	if err = validatePath(filename, true); err != nil {
+		return "", "", fmt.Errorf("invalid filename: %w", err)
+	}
 
 	content, err = os.ReadFile(filename)
 	if err != nil {
@@ -2268,22 +2287,47 @@ func handleCheckAlive(data string, errChan chan error) {
 	return
 }
 
-// validateInfraID ensures the InfraID is safe for use in file paths
+// validatePath validates a file path for security and correctness.
+//
+// Parameters:
+//   - path: The file path to validate
+//   - allowAbsolute: Whether to allow absolute paths
+//
+// Returns:
+//   - error: Validation error if path is invalid, nil otherwise
+//
+// The function performs the following checks:
+//   - Rejects empty paths
+//   - Optionally rejects absolute paths
+//   - Rejects path traversal attempts (..)
+//   - Ensures path is clean (no redundant separators or elements)
+func validatePath(path string, allowAbsolute bool) error {
+	if path == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+
+	if !allowAbsolute && filepath.IsAbs(path) {
+		return fmt.Errorf("absolute paths not allowed: %s", path)
+	}
+
+	cleaned := filepath.Clean(path)
+	if !allowAbsolute && cleaned != path {
+		return fmt.Errorf("path contains invalid components: %s", path)
+	}
+
+	if strings.Contains(cleaned, "..") {
+		return fmt.Errorf("path traversal not allowed: %s", path)
+	}
+
+	return nil
+}
+
+// validateInfraID ensures the InfraID is safe for use in file paths.
+// This is a convenience wrapper around validatePath for InfraID validation.
 func validateInfraID(infraID string) error {
-	// Reject empty, absolute paths, and path traversal attempts
-	if infraID == "" {
-		return fmt.Errorf("infraID cannot be empty")
+	if err := validatePath(infraID, false); err != nil {
+		return fmt.Errorf("invalid infraID: %w", err)
 	}
-
-	if filepath.IsAbs(infraID) {
-		return fmt.Errorf("infraID cannot be an absolute path")
-	}
-
-	cleaned := filepath.Clean(infraID)
-	if cleaned != infraID || strings.Contains(cleaned, "..") {
-		return fmt.Errorf("infraID contains invalid path components")
-	}
-
 	return nil
 }
 
