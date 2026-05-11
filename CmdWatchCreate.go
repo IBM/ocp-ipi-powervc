@@ -179,6 +179,11 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err := services.Close(); err != nil {
+			log.Printf("[WARN] Failed to close services: %v", err)
+		}
+	}()
 
 	// Initialize and execute runnable objects
 	robjsCluster, err := initializeRunnableObjects(ctx, services, robjsFuncs)

@@ -188,6 +188,29 @@ func (svc *Services) GetControllerSvc() *resourcecontrollerv2.ResourceController
 	return svc.controllerSvc
 }
 
+// Close releases resources held by the Services object.
+// This method should be called when the Services object is no longer needed
+// to ensure proper cleanup of resources.
+func (svc *Services) Close() error {
+	if svc == nil {
+		return nil
+	}
+
+	log.Debugf("Closing Services resources")
+
+	// Note: The Services struct currently holds references to:
+	// - controllerSvc: IBM Cloud Resource Controller service client
+	// - bxSession: IBM Cloud Bluemix session
+	// - ctx: context (managed by caller)
+	//
+	// These SDK clients don't expose explicit Close methods, but we log
+	// the cleanup for debugging purposes. If future SDK versions add
+	// cleanup methods, they should be called here.
+
+	log.Debugf("Services resources closed successfully")
+	return nil
+}
+
 func InitBXService(apiKey string) (*bxsession.Session, error) {
 	var (
 		bxSession             *bxsession.Session
