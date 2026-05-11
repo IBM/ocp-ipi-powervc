@@ -74,10 +74,11 @@ type CommandIsAlive struct {
 
 // CommandCreateBastion represents a request to create a bastion host.
 type CommandCreateBastion struct {
-	Command    string `json:"Command"`
-	CloudName  string `json:"cloudName"`
-	ServerName string `json:"serverName"`
-	DomainName string `json:"domainName"`
+	Command       string `json:"Command"`
+	CloudName     string `json:"cloudName"`
+	ServerName    string `json:"serverName"`
+	DomainName    string `json:"domainName"`
+	EnableHAProxy bool   `json:"enableHAProxy"` // Whether to enable HAProxy on the bastion
 }
 
 // CommandBastionCreated represents the response to a create-bastion request.
@@ -249,14 +250,16 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 // sendCreateBastion sends a create-bastion command to the server.
 //
 // Parameters:
+//   - ctx: Context for the operation
 //   - serverIP: IP address of the server
 //   - cloudName: Name of the cloud configuration
 //   - serverName: Name for the bastion server
 //   - domainName: Domain name for the bastion
+//   - enableHAProxy: Whether to enable HAProxy on the bastion
 //
 // Returns:
 //   - error: Any error encountered during the operation
-func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, serverName string, domainName string) error {
+func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, serverName string, domainName string, enableHAProxy bool) error {
 	if ctx == nil {
 		return fmt.Errorf("context cannot be nil")
 	}
@@ -289,10 +292,11 @@ func sendCreateBastion(ctx context.Context, serverIP string, cloudName string, s
 	)
 
 	cmdIn = CommandCreateBastion{
-		Command:    serverCmdCreateBastion,
-		CloudName:  cloudName,
-		ServerName: serverName,
-		DomainName: domainName,
+		Command:       serverCmdCreateBastion,
+		CloudName:     cloudName,
+		ServerName:    serverName,
+		DomainName:    domainName,
+		EnableHAProxy: enableHAProxy,
 	}
 
 	log.Debugf("sendCreateBastion: Connecting to server at %s", serverIP)

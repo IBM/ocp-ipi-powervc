@@ -2352,13 +2352,12 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 //   - errChan: Channel to send the result error (or nil for success)
 //
 // The function performs the following steps:
-//  1. Unmarshals the command data to extract server name and domain name
+//  1. Unmarshals the command data to extract server name, domain name, and HAProxy configuration
 //  2. Creates a context with 10-minute timeout (using bastionContextTimeout constant)
-//  3. Calls setupBastionServer to configure the bastion with HAProxy enabled
+//  3. Calls setupBastionServer to configure the bastion with the specified HAProxy setting
 //  4. Sends the result to the error channel
 //
-// The bastion server is configured with HAProxy enabled by default (hardcoded to true).
-// Note: There's a known limitation that enableHAProxy should be part of the command structure.
+// The HAProxy configuration is controlled by the EnableHAProxy field in the command structure.
 func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 	var (
 		cmd    CommandCreateBastion
@@ -2376,16 +2375,17 @@ func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 		errChan <- err
 		return
 	}
-	log.Debugf("handleCreateBastion: cmd.Command    = %s", cmd.Command)
-	log.Debugf("handleCreateBastion: cmd.CloudName  = %s", cmd.CloudName)
-	log.Debugf("handleCreateBastion: cmd.ServerName = %s", cmd.ServerName)
-	log.Debugf("handleCreateBastion: cmd.DomainName = %s", cmd.DomainName)
+	log.Debugf("handleCreateBastion: cmd.Command       = %s", cmd.Command)
+	log.Debugf("handleCreateBastion: cmd.CloudName     = %s", cmd.CloudName)
+	log.Debugf("handleCreateBastion: cmd.ServerName    = %s", cmd.ServerName)
+	log.Debugf("handleCreateBastion: cmd.DomainName    = %s", cmd.DomainName)
+	log.Debugf("handleCreateBastion: cmd.EnableHAProxy = %v", cmd.EnableHAProxy)
 
 	ctx, cancel = context.WithTimeout(context.Background(), bastionContextTimeout)
 	defer cancel()
 
-	// @HACK need to add enableHAProxy to the command structure
-	err = setupBastionServer(ctx, true, clouds, cmd.ServerName, cmd.DomainName, bastionRsa)
+	// Use the EnableHAProxy field from the command structure
+	err = setupBastionServer(ctx, cmd.EnableHAProxy, clouds, cmd.ServerName, cmd.DomainName, bastionRsa)
 	log.Debugf("handleCreateBastion: setupBastionServer returns %v", err)
 	errChan <- err
 }

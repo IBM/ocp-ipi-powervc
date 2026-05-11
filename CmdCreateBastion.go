@@ -795,6 +795,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 			config.Clouds[0],
 			config.BastionName,
 			config.DomainName,
+			config.EnableHAProxy,
 		); err != nil {
 			return fmt.Errorf("remote setup failed: %w", err)
 		}
