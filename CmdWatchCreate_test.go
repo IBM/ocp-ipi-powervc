@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -375,8 +376,8 @@ func TestWatchCreateClusterCommand_FlagParsing(t *testing.T) {
 				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
-			expectError: false, // Function completes successfully even if services fail
-			errorMsg:    "",
+			expectError: true, // Now properly returns errors when components fail
+			errorMsg:    "failed to query status",
 		},
 		{
 			name: "unknown flag",
@@ -399,8 +400,8 @@ func TestWatchCreateClusterCommand_FlagParsing(t *testing.T) {
 				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
-			expectError: false, // Last value wins, function completes
-			errorMsg:    "",
+			expectError: true, // Last value wins, but components fail
+			errorMsg:    "failed to query status",
 		},
 	}
 
@@ -630,8 +631,8 @@ func TestWatchCreateClusterCommand_EdgeCases(t *testing.T) {
 				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
-			expectError: false, // Function completes, spaces are preserved in cloud name
-			errorMsg:    "",
+			expectError: true, // Spaces are trimmed, but cloud doesn't exist so components fail
+			errorMsg:    "failed to query status",
 		},
 		{
 			name: "whitespace cloud",
@@ -1138,7 +1139,8 @@ func TestQueryComponentStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := queryComponentStatus(tt.objects)
+			ctx := context.Background()
+			err := queryComponentStatus(ctx, tt.objects)
 
 			if tt.expectError {
 				if err == nil {
