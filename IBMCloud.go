@@ -55,6 +55,9 @@ func listResourceInstances(
 	if controllerSvc == nil {
 		return nil, nil, fmt.Errorf("ListResourceInstances failed: controllerSvc cannot be nil")
 	}
+	if listResourceOptions == nil {
+		return nil, nil, fmt.Errorf("ListResourceInstances failed: listResourceOptions cannot be nil")
+	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
 		return controllerSvc.ListResourceInstancesWithContext(ctx, listResourceOptions)
 	}, "ListResourceInstances")
@@ -85,6 +88,9 @@ func listCatalogEntries(
 	}
 	if gcv1 == nil {
 		return nil, nil, fmt.Errorf("ListCatalogEntries failed: gcv1 cannot be nil")
+	}
+	if listCatalogEntriesOpt == nil {
+		return nil, nil, fmt.Errorf("ListCatalogEntries failed: listCatalogEntriesOpt cannot be nil")
 	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.ListCatalogEntriesWithContext(ctx, listCatalogEntriesOpt)
@@ -117,6 +123,9 @@ func getChildObjects(
 	if gcv1 == nil {
 		return nil, nil, fmt.Errorf("getChildObjects failed: gcv1 cannot be nil")
 	}
+	if getChildOpt == nil {
+		return nil, nil, fmt.Errorf("getChildObjects failed: getChildOpt cannot be nil")
+	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.GetChildObjectsWithContext(ctx, getChildOpt)
 	}, "GetChildObjects")
@@ -147,6 +156,9 @@ func listZones(
 	}
 	if zv1 == nil {
 		return nil, nil, fmt.Errorf("ListZones failed: zv1 cannot be nil")
+	}
+	if listOpts == nil {
+		return nil, nil, fmt.Errorf("ListZones failed: listOpts cannot be nil")
 	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
 		return zv1.ListZonesWithContext(ctx, listOpts)
@@ -179,6 +191,9 @@ func listAllDnsRecords(
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: dnsService cannot be nil")
 	}
+	if listOpts == nil {
+		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: listOpts cannot be nil")
+	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
 		return dnsService.ListAllDnsRecordsWithContext(ctx, listOpts)
 	}, "ListAllDnsRecords")
@@ -210,6 +225,9 @@ func deleteDnsRecord(
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: dnsService cannot be nil")
 	}
+	if deleteOpts == nil {
+		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: deleteOpts cannot be nil")
+	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
 		return dnsService.DeleteDnsRecordWithContext(ctx, deleteOpts)
 	}, "DeleteDnsRecord")
@@ -240,6 +258,9 @@ func createDnsRecord(
 	}
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("CreateDnsRecord failed: dnsService cannot be nil")
+	}
+	if createOpts == nil {
+		return nil, nil, fmt.Errorf("CreateDnsRecord failed: createOpts cannot be nil")
 	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
 		return dnsService.CreateDnsRecordWithContext(ctx, createOpts)
