@@ -83,6 +83,8 @@ Make sure that there is no resource limited by a quota.
 
 Or go to the UI (`Virtual Machines` -> `VM list`).  Make sure the state is `ACTIVE`.
 
+Also go to the UI (`Logs`) and check for errors
+
 ## The bootstrap, master-0, master-1, and master-2 nodes should have received a DHCP IP
 
 Use the CLI or UI and make sure the VMs are assigned IP addresses.
