@@ -23,7 +23,12 @@ import (
 	"github.com/IBM/networking-go-sdk/zonesv1"
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
+	"golang.org/x/time/rate"
 )
+
+// ibmCloudRateLimiter limits the rate of IBM Cloud API calls to prevent throttling.
+// Configured for 10 requests per second with a burst capacity of 20 requests.
+var ibmCloudRateLimiter = rate.NewLimiter(rate.Limit(10), 20)
 
 // Note: This file uses the 'retryWithBackoff' function defined in Utils.go
 
@@ -47,6 +52,9 @@ func listResourceInstances(
 	controllerSvc *resourcecontrollerv2.ResourceControllerV2,
 	listResourceOptions *resourcecontrollerv2.ListResourceInstancesOptions,
 ) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ListResourceInstances failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("ListResourceInstances failed: %w", ctx.Err())
 	}
@@ -88,6 +96,9 @@ func listCatalogEntries(
 	gcv1 *globalcatalogv1.GlobalCatalogV1,
 	listCatalogEntriesOpt *globalcatalogv1.ListCatalogEntriesOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ListCatalogEntries failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("ListCatalogEntries failed: %w", ctx.Err())
 	}
@@ -129,6 +140,9 @@ func getChildObjects(
 	gcv1 *globalcatalogv1.GlobalCatalogV1,
 	getChildOpt *globalcatalogv1.GetChildObjectsOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("GetChildObjects failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("GetChildObjects failed: %w", ctx.Err())
 	}
@@ -170,6 +184,9 @@ func listZones(
 	zv1 *zonesv1.ZonesV1,
 	listOpts *zonesv1.ListZonesOptions,
 ) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ListZones failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("ListZones failed: %w", ctx.Err())
 	}
@@ -211,6 +228,9 @@ func listAllDnsRecords(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	listOpts *dnsrecordsv1.ListAllDnsRecordsOptions,
 ) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: %w", ctx.Err())
 	}
@@ -252,6 +272,9 @@ func deleteDnsRecord(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	deleteOpts *dnsrecordsv1.DeleteDnsRecordOptions,
 ) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: %w", ctx.Err())
 	}
@@ -293,6 +316,9 @@ func createDnsRecord(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	createOpts *dnsrecordsv1.CreateDnsRecordOptions,
 ) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
+	if err := ibmCloudRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("CreateDnsRecord failed: rate limit wait: %w", err)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("CreateDnsRecord failed: %w", ctx.Err())
 	}
