@@ -32,10 +32,19 @@ const (
 	// VMsName is the display name for the Virtual Machines service
 	VMsName = "Virtual Machines"
 
+	// Status constants for various "not available" scenarios
+	statusNotAvailable = "N/A"
+
 	// SSH status constants
-	sshStatusNA    = "N/A"
+	sshStatusNA    = statusNotAvailable
 	sshStatusAlive = "ALIVE"
 	sshStatusDead  = "DEAD"
+
+	// Network status constants
+	networkStatusNA = statusNotAvailable
+
+	// Hypervisor status constants
+	hypervisorStatusNA = statusNotAvailable
 )
 
 // VMs manages virtual machine status checking for OpenShift cluster nodes.
@@ -241,13 +250,13 @@ func (vms *VMs) ClusterStatus() error {
 		if err != nil {
 			log.Debugf("ClusterStatus: findIpAddress for server %s returned error: %v", server.Name, err)
 			// Continue to show server info even without IP address
-			macAddress = sshStatusNA
-			ipAddress = sshStatusNA
+			macAddress = networkStatusNA
+			ipAddress = networkStatusNA
 		} else {
 			log.Debugf("ClusterStatus: findIpAddress for server %s returned %s and %s", server.Name, macAddress, ipAddress)
 		}
 
-		if ipAddress != sshStatusNA {
+		if ipAddress != networkStatusNA {
 			sshAlive = sshStatusDead
 
 			var outb []byte
@@ -260,7 +269,7 @@ func (vms *VMs) ClusterStatus() error {
 			}
 		}
 
-		hypervisorName := "N/A"
+		hypervisorName := hypervisorStatusNA
 
 		if server.HypervisorHostname != "" {
 			log.Debugf("ClusterStatus: server.HypervisorHostname = %s", server.HypervisorHostname)
