@@ -25,8 +25,7 @@ import (
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 )
 
-// Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
-// and the 'retryWithBackoff' function defined in Utils.go
+// Note: This file uses the 'retryWithBackoff' function defined in Utils.go
 
 // listResourceInstances retrieves a list of resource instances from IBM Cloud.
 // It automatically retries on transient failures using exponential backoff.
