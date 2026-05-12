@@ -579,8 +579,8 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 		log.Debugf("fetchMatchingDNSRecords: Page %d: Processed=%d, PerPage=%v, Count=%v",
 			page, recordsProcessed, *dnsResources.ResultInfo.PerPage, *dnsResources.ResultInfo.Count)
 
-		// Check if there are more pages
-		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {
+		// Check if this is the last page (partial page indicates no more records)
+		if *dnsResources.ResultInfo.Count < *dnsResources.ResultInfo.PerPage {
 			break
 		}
 
@@ -639,7 +639,8 @@ func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 			return fmt.Errorf("result info missing pagination fields on page %d", page)
 		}
 
-		if *dnsResources.ResultInfo.PerPage != *dnsResources.ResultInfo.Count {
+		// Check if this is the last page (partial page indicates no more records)
+		if *dnsResources.ResultInfo.Count < *dnsResources.ResultInfo.PerPage {
 			break
 		}
 
