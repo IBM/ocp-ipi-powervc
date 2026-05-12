@@ -56,9 +56,16 @@ func listResourceInstances(
 	if listResourceOptions == nil {
 		return nil, nil, fmt.Errorf("ListResourceInstances failed: listResourceOptions cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
 		return controllerSvc.ListResourceInstancesWithContext(ctx, listResourceOptions)
 	}, "ListResourceInstances")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("ListResourceInstances failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // listCatalogEntries retrieves catalog entries from IBM Cloud Global Catalog.
@@ -90,9 +97,16 @@ func listCatalogEntries(
 	if listCatalogEntriesOpt == nil {
 		return nil, nil, fmt.Errorf("ListCatalogEntries failed: listCatalogEntriesOpt cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.ListCatalogEntriesWithContext(ctx, listCatalogEntriesOpt)
 	}, "ListCatalogEntries")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("ListCatalogEntries failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // getChildObjects retrieves child objects from IBM Cloud Global Catalog.
@@ -124,9 +138,16 @@ func getChildObjects(
 	if getChildOpt == nil {
 		return nil, nil, fmt.Errorf("GetChildObjects failed: getChildOpt cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.GetChildObjectsWithContext(ctx, getChildOpt)
 	}, "GetChildObjects")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("GetChildObjects failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // listZones retrieves DNS zones from IBM Cloud Internet Services.
@@ -158,9 +179,16 @@ func listZones(
 	if listOpts == nil {
 		return nil, nil, fmt.Errorf("ListZones failed: listOpts cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
 		return zv1.ListZonesWithContext(ctx, listOpts)
 	}, "ListZones")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("ListZones failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // listAllDnsRecords retrieves all DNS records from IBM Cloud Internet Services.
@@ -192,9 +220,16 @@ func listAllDnsRecords(
 	if listOpts == nil {
 		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: listOpts cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
 		return dnsService.ListAllDnsRecordsWithContext(ctx, listOpts)
 	}, "ListAllDnsRecords")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("ListAllDnsRecords failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // deleteDnsRecord deletes a DNS record from IBM Cloud Internet Services.
@@ -226,9 +261,16 @@ func deleteDnsRecord(
 	if deleteOpts == nil {
 		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: deleteOpts cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
 		return dnsService.DeleteDnsRecordWithContext(ctx, deleteOpts)
 	}, "DeleteDnsRecord")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("DeleteDnsRecord failed: received nil result without error")
+	}
+	return result, response, nil
 }
 
 // createDnsRecord creates a new DNS record in IBM Cloud Internet Services.
@@ -260,7 +302,14 @@ func createDnsRecord(
 	if createOpts == nil {
 		return nil, nil, fmt.Errorf("CreateDnsRecord failed: createOpts cannot be nil")
 	}
-	return retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
+	result, response, err := retryWithBackoff(ctx, func(ctx context.Context) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
 		return dnsService.CreateDnsRecordWithContext(ctx, createOpts)
 	}, "CreateDnsRecord")
+	if err != nil {
+		return nil, response, err
+	}
+	if result == nil {
+		return nil, response, fmt.Errorf("CreateDnsRecord failed: received nil result without error")
+	}
+	return result, response, nil
 }
