@@ -93,7 +93,6 @@ func listCatalogEntries(
 
 // getChildObjects retrieves child objects from IBM Cloud Global Catalog.
 // It automatically retries on transient failures using exponential backoff.
-// This function is exported for use by other packages.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
