@@ -117,13 +117,13 @@ func getChildObjects(
 	getChildOpt *globalcatalogv1.GetChildObjectsOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 	if ctx.Err() != nil {
-		return nil, nil, fmt.Errorf("getChildObjects failed: %w", ctx.Err())
+		return nil, nil, fmt.Errorf("GetChildObjects failed: %w", ctx.Err())
 	}
 	if gcv1 == nil {
-		return nil, nil, fmt.Errorf("getChildObjects failed: gcv1 cannot be nil")
+		return nil, nil, fmt.Errorf("GetChildObjects failed: gcv1 cannot be nil")
 	}
 	if getChildOpt == nil {
-		return nil, nil, fmt.Errorf("getChildObjects failed: getChildOpt cannot be nil")
+		return nil, nil, fmt.Errorf("GetChildObjects failed: getChildOpt cannot be nil")
 	}
 	return retryWithBackoff(ctx, func(ctx context.Context) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
 		return gcv1.GetChildObjectsWithContext(ctx, getChildOpt)
