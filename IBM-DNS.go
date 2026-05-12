@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"regexp"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -796,9 +797,22 @@ func (dns *IBMDNS) ClusterStatus() error {
 			return fmt.Errorf("ClusterStatus: Missing required record: %s (%s)", recordName, req.description)
 		}
 
-		// TODO: Consider adding DNS lookup validation to verify record resolution
-		// This would involve using net.LookupHost() or similar to verify the records
-		// actually resolve to the expected IP addresses
+		// Validate that the DNS record actually resolves
+		log.Debugf("ClusterStatus: Validating DNS resolution for: %s", recordName)
+		addrs, err := net.LookupHost(recordName)
+		if err != nil {
+			fmt.Printf("%s is NOTOK. DNS record %s exists but does not resolve: %v\n",
+				IBMDNSName, recordName, err)
+			return fmt.Errorf("ClusterStatus: Record %s does not resolve: %w", recordName, err)
+		}
+
+		if len(addrs) == 0 {
+			fmt.Printf("%s is NOTOK. DNS record %s resolves to no addresses\n",
+				IBMDNSName, recordName)
+			return fmt.Errorf("ClusterStatus: Record %s has no addresses", recordName)
+		}
+
+		log.Debugf("ClusterStatus: Record %s resolves to %d address(es): %v", recordName, len(addrs), addrs)
 	}
 
 	fmt.Printf("%s is OK.\n", IBMDNSName)
