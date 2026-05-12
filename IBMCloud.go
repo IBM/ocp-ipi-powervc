@@ -26,7 +26,6 @@ import (
 )
 
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
-// and the 'leftInContext' function defined in CmdCreateBastion.go
 // and the 'retryWithBackoff' function defined in Utils.go
 
 // listResourceInstances retrieves a list of resource instances from IBM Cloud.
