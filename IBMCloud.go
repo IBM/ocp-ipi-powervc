@@ -49,6 +49,9 @@ func listResourceInstances(
 	controllerSvc *resourcecontrollerv2.ResourceControllerV2,
 	listResourceOptions *resourcecontrollerv2.ListResourceInstancesOptions,
 ) (*resourcecontrollerv2.ResourceInstancesList, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("ListResourceInstances failed: %w", ctx.Err())
+	}
 	if controllerSvc == nil {
 		return nil, nil, fmt.Errorf("ListResourceInstances failed: controllerSvc cannot be nil")
 	}
@@ -77,6 +80,9 @@ func listCatalogEntries(
 	gcv1 *globalcatalogv1.GlobalCatalogV1,
 	listCatalogEntriesOpt *globalcatalogv1.ListCatalogEntriesOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("ListCatalogEntries failed: %w", ctx.Err())
+	}
 	if gcv1 == nil {
 		return nil, nil, fmt.Errorf("ListCatalogEntries failed: gcv1 cannot be nil")
 	}
@@ -106,6 +112,9 @@ func getChildObjects(
 	gcv1 *globalcatalogv1.GlobalCatalogV1,
 	getChildOpt *globalcatalogv1.GetChildObjectsOptions,
 ) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("getChildObjects failed: %w", ctx.Err())
+	}
 	if gcv1 == nil {
 		return nil, nil, fmt.Errorf("getChildObjects failed: gcv1 cannot be nil")
 	}
@@ -134,6 +143,9 @@ func listZones(
 	zv1 *zonesv1.ZonesV1,
 	listOpts *zonesv1.ListZonesOptions,
 ) (*zonesv1.ListZonesResp, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("ListZones failed: %w", ctx.Err())
+	}
 	if zv1 == nil {
 		return nil, nil, fmt.Errorf("ListZones failed: zv1 cannot be nil")
 	}
@@ -162,6 +174,9 @@ func listAllDnsRecords(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	listOpts *dnsrecordsv1.ListAllDnsRecordsOptions,
 ) (*dnsrecordsv1.ListDnsrecordsResp, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: %w", ctx.Err())
+	}
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("ListAllDnsRecords failed: dnsService cannot be nil")
 	}
@@ -190,6 +205,9 @@ func deleteDnsRecord(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	deleteOpts *dnsrecordsv1.DeleteDnsRecordOptions,
 ) (*dnsrecordsv1.DeleteDnsrecordResp, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: %w", ctx.Err())
+	}
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("DeleteDnsRecord failed: dnsService cannot be nil")
 	}
@@ -218,6 +236,9 @@ func createDnsRecord(
 	dnsService *dnsrecordsv1.DnsRecordsV1,
 	createOpts *dnsrecordsv1.CreateDnsRecordOptions,
 ) (*dnsrecordsv1.DnsrecordResp, *core.DetailedResponse, error) {
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("CreateDnsRecord failed: %w", ctx.Err())
+	}
 	if dnsService == nil {
 		return nil, nil, fmt.Errorf("CreateDnsRecord failed: dnsService cannot be nil")
 	}
