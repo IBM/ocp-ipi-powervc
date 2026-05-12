@@ -196,12 +196,29 @@ func runSplitCommand2(acmdline []string) ([]byte, error) {
 // Note:
 //   - stderr is discarded
 func runSplitCommandNoErr(acmdline []string, silent bool) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	return runSplitCommandNoErrWithContext(ctx, acmdline, silent)
+}
+
+// runSplitCommandNoErrWithContext executes a command with the provided context.
+// Similar to runSplitCommandNoErr but accepts a context parameter for proper cancellation.
+//
+// Parameters:
+//   - ctx: Context for command execution and cancellation
+//   - acmdline: Command and arguments as a string array
+//   - silent: If true, suppresses command output to console
+//
+// Returns:
+//   - []byte: Command stdout output
+//   - error: Any error encountered during execution
+//
+// Note:
+//   - stderr is discarded
+func runSplitCommandNoErrWithContext(ctx context.Context, acmdline []string, silent bool) ([]byte, error) {
 	if len(acmdline) == 0 {
 		return nil, fmt.Errorf("command array cannot be empty")
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
 
 	cmd, err := createCommand(ctx, acmdline)
 	if err != nil {
