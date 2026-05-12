@@ -347,7 +347,7 @@ func findDNSZoneID(ctx context.Context, services *Services) (string, error) {
 
 	log.Debugf("findDNSZoneID: Found %d CIS instance(s) to search", len(listResourceInstancesResponse.Resources))
 
-	var lastErr error
+	var errs []error
 
 	// Search through CIS instances for the matching zone
 	for i, instance := range listResourceInstancesResponse.Resources {
@@ -369,11 +369,16 @@ func findDNSZoneID(ctx context.Context, services *Services) (string, error) {
 		zoneID, err := searchZonesInInstance(ctx, apiKey, instance.CRN, baseDomain)
 		if err != nil {
 			log.Debugf("findDNSZoneID: Error searching zones in instance %s: %v", *instance.CRN, err)
-			lastErr = err
+			errs = append(errs, fmt.Errorf("instance %s: %w", *instance.CRN, err))
 			continue
 		}
 
 		if zoneID != "" {
+			// Found the zone - log any errors encountered but still return success
+			if len(errs) > 0 {
+				log.Warnf("findDNSZoneID: Found zone %s but encountered %d error(s) in other instances: %v",
+					zoneID, len(errs), errs)
+			}
 			log.Debugf("findDNSZoneID: Found matching zone ID: %s in instance: %s", zoneID, *instance.CRN)
 			return zoneID, nil
 		}
@@ -381,8 +386,9 @@ func findDNSZoneID(ctx context.Context, services *Services) (string, error) {
 
 	log.Debugf("findDNSZoneID: No matching zone found for base domain: %s", baseDomain)
 
-	if lastErr != nil {
-		return "", fmt.Errorf("failed to search all CIS instances, last error: %w", lastErr)
+	// Return aggregated errors if any occurred
+	if len(errs) > 0 {
+		return "", fmt.Errorf("failed to search CIS instances (%d error(s)): %v", len(errs), errs)
 	}
 
 	return "", nil
