@@ -126,6 +126,8 @@ func innerNewIBMDNS(services *Services) ([]*IBMDNS, []error) {
 	var (
 		dns           []*IBMDNS
 		errs          []error
+		ctx           context.Context
+		cancel        context.CancelFunc
 		dnsSvc        *dnssvcsv1.DnsSvcsV1
 		dnsRecordsSvc *dnsrecordsv1.DnsRecordsV1
 		err           error
@@ -134,7 +136,14 @@ func innerNewIBMDNS(services *Services) ([]*IBMDNS, []error) {
 	dns = make([]*IBMDNS, 1)
 	errs = make([]error, 1)
 
-	dnsSvc, dnsRecordsSvc, err = initIBMDNSService(services)
+	ctx, cancel = services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		errs[0] = fmt.Errorf("services.GetContextWithTimeout returned nil context or cancel function")
+		return dns, errs
+	}
+	defer cancel()
+
+	dnsSvc, dnsRecordsSvc, err = initIBMDNSService(ctx, services)
 	if err != nil {
 		errs[0] = err
 		return dns, errs
@@ -180,6 +189,7 @@ func createAuthenticator(apiKey string) (core.Authenticator, error) {
 //  5. Creates DNS Records client for the discovered zone
 //
 // Parameters:
+//   - ctx: Context for cancellation and timeout control
 //   - services: Services instance containing configuration and API clients
 //
 // Returns:
@@ -189,9 +199,9 @@ func createAuthenticator(apiKey string) (core.Authenticator, error) {
 //
 // Reference: https://cloud.ibm.com/apidocs/dns-svcs
 // Reference: https://cloud.ibm.com/apidocs/cis
-func initIBMDNSService(services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.DnsRecordsV1, error) {
+func initIBMDNSService(ctx context.Context, services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.DnsRecordsV1, error) {
 	if services == nil {
-		return nil, nil, nil
+		return nil, nil, fmt.Errorf("services cannot be nil")
 	}
 
 	apiKey := services.GetApiKey()
@@ -206,7 +216,7 @@ func initIBMDNSService(services *Services) (*dnssvcsv1.DnsSvcsV1, *dnsrecordsv1.
 	}
 
 	// Find the DNS zone for the cluster's base domain
-	zoneID, err := findDNSZoneID(services)
+	zoneID, err := findDNSZoneID(ctx, services)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to find DNS zone: %w", err)
 	}
@@ -297,12 +307,13 @@ func initDNSRecordsClient(apiKey, crn, zoneID string) (*dnsrecordsv1.DnsRecordsV
 // It searches through all CIS instances and their zones to find a match.
 //
 // Parameters:
+//   - ctx: Context for cancellation and timeout control
 //   - services: Services instance containing configuration and API clients
 //
 // Returns:
 //   - string: DNS zone ID if found, empty string otherwise
 //   - error: Any error encountered during the search
-func findDNSZoneID(services *Services) (string, error) {
+func findDNSZoneID(ctx context.Context, services *Services) (string, error) {
 	controllerSvc := services.GetControllerSvc()
 	if controllerSvc == nil {
 		return "", fmt.Errorf("resource controller service is not initialized")
@@ -340,6 +351,13 @@ func findDNSZoneID(services *Services) (string, error) {
 
 	// Search through CIS instances for the matching zone
 	for i, instance := range listResourceInstancesResponse.Resources {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("context cancelled while searching DNS zones: %w", ctx.Err())
+		default:
+		}
+
 		if instance.CRN == nil {
 			log.Debugf("findDNSZoneID: Skipping instance %d with nil CRN", i)
 			continue
@@ -348,7 +366,7 @@ func findDNSZoneID(services *Services) (string, error) {
 		log.Debugf("findDNSZoneID: Checking instance %d/%d, CRN = %s",
 			i+1, len(listResourceInstancesResponse.Resources), *instance.CRN)
 
-		zoneID, err := searchZonesInInstance(apiKey, instance.CRN, baseDomain)
+		zoneID, err := searchZonesInInstance(ctx, apiKey, instance.CRN, baseDomain)
 		if err != nil {
 			log.Debugf("findDNSZoneID: Error searching zones in instance %s: %v", *instance.CRN, err)
 			lastErr = err
@@ -373,6 +391,7 @@ func findDNSZoneID(services *Services) (string, error) {
 // searchZonesInInstance searches for a DNS zone matching the base domain in a CIS instance.
 //
 // Parameters:
+//   - ctx: Context for cancellation and timeout control
 //   - apiKey: IBM Cloud API key for authentication
 //   - crn: Cloud Resource Name of the CIS instance
 //   - baseDomain: Base domain to search for
@@ -380,7 +399,7 @@ func findDNSZoneID(services *Services) (string, error) {
 // Returns:
 //   - string: DNS zone ID if found, empty string otherwise
 //   - error: Any error encountered during the search
-func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (string, error) {
+func searchZonesInInstance(ctx context.Context, apiKey string, crn *string, baseDomain string) (string, error) {
 	if crn == nil {
 		return "", fmt.Errorf("CRN cannot be nil")
 	}
@@ -417,6 +436,13 @@ func searchZonesInInstance(apiKey string, crn *string, baseDomain string) (strin
 	log.Debugf("searchZonesInInstance: Found %d zone(s) in CRN: %s", len(listZonesResponse.Result), *crn)
 
 	for i, zone := range listZonesResponse.Result {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("context cancelled while searching zones in CRN %s: %w", *crn, ctx.Err())
+		default:
+		}
+
 		if zone.Name == nil || zone.ID == nil {
 			log.Debugf("searchZonesInInstance: Skipping zone %d with nil Name or ID", i)
 			continue
