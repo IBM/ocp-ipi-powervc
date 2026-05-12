@@ -80,6 +80,12 @@ func innerNewOc(services *Services) ([]*Oc, []error) {
 	ocs := make([]*Oc, 1)
 	errs := make([]error, 1)
 
+	if services == nil {
+		errs[0] = fmt.Errorf("services cannot be nil")
+		log.Errorf("innerNewOc: Failed to create OpenShift cluster object - services is nil")
+		return nil, errs
+	}
+
 	ocs[0] = &Oc{
 		services: services,
 	}
