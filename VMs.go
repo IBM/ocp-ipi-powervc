@@ -176,13 +176,6 @@ func (vms *VMs) ClusterStatus() error {
 		err            error
 	)
 
-	ctx, cancel = vms.services.GetContextWithTimeout()
-	if ctx == nil || cancel == nil {
-		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", VMsName)
-		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
-	}
-	defer cancel()
-
 	cloud := vms.services.GetCloud()
 	if cloud == "" {
 		fmt.Printf("%s is NOTOK. Cloud configuration is empty.\n", VMsName)
@@ -197,6 +190,14 @@ func (vms *VMs) ClusterStatus() error {
 	log.Debugf("ClusterStatus: infraID = %s", infraID)
 
 	log.Debugf("ClusterStatus: Checking VMs status for cloud %s", cloud)
+
+	// Create context after validation checks, just before first use
+	ctx, cancel = vms.services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", VMsName)
+		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
+	}
+	defer cancel()
 
 	connCompute, err = NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
 	if err != nil {
