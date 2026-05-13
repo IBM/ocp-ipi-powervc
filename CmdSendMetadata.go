@@ -270,6 +270,33 @@ func sendMetadataWithRetry(ctx context.Context, metadataFile, serverIP string, s
 // Returns:
 //   - error: Any error encountered during flag parsing, validation, or operation execution
 //
+// Example usage:
+//   err := sendMetadataCommand(flagSet, []string{
+//       "--createMetadata", "metadata.json",
+//       "--serverIP", "192.168.1.100",
+//   })
+func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
+	err := innerSendMetadataCommand(sendMetadataFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n", err)
+		sendMetadataFlags.Usage()
+	}
+	return err
+}
+
+// innerSendMetadataCommand executes the send-metadata command with the given flags and arguments.
+//
+// This function handles both metadata creation and deletion operations. It validates
+// that exactly one operation is specified, validates the metadata file and server IP,
+// and sends the metadata to the remote server with timeout support.
+//
+// Parameters:
+//   - sendMetadataFlags: The FlagSet containing command-line flags (must not be nil)
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - error: Any error encountered during flag parsing, validation, or operation execution
+//
 // The function executes the following steps:
 //  1. Validates input parameters
 //  2. Displays program version information
@@ -281,13 +308,7 @@ func sendMetadataWithRetry(ctx context.Context, metadataFile, serverIP string, s
 //  8. Creates context with timeout for operation
 //  9. Sends metadata to remote server
 //  10. Provides user feedback on success
-//
-// Example usage:
-//   err := sendMetadataCommand(flagSet, []string{
-//       "--createMetadata", "metadata.json",
-//       "--serverIP", "192.168.1.100",
-//   })
-func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
+func innerSendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	// Validate input parameters
 	if sendMetadataFlags == nil {
 		return newSendMetadataError("send-metadata", "initialization", fmt.Errorf("flag set cannot be nil"))

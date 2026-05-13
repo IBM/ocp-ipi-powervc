@@ -84,15 +84,6 @@ const (
 // Returns:
 //   - error: Any error encountered during execution, nil on success
 //
-// The function performs the following operations:
-//  1. Validates input parameters (nil checks)
-//  2. Displays program version information
-//  3. Defines and parses command-line flags (serverIP, shouldDebug)
-//  4. Validates required flags and server IP format
-//  5. Initializes logger based on debug flag
-//  6. Sends check-alive command to the specified server
-//  7. Reports success or failure to the user
-//
 // Required Flags:
 //   - serverIP: Must be a valid IP address (IPv4 or IPv6) or resolvable hostname
 //
@@ -107,6 +98,43 @@ const (
 //	    log.Fatalf("Check-alive failed: %v", err)
 //	}
 func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
+	err := innerCheckAliveCommand(checkAliveFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n", err)
+		checkAliveFlags.Usage()
+	}
+	return err
+}
+
+// innerCheckAliveCommand executes the check-alive command to verify server availability.
+//
+// This function performs a health check on a specified server by sending a check-alive
+// command and waiting for a response. It validates all inputs, initializes logging based
+// on the debug flag, and provides clear feedback on the server's status.
+//
+// Parameters:
+//   - checkAliveFlags: FlagSet containing command-line flags for the check-alive command.
+//     Must not be nil.
+//   - args: Command-line arguments to parse. Can be empty but not nil.
+//
+// Returns:
+//   - error: Any error encountered during execution, nil on success
+//
+// The function performs the following operations:
+//  1. Validates input parameters (nil checks)
+//  2. Displays program version information
+//  3. Defines and parses command-line flags (serverIP, shouldDebug)
+//  4. Validates required flags and server IP format
+//  5. Initializes logger based on debug flag
+//  6. Sends check-alive command to the specified server
+//  7. Reports success or failure to the user
+//
+// Required Flags:
+//   - serverIP: Must be a valid IP address (IPv4 or IPv6) or resolvable hostname
+//
+// Optional Flags:
+//   - shouldDebug: Must be "true" or "false" (case-insensitive), defaults to "false"
+func innerCheckAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	// Validate input parameters
 	if checkAliveFlags == nil {
 		return fmt.Errorf("%sflag set cannot be nil", errPrefixCheckAlive)

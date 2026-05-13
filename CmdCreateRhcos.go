@@ -593,6 +593,33 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 // Returns:
 //   - error: Any error encountered during the workflow, nil on success
 func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
+	err := innerCreateRhcosCommand(createRhcosFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n",err)
+		createRhcosFlags.Usage()
+	}
+	return err
+}
+
+// innerCreateRhcosCommand is the main entry point for the RHCOS server creation workflow.
+// It orchestrates the entire process: configuration parsing, ignition generation,
+// server provisioning, SSH setup, and DNS configuration.
+//
+// Workflow:
+//  1. Parse and validate command-line flags
+//  2. Initialize logging based on debug flag
+//  3. Generate Ignition configuration for bootstrap
+//  4. Find existing server or create new one
+//  5. Configure SSH known_hosts
+//  6. Set up DNS records (if IBM Cloud API key provided)
+//
+// Parameters:
+//   - createRhcosFlags: FlagSet for parsing command-line arguments
+//   - args: Command-line arguments
+//
+// Returns:
+//   - error: Any error encountered during the workflow, nil on success
+func innerCreateRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	// Step 1: Parse and validate configuration

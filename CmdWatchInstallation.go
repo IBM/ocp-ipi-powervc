@@ -571,6 +571,36 @@ func validateInterfaceName(iface string) error {
 // Returns:
 //   - error: Any error encountered during flag parsing, validation, or operation execution
 //
+// Example usage:
+//   err := watchInstallationCommand(flagSet, []string{
+//       "--cloud", "mycloud",
+//       "--domainName", "example.com",
+//       "--bastionMetadata", "/path/to/metadata",
+//       "--bastionUsername", "core",
+//       "--bastionRsa", "/path/to/key.rsa",
+//   })
+func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
+	err := innerWatchInstallationCommand(watchInstallationFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n", err)
+		watchInstallationFlags.Usage()
+	}
+	return err
+}
+
+// innerWwatchInstallationCommand executes the watch-installation command with the given flags and arguments.
+//
+// This function continuously monitors OpenShift cluster installations and manages associated
+// infrastructure resources including DNS records, HAProxy configuration, and optionally DHCP
+// server configuration. It runs in an infinite loop, checking for changes every 30 seconds.
+//
+// Parameters:
+//   - watchInstallationFlags: The FlagSet containing command-line flags (must not be nil)
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - error: Any error encountered during flag parsing, validation, or operation execution
+//
 // The function executes the following steps:
 //  1. Validates input parameters
 //  2. Displays program version information
@@ -588,16 +618,7 @@ func validateInterfaceName(iface string) error {
 //     - Updates HAProxy configuration
 //     - Updates DHCP configuration (if enabled)
 //     - Sleeps for 30 seconds before next iteration
-//
-// Example usage:
-//   err := watchInstallationCommand(flagSet, []string{
-//       "--cloud", "mycloud",
-//       "--domainName", "example.com",
-//       "--bastionMetadata", "/path/to/metadata",
-//       "--bastionUsername", "core",
-//       "--bastionRsa", "/path/to/key.rsa",
-//   })
-func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
+func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
 		preLog       strings.Builder
 		clouds       cloudFlags
@@ -695,8 +716,6 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Validate configuration using the config's Validate method
 	log.Printf("[INFO] Validating configuration")
 	if err := config.Validate(); err != nil {
-		fmt.Printf("%+v\n", err)
-		watchInstallationFlags.Usage()
 		return fmt.Errorf("%s%w", errPrefixWatchInstallation, err)
 	}
 	log.Printf("[INFO] Configuration validated successfully")

@@ -101,6 +101,36 @@ const (
 // Returns:
 //   - error: Any error encountered during flag parsing, validation, initialization, or status query
 //
+// Example usage:
+//   err := watchCreateClusterCommand(flagSet, []string{
+//       "-cloud", "mycloud",
+//       "-metadata", "/path/to/metadata.json",
+//       "-bastionUsername", "core",
+//       "-bastionRsa", "/path/to/key.rsa",
+//       "-shouldDebug", "true",
+//   })
+func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
+	err := innerWatchCreateClusterCommand(watchCreateClusterFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n", err)
+		watchCreateClusterFlags.Usage()
+	}
+	return err
+}
+
+// innerWatchCreateClusterCommand executes the watch-create command with the given flags and arguments.
+//
+// This function monitors and displays the status of cluster resources. It parses
+// command-line flags, validates required parameters, initializes cluster components,
+// and queries their status in priority order.
+//
+// Parameters:
+//   - watchCreateClusterFlags: The FlagSet containing command-line flags (must not be nil)
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - error: Any error encountered during flag parsing, validation, initialization, or status query
+//
 // The function executes the following steps:
 //  1. Displays program version information
 //  2. Parses command-line flags
@@ -113,16 +143,7 @@ const (
 //  9. Creates services object
 // 10. Initializes and sorts runnable objects by priority
 // 11. Queries status of each component
-//
-// Example usage:
-//   err := watchCreateClusterCommand(flagSet, []string{
-//       "-cloud", "mycloud",
-//       "-metadata", "/path/to/metadata.json",
-//       "-bastionUsername", "core",
-//       "-bastionRsa", "/path/to/key.rsa",
-//       "-shouldDebug", "true",
-//   })
-func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
+func innerWatchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
 	// Validate input parameters
 	if watchCreateClusterFlags == nil {
 		return fmt.Errorf("%sflag set cannot be nil", errPrefixWatchCreate)

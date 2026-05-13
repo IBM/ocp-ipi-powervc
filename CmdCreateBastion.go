@@ -690,6 +690,23 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 //  5. Setup bastion server (HAProxy, DNS)
 //  6. Write bastion IP to file
 func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
+	err := innerCreateBastionCommand(createBastionFlags, args)
+	if err != nil {
+		fmt.Printf("%+v\n", err)
+		createBastionFlags.Usage()
+	}
+	return err
+}
+
+// innerCreateBastionCommand is the main entry point for the create-bastion command.
+// It orchestrates the entire bastion creation process:
+//  1. Parse and validate configuration
+//  2. Initialize logging
+//  3. Clean up previous bastion IP file
+//  4. Ensure server exists (create if needed)
+//  5. Setup bastion server (HAProxy, DNS)
+//  6. Write bastion IP to file
+func innerCreateBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
 	// Print version info
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
