@@ -695,6 +695,8 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Validate configuration using the config's Validate method
 	log.Printf("[INFO] Validating configuration")
 	if err := config.Validate(); err != nil {
+		fmt.Printf("%+v\n", err)
+		watchInstallationFlags.Usage()
 		return fmt.Errorf("%s%w", errPrefixWatchInstallation, err)
 	}
 	log.Printf("[INFO] Configuration validated successfully")
