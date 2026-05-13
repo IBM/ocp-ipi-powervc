@@ -596,7 +596,9 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	err := innerCreateRhcosCommand(createRhcosFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n",err)
-		createRhcosFlags.Usage()
+		if createRhcosFlags != nil {
+			createRhcosFlags.Usage()
+		}
 	}
 	return err
 }

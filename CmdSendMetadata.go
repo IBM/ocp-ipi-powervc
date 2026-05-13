@@ -279,7 +279,9 @@ func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	err := innerSendMetadataCommand(sendMetadataFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n", err)
-		sendMetadataFlags.Usage()
+		if sendMetadataFlags != nil {
+			sendMetadataFlags.Usage()
+		}
 	}
 	return err
 }

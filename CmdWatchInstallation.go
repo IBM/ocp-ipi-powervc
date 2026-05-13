@@ -583,7 +583,9 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	err := innerWatchInstallationCommand(watchInstallationFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n", err)
-		watchInstallationFlags.Usage()
+		if watchInstallationFlags != nil {
+			watchInstallationFlags.Usage()
+		}
 	}
 	return err
 }

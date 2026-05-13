@@ -101,7 +101,9 @@ func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	err := innerCheckAliveCommand(checkAliveFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n", err)
-		checkAliveFlags.Usage()
+		if checkAliveFlags != nil {
+			checkAliveFlags.Usage()
+		}
 	}
 	return err
 }

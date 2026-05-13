@@ -113,7 +113,9 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 	err := innerWatchCreateClusterCommand(watchCreateClusterFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n", err)
-		watchCreateClusterFlags.Usage()
+		if watchCreateClusterFlags != nil {
+			watchCreateClusterFlags.Usage()
+		}
 	}
 	return err
 }

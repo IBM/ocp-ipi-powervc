@@ -693,7 +693,9 @@ func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error
 	err := innerCreateBastionCommand(createBastionFlags, args)
 	if err != nil {
 		fmt.Printf("%+v\n", err)
-		createBastionFlags.Usage()
+		if createBastionFlags != nil {
+			createBastionFlags.Usage()
+		}
 	}
 	return err
 }
