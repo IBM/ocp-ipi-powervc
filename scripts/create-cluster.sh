@@ -714,10 +714,29 @@ function collect_environment_variables() {
 		die "SSH key file does not exist: ${INSTALLER_SSHKEY}"
 	fi
 
-	SSH_KEY=$(cat "${INSTALLER_SSHKEY}")
+	# Strip carriage returns before validation
+	SSH_KEY=$(cat "${INSTALLER_SSHKEY}" | tr -d '\r')
 	if [[ -z "${SSH_KEY}" ]]; then
 		die "SSH key file is empty: ${INSTALLER_SSHKEY}"
 	fi
+
+	# Verify that INSTALLER_SSHKEY is a valid public SSH key
+	# Public SSH keys should start with ssh-rsa, ssh-ed25519, ecdsa-sha2-nistp256, etc.
+	# Format: ssh-<type> <base64-key-data> [optional-comment]
+	if ! echo "${SSH_KEY}" | grep -qE '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-dss) [A-Za-z0-9+/]+=*( .*)?$'; then
+		die "Invalid SSH public key format in ${INSTALLER_SSHKEY}. Expected format: 'ssh-<type> <key-data> [optional-comment]'"
+	fi
+
+	# Additional validation: try to use ssh-keygen to verify the key format
+	if command -v ssh-keygen &> /dev/null; then
+		if ! ssh-keygen -l -f "${INSTALLER_SSHKEY}" &> /dev/null; then
+			die "SSH key validation failed: ${INSTALLER_SSHKEY} is not a valid public SSH key"
+		fi
+		log_success "Verified SSH public key format"
+	else
+		log_warning "ssh-keygen not found, skipping advanced SSH key validation"
+	fi
+
 	readonly SSH_KEY
 
 	# PowerVC controller IP
