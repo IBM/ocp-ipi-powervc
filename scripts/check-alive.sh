@@ -26,6 +26,7 @@
 # REQUIRED ENVIRONMENT VARIABLES:
 #   BASEDOMAIN          - Base domain for the cluster (e.g., example.com)
 #   BASTION_USERNAME    - Username for bastion host access
+#   BASTION_METADATA    - Path to store the bastion metadata directories
 #   BASTION_RSA         - Path to RSA private key for bastion authentication
 #   CLOUD               - Cloud provider name (e.g., powervc)
 #   CONTROLLER_IP       - IP address of the controller server to monitor
@@ -91,6 +92,7 @@ readonly EXIT_INTERFACE_DETECTION_FAILED=4
 readonly REQUIRED_ENV_VARS=(
 	"BASEDOMAIN"
 	"BASTION_USERNAME"
+	"BASTION_METADATA"
 	"BASTION_RSA"
 	"CLOUD"
 	"CONTROLLER_IP"
@@ -597,7 +599,7 @@ function build_powervc_command() {
 		${POWERVC_TOOL} watch-installation
 		  --cloud "${CLOUD}"
 		  --domainName "${BASEDOMAIN}"
-		  --bastionMetadata "${HOME}"
+		  --bastionMetadata "${BASTION_METADATA}"
 		  --bastionUsername "${BASTION_USERNAME}"
 		  --bastionRsa "${BASTION_RSA}"
 		  --enableDhcpd true
