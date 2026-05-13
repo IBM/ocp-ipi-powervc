@@ -195,9 +195,9 @@ type WatchInstallationConfig struct {
 	DomainName string // DNS domain name for the cluster
 
 	// Bastion configuration
-	BastionMetadata string // Root directory where OpenShift cluster installs are located
-	BastionUsername string // SSH username for bastion VM
-	BastionRsa      string // Path to RSA key file for bastion VM
+	BastionMetadataDir string // Root directory where OpenShift cluster installs are located
+	BastionUsername    string // SSH username for bastion VM
+	BastionRsa         string // Path to RSA key file for bastion VM
 
 	// DHCP configuration
 	EnableDhcpd    bool   // Whether to enable the DHCP server
@@ -242,7 +242,7 @@ func (c *WatchInstallationConfig) Validate() error {
 	if c.DomainName == "" {
 		return fmt.Errorf("domain name is required")
 	}
-	if c.BastionMetadata == "" {
+	if c.BastionMetadataDir == "" {
 		return fmt.Errorf("bastion metadata directory is required")
 	}
 	if c.BastionUsername == "" {
@@ -647,7 +647,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Populate configuration from parsed flags
 	config.Clouds = []string(clouds)
 	config.DomainName = *ptrDomainName
-	config.BastionMetadata = *ptrBastionMetadata
+	config.BastionMetadataDir = *ptrBastionMetadata
 	config.BastionUsername = *ptrBastionUsername
 	config.BastionRsa = *ptrBastionRsa
 	config.DhcpInterface = *ptrDhcpInterface
@@ -704,7 +704,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 		log.Debugf("[INFO] Cloud[%d]: %s", i, cloud)
 	}
 	log.Debugf("[INFO] Domain name: %s", config.DomainName)
-	log.Debugf("[INFO] Bastion metadata: %s", config.BastionMetadata)
+	log.Debugf("[INFO] Bastion metadata dir: %s", config.BastionMetadataDir)
 	log.Debugf("[INFO] Bastion username: %s", config.BastionUsername)
 	log.Debugf("[INFO] Bastion RSA: %s", config.BastionRsa)
 	
@@ -798,8 +798,8 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	clouds := cloudFlags(config.Clouds)
 
 	// Gather bastion information from metadata directories
-	log.Printf("[INFO] Gathering bastion information from: %s", config.BastionMetadata)
-	bastionInformations, err := gatherBastionInformations(config.BastionMetadata, config.BastionUsername, config.BastionRsa)
+	log.Printf("[INFO] Gathering bastion information from: %s", config.BastionMetadataDir)
+	bastionInformations, err := gatherBastionInformations(config.BastionMetadataDir, config.BastionUsername, config.BastionRsa)
 	if err != nil {
 		return fmt.Errorf("failed to gather bastion information: %w", err)
 	}
@@ -2392,7 +2392,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 						errChan <- fmt.Errorf("handler panicked: %v", r)
 					}
 				}()
-				handleCreateMetadata(data, true, errChan)
+				handleCreateMetadata(config, data, true, errChan)
 			}()
 
 			// Wait for result with timeout
@@ -2442,7 +2442,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 						errChan <- fmt.Errorf("handler panicked: %v", r)
 					}
 				}()
-				handleCreateMetadata(data, false, errChan)
+				handleCreateMetadata(config, data, false, errChan)
 			}()
 
 			// Wait for result with timeout
@@ -2609,6 +2609,7 @@ func validateInfraID(infraID string) error {
 // handleCreateMetadata processes a create or delete metadata command.
 //
 // Parameters:
+//   - config: Configuration containing cloud names and other settings
 //   - data: JSON-formatted command data containing cluster metadata
 //   - shouldCreate: true to create metadata, false to delete it
 //   - errChan: Channel to send the result error (or nil for success)
@@ -2623,7 +2624,7 @@ func validateInfraID(infraID string) error {
 //  2. Removes the infrastructure ID directory
 //
 // The result (error or nil) is sent to the error channel.
-func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
+func handleCreateMetadata(config *WatchInstallationConfig, data string, shouldCreate bool, errChan chan error) {
 	var (
 		cmd            CommandSendMetadata
 		marshalledData []byte
@@ -2659,33 +2660,42 @@ func handleCreateMetadata(data string, shouldCreate bool, errChan chan error) {
 
 	if shouldCreate {
 		// Create the directory to save the metadata file in
-		err = os.MkdirAll(cmd.Metadata.InfraID, 0750)
+		dir := filepath.Join(config.BastionMetadataDir, cmd.Metadata.InfraID)
+
+		err = os.MkdirAll(dir, 0750)
 		if err != nil {
 			log.Debugf("handleCreateMetadata: os.MkdirAll() returns %v", err)
 			errChan <- err
 			return
 		}
 
-		err = os.WriteFile(fmt.Sprintf("%s/metadata.json", cmd.Metadata.InfraID), marshalledData, 0644)
+		file := filepath.Join(dir, "metadata.json")
+
+		err = os.WriteFile(file, marshalledData, 0644)
 		if err != nil {
 			log.Debugf("handleCreateMetadata: os.WriteFile() returns %v", err)
 			errChan <- err
 			return
 		}
+		log.Debugf("handleCreateMetadata: wrote %s", file)
 	} else {
-		err = os.Remove(fmt.Sprintf("%s/metadata.json", cmd.Metadata.InfraID))
+		dir := filepath.Join(config.BastionMetadataDir, cmd.Metadata.InfraID)
+		file := filepath.Join(dir, "metadata.json")
+
+		err = os.Remove(file)
 		if err != nil {
-			log.Debugf("handleCreateMetadata: os.Remove(%s/metadata.json) returns %v", cmd.Metadata.InfraID, err)
+			log.Debugf("handleCreateMetadata: os.Remove(%s) returns %v", file, err)
 			errChan <- err
 			return
 		}
 
-		err = os.Remove(cmd.Metadata.InfraID)
+		err = os.Remove(dir)
 		if err != nil {
-			log.Debugf("handleCreateMetadata: os.Remove(%s) returns %v", cmd.Metadata.InfraID, err)
+			log.Debugf("handleCreateMetadata: os.Remove(%s) returns %v", dir, err)
 			errChan <- err
 			return
 		}
+		log.Debugf("handleCreateMetadata: deleted %s", file)
 	}
 
 	errChan <- err
