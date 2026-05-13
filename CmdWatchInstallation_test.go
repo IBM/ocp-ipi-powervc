@@ -50,7 +50,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 		{
 			name:     "no flags provided",
 			args:     []string{},
-			errorMsg: "--cloud not specified",
+			errorMsg: "at least one cloud name must be specified",
 		},
 		{
 			name:     "empty cloud",
@@ -60,7 +60,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 		{
 			name:     "missing domainName",
 			args:     []string{"--cloud", "mycloud"},
-			errorMsg: "--domainName not specified",
+			errorMsg: "domain name is required",
 		},
 		{
 			name: "empty domainName",
@@ -68,7 +68,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "",
 			},
-			errorMsg: "--domainName not specified",
+			errorMsg: "domain name is required",
 		},
 		{
 			name: "missing bastionMetadata",
@@ -76,7 +76,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 			},
-			errorMsg: "--bastionMetadata not specified",
+			errorMsg: "bastion metadata directory is required",
 		},
 		{
 			name: "empty bastionMetadata",
@@ -85,7 +85,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "",
 			},
-			errorMsg: "--bastionMetadata not specified",
+			errorMsg: "bastion metadata directory is required",
 		},
 		{
 			name: "missing bastionUsername",
@@ -94,7 +94,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 			},
-			errorMsg: "--bastionUsername not specified",
+			errorMsg: "bastion username is required",
 		},
 		{
 			name: "empty bastionUsername",
@@ -104,7 +104,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "",
 			},
-			errorMsg: "--bastionUsername not specified",
+			errorMsg: "bastion username is required",
 		},
 		{
 			name: "missing bastionRsa",
@@ -114,7 +114,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
 			},
-			errorMsg: "--bastionRsa not specified",
+			errorMsg: "bastion RSA key path is required",
 		},
 		{
 			name: "empty bastionRsa",
@@ -125,7 +125,7 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--bastionUsername", "core",
 				"--bastionRsa", "",
 			},
-			errorMsg: "--bastionRsa not specified",
+			errorMsg: "bastion RSA key path is required",
 		},
 	}
 
@@ -162,7 +162,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--bastionRsa", "/tmp/key.rsa",
 				"--enableDhcpd", "true",
 			},
-			errorMsg: "--dhcpInterface not specified",
+			errorMsg: "DHCP interface is required when DHCP is enabled",
 		},
 		{
 			name: "enableDhcpd true but missing dhcpSubnet",
@@ -175,7 +175,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 			},
-			errorMsg: "--dhcpSubnet not specified",
+			errorMsg: "DHCP subnet is required when DHCP is enabled",
 		},
 		{
 			name: "enableDhcpd true but missing dhcpNetmask",
@@ -189,7 +189,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--dhcpInterface", "eth0",
 				"--dhcpSubnet", "192.168.1.0",
 			},
-			errorMsg: "--dhcpNetmask not specified",
+			errorMsg: "DHCP netmask is required when DHCP is enabled",
 		},
 		{
 			name: "enableDhcpd true but missing dhcpRouter",
@@ -204,7 +204,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--dhcpSubnet", "192.168.1.0",
 				"--dhcpNetmask", "255.255.255.0",
 			},
-			errorMsg: "--dhcpRouter not specified",
+			errorMsg: "DHCP router is required when DHCP is enabled",
 		},
 		{
 			name: "enableDhcpd true but missing dhcpDnsServers",
@@ -220,7 +220,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--dhcpNetmask", "255.255.255.0",
 				"--dhcpRouter", "192.168.1.1",
 			},
-			errorMsg: "--dhcpDnsServers not specified",
+			errorMsg: "DHCP DNS servers are required when DHCP is enabled",
 		},
 		{
 			name: "enableDhcpd true but missing dhcpServerId",
@@ -237,7 +237,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--dhcpRouter", "192.168.1.1",
 				"--dhcpDnsServers", "8.8.8.8",
 			},
-			errorMsg: "--dhcpServerId not specified",
+			errorMsg: "DHCP server ID is required when DHCP is enabled",
 		},
 		{
 			name: "invalid enableDhcpd value",
