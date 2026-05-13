@@ -736,7 +736,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	// Spawn metadata listener goroutine
 	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
 	go func() {
-		if err := listenForCommands(ctx, clouds); err != nil {
+		if err := listenForCommands(ctx, config); err != nil {
 			log.Errorf("Command listener failed: %v", err)
 			listenerErrChan <- err
 		}
@@ -2209,7 +2209,7 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 //
 // Parameters:
 //   - ctx: Context for cancellation and graceful shutdown
-//   - clouds: The cloud names to pass to connection handlers
+//   - config: Configuration containing cloud names and other settings
 //
 // Returns:
 //   - error: Any error encountered starting the listener or accepting connections
@@ -2223,7 +2223,7 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 //   - create-metadata: Create cluster metadata
 //   - delete-metadata: Delete cluster metadata
 //   - create-bastion: Create bastion server
-func listenForCommands(ctx context.Context, clouds cloudFlags) error {
+func listenForCommands(ctx context.Context, config *WatchInstallationConfig) error {
 	var (
 		closeOnce sync.Once
 		closeErr  error
@@ -2273,7 +2273,7 @@ func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 		}
 
 		// Handle the connection in a new goroutine
-		go handleConnection(ctx, conn, clouds)
+		go handleConnection(ctx, conn, config)
 	}
 }
 
@@ -2282,7 +2282,7 @@ func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 // Parameters:
 //   - ctx: Context for cancellation
 //   - conn: Network connection to the client
-//   - clouds: The cloud names for command execution
+//   - config: Configuration containing cloud names and other settings
 //
 // Returns:
 //   - error: Any error encountered reading or processing commands
@@ -2293,7 +2293,7 @@ func listenForCommands(ctx context.Context, clouds cloudFlags) error {
 // an error occurs, or the context is cancelled.
 //
 // Command format: JSON object with "command" field indicating the operation type.
-func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) error {
+func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallationConfig) error {
 	var (
 		data      string
 		cmdHeader CommandHeader
@@ -2489,7 +2489,7 @@ func handleConnection(ctx context.Context, conn net.Conn, clouds cloudFlags) err
 						errChan <- fmt.Errorf("handler panicked: %v", r)
 					}
 				}()
-				handleCreateBastion(data, clouds, errChan)
+				handleCreateBastion(data, cloudFlags(config.Clouds), errChan)
 			}()
 
 			// Wait for result with timeout (longer timeout for bastion creation)
