@@ -853,6 +853,15 @@ func TestHandleCreateMetadata(t *testing.T) {
 		t.Fatalf("Failed to change directory: %v", err)
 	}
 
+	// Create a minimal config for testing
+	config := &WatchInstallationConfig{
+		Clouds:             []string{"testcloud"},
+		DomainName:         "example.com",
+		BastionMetadataDir: tempDir,
+		BastionUsername:    "core",
+		BastionRsa:         "/tmp/test.rsa",
+	}
+
 	tests := []struct {
 		name         string
 		data         string
@@ -883,7 +892,7 @@ func TestHandleCreateMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errChan := make(chan error, 1)
-			go handleCreateMetadata(tt.data, tt.shouldCreate, errChan)
+			go handleCreateMetadata(config, tt.data, tt.shouldCreate, errChan)
 			err := <-errChan
 
 			if tt.expectError && err == nil {
