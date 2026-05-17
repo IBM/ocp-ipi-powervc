@@ -14,7 +14,7 @@ require (
 	github.com/openshift/api v0.0.0-20260511191110-9b69e5fa27e9
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/time v0.15.0
-	k8s.io/apimachinery v0.36.0
+	k8s.io/apimachinery v0.36.1
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
 	sigs.k8s.io/yaml v1.6.0
 )
