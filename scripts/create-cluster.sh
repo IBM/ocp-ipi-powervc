@@ -437,9 +437,6 @@ function cleanup_on_exit() {
 
 	if [[ ${exit_code} -ne 0 ]]; then
 		log_error "Script failed with exit code ${exit_code}"
-		if [[ -v CLUSTER_DIR ]] && [[ -n "${CLUSTER_DIR}" ]]; then
-			cleanup_metadata
-		fi
 	fi
 }
 
@@ -1048,6 +1045,11 @@ sshKey: |
 ${ssh_key}
 EOF
 
+# Example:
+#featureSet: CustomNoUpgrade
+#featureGates:
+#   - ClusterAPIInstall=true
+
 	log_info "Install configuration:"
 	echo "8<-----8<-----8<-----8<-----8<-----8<-----8<-----8<-----8<-----8<-----"
 	sed \
@@ -1144,8 +1146,6 @@ function run_openshift_install() {
 ################################################################################
 function handle_cluster_creation_failure() {
 	log_warning "Handling cluster creation failure..."
-
-	cleanup_metadata
 
 	# Get bastion credentials if not already set
 	if [[ ! -v BASTION_USERNAME ]]; then
