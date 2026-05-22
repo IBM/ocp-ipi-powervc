@@ -308,6 +308,12 @@ func findImage(ctx context.Context, cloudName string, name string) (foundImage i
 			foundImage = image
 			return foundImage, nil
 		}
+
+		if image.ID == name {
+			log.Debugf("findImage: found image %s with ID %s", image.Name, image.ID)
+			foundImage = image
+			return foundImage, nil
+		}
 	}
 
 	return images.Image{}, fmt.Errorf("could not find image named %s", name)
