@@ -240,6 +240,20 @@ function command_exists() {
 }
 
 ################################################################################
+# is_var_set: Check if an environment variable is set and not empty
+# Parameters:
+#   $1 - Variable name to check
+# Returns: 0 (true) if variable is set and non-empty, 1 (false) otherwise
+# Usage: if is_var_set "CLUSTER_NAME"; then ...; fi
+################################################################################
+function is_var_set() {
+	local var_name="$1"
+	local var_value="${!var_name:-}"
+
+	[[ -n "${var_value}" ]]
+}
+
+################################################################################
 # validate_non_empty: Ensure environment variable is set and non-empty
 # Parameters:
 #   $1 - Variable name to validate
@@ -248,9 +262,8 @@ function command_exists() {
 ################################################################################
 function validate_non_empty() {
 	local var_name="$1"
-	local var_value="${!var_name:-}"
 
-	if [[ -z "${var_value}" ]]; then
+	if ! is_var_set "${var_name}"; then
 		die "${var_name} must be set and non-empty"
 	fi
 }
@@ -593,6 +606,11 @@ function get_rhcos_info() {
 
 	if [[ -z "${RHCOS_FILENAME}" ]]; then
 		die "RHCOS_FILENAME is empty after parsing"
+	fi
+
+	if is_var_set PROJECT; then
+		log_info "Prepending project (${PROJECT}) to RHCOS filename"
+		RHCOS_FILENAME="${PROJECT}${RHCOS_FILENAME}"
 	fi
 
 	log_success "RHCOS image: ${RHCOS_FILENAME}"
