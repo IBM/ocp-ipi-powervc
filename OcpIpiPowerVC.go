@@ -169,6 +169,7 @@ const (
 	cmdCreateBastion     = "create-bastion"
 	cmdCreateRhcos       = "create-rhcos"
 	cmdCreateCluster     = "broken-create-cluster"
+	cmdEraseMetadata     = "erase-metadata"
 	cmdSendMetadata      = "send-metadata"
 	cmdWatchInstallation = "watch-installation"
 	cmdWatchCreate       = "watch-create"
@@ -236,6 +237,7 @@ var (
 		{cmdCreateBastion,     "Create bastion host"},
 		{cmdCreateRhcos,       "Create RHCOS image"},
 		{cmdCreateCluster,     "Create OpenShift cluster"},
+		{cmdEraseMetadata,     "Erase metadata matching pattern from server"},
 		{cmdSendMetadata,      "Send metadata to cluster"},
 		{cmdWatchInstallation, "Watch cluster installation progress"},
 		{cmdWatchCreate,       "Watch cluster creation process"},
@@ -249,6 +251,7 @@ var (
 		cmdCreateBastion:     createBastionCommand,
 		cmdCreateCluster:     createClusterCommand,
 		cmdCreateRhcos:       createRhcosCommand,
+		cmdEraseMetadata:     eraseMetadataCommand,
 		cmdSendMetadata:      sendMetadataCommand,
 		cmdWatchInstallation: watchInstallationCommand,
 		cmdWatchCreate:       watchCreateClusterCommand,

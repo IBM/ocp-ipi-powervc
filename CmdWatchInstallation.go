@@ -730,7 +730,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	log.Debugf("[INFO] Bastion metadata dir: %s", config.BastionMetadataDir)
 	log.Debugf("[INFO] Bastion username: %s", config.BastionUsername)
 	log.Debugf("[INFO] Bastion RSA: %s", config.BastionRsa)
-	
+
 	if config.EnableDhcpd {
 		log.Debugf("[INFO] DHCP interface: %s", config.DhcpInterface)
 		log.Debugf("[INFO] DHCP subnet: %s", config.DhcpSubnet)
@@ -739,7 +739,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 		log.Debugf("[INFO] DHCP DNS servers: %s", config.DhcpDnsServers)
 		log.Debugf("[INFO] DHCP server ID: %s", config.DhcpServerId)
 	}
-	
+
 	if config.StatsUser != "" && config.StatsPassword != "" {
 		log.Printf("[INFO] HAProxy stats enabled with username: %s", config.StatsUser)
 	} else {
@@ -2243,9 +2243,10 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 //
 // Supported commands include:
 //   - check-alive: Health check command
+//   - create-bastion: Create bastion server
 //   - create-metadata: Create cluster metadata
 //   - delete-metadata: Delete cluster metadata
-//   - create-bastion: Create bastion server
+//   - erase-metadata: erase metadata directories matching pattern
 func listenForCommands(ctx context.Context, config *WatchInstallationConfig) error {
 	var (
 		closeOnce sync.Once
@@ -2498,6 +2499,113 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 				return err
 			}
 
+		case "erase-metadata":
+			// Check if this is a pattern-based deletion or single file deletion
+			// by attempting to unmarshal as CommandEraseMetadata first
+			var eraseCmd CommandEraseMetadata
+			if unmarshalErr := json.Unmarshal([]byte(data), &eraseCmd); unmarshalErr == nil && eraseCmd.MetadataPattern != "" {
+				// This is a pattern-based deletion (erase-metadata)
+				var (
+					cmd            CommandMetadataErased
+					marshalledData []byte
+				)
+
+				log.Debugf("handleConnection: detected pattern-based erase-metadata command")
+
+				// Launch handler with panic recovery
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Errorf("[ERROR] Panic in handleEraseMetadata: %v", r)
+							errChan <- fmt.Errorf("handler panicked: %v", r)
+						}
+					}()
+					handleEraseMetadata(config, data, errChan)
+				}()
+
+				// Wait for result with timeout
+				select {
+				case result = <-errChan:
+					log.Debugf("handleConnection: result from handleEraseMetadata is %v", result)
+				case <-time.After(2 * time.Minute):
+					log.Errorf("[ERROR] Timeout waiting for handleEraseMetadata response")
+					result = fmt.Errorf("command timeout")
+				case <-ctx.Done():
+					log.Debugf("handleConnection: context cancelled while waiting for handleEraseMetadata")
+					return ctx.Err()
+				}
+
+				cmd.Command = "metadata-erased"
+				if result != nil {
+					cmd.Result = result.Error()
+				}
+				log.Debugf("handleConnection: cmd = %+v", cmd)
+
+				marshalledData, err = json.Marshal(cmd)
+				if err != nil {
+					log.Debugf("handleConnection: json.Marshal returns %v", err)
+					return err
+				}
+				log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
+
+				err = sendByteArray(conn, marshalledData, 30*time.Second)
+				if err != nil {
+					return err
+				}
+			} else {
+				// This is a single file deletion (original behavior)
+				var (
+					cmd            struct {
+						Command string `json:"Command"`
+						Result  string `json:"Result"`
+					}
+					marshalledData []byte
+				)
+
+				log.Debugf("handleConnection: detected single file erase-metadata command")
+
+				// Launch handler with panic recovery
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Errorf("[ERROR] Panic in handleCreateMetadata (delete): %v", r)
+							errChan <- fmt.Errorf("handler panicked: %v", r)
+						}
+					}()
+					handleCreateMetadata(config, data, false, errChan)
+				}()
+
+				// Wait for result with timeout
+				select {
+				case result = <-errChan:
+					log.Debugf("handleConnection: result from handleCreateMetadata is %v", result)
+				case <-time.After(2 * time.Minute):
+					log.Errorf("[ERROR] Timeout waiting for handleCreateMetadata (delete) response")
+					result = fmt.Errorf("command timeout")
+				case <-ctx.Done():
+					log.Debugf("handleConnection: context cancelled while waiting for handleCreateMetadata (delete)")
+					return ctx.Err()
+				}
+
+				cmd.Command = "metadata-deleted"
+				if result != nil {
+					cmd.Result = result.Error()
+				}
+				log.Debugf("handleConnection: cmd = %+v", cmd)
+
+				marshalledData, err = json.Marshal(cmd)
+				if err != nil {
+					log.Debugf("handleConnection: json.Marshal returns %v", err)
+					return err
+				}
+				log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
+
+				err = sendByteArray(conn, marshalledData, 30*time.Second)
+				if err != nil {
+					return err
+				}
+			}
+
 		case "create-bastion":
 			var (
 				cmd            CommandBastionCreated
@@ -2544,6 +2652,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 			if err != nil {
 				return err
 			}
+
 		default:
 			log.Debugf("handleConnection: ERROR received unknown command %s", cmdHeader.Command)
 			return fmt.Errorf("handleConnection received unknown command %s", cmdHeader.Command)
@@ -2723,6 +2832,132 @@ func handleCreateMetadata(config *WatchInstallationConfig, data string, shouldCr
 
 	errChan <- err
 	return
+}
+
+// handleEraseMetadata processes an erase-metadata command to delete metadata matching a pattern.
+//
+// Parameters:
+//   - config: Configuration containing bastion metadata directory
+//   - data: JSON-formatted command data containing the metadata pattern
+//   - errChan: Channel to send the result error (or nil for success)
+//
+// The function performs the following steps:
+//  1. Unmarshals the command data to extract the metadata pattern
+//  2. Searches for directories matching the pattern in the bastion metadata directory
+//  3. Deletes matching metadata.json files and their parent directories
+//  4. Sends the result to the error channel
+//
+// The pattern supports wildcards and is matched against infrastructure IDs.
+func handleEraseMetadata(config *WatchInstallationConfig, data string, errChan chan error) {
+	var (
+		cmd CommandEraseMetadata
+		err error
+	)
+
+	// Print the incoming data
+	log.Debugf("handleEraseMetadata: Received: %s", data)
+
+	err = json.Unmarshal([]byte(data), &cmd)
+	if err != nil {
+		log.Debugf("handleEraseMetadata: Unmarshal() returns %v", err)
+		errChan <- fmt.Errorf("failed to unmarshal erase-metadata command: %w", err)
+		return
+	}
+	log.Debugf("handleEraseMetadata: cmd.Command = %s", cmd.Command)
+	log.Debugf("handleEraseMetadata: cmd.MetadataPattern = %s", cmd.MetadataPattern)
+
+	// Validate the pattern
+	if cmd.MetadataPattern == "" {
+		log.Debugf("handleEraseMetadata: empty metadata pattern")
+		errChan <- fmt.Errorf("metadata pattern cannot be empty")
+		return
+	}
+
+	// Read the bastion metadata directory
+	entries, err := os.ReadDir(config.BastionMetadataDir)
+	if err != nil {
+		log.Debugf("handleEraseMetadata: os.ReadDir() returns %v", err)
+		errChan <- fmt.Errorf("failed to read metadata directory: %w", err)
+		return
+	}
+
+	// Convert pattern to regex (simple wildcard support: * becomes .*)
+	patternRegex := strings.ReplaceAll(cmd.MetadataPattern, "*", ".*")
+	patternRegex = "^" + patternRegex + "$"
+
+	regex, err := regexp.Compile(patternRegex)
+	if err != nil {
+		log.Debugf("handleEraseMetadata: invalid pattern %s: %v", cmd.MetadataPattern, err)
+		errChan <- fmt.Errorf("invalid metadata pattern: %w", err)
+		return
+	}
+
+	// Track deleted entries
+	deletedCount := 0
+	var deleteErrors []string
+
+	// Iterate through directories and delete matching ones
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		infraID := entry.Name()
+
+		// Check if the directory name matches the pattern
+		if !regex.MatchString(infraID) {
+			log.Debugf("handleEraseMetadata: skipping %s (does not match pattern)", infraID)
+			continue
+		}
+
+		log.Debugf("handleEraseMetadata: matched %s", infraID)
+
+		// Delete the metadata.json file
+		dir := filepath.Join(config.BastionMetadataDir, infraID)
+		file := filepath.Join(dir, "metadata.json")
+
+		if err := os.Remove(file); err != nil {
+			if !os.IsNotExist(err) {
+				errMsg := fmt.Sprintf("failed to remove %s: %v", file, err)
+				log.Debugf("handleEraseMetadata: %s", errMsg)
+				deleteErrors = append(deleteErrors, errMsg)
+				continue
+			}
+			// If file doesn't exist, still try to remove the directory
+			log.Debugf("handleEraseMetadata: %s does not exist, continuing", file)
+		} else {
+			log.Debugf("handleEraseMetadata: removed %s", file)
+		}
+
+		// Delete the directory
+		if err := os.Remove(dir); err != nil {
+			if !os.IsNotExist(err) {
+				errMsg := fmt.Sprintf("failed to remove directory %s: %v", dir, err)
+				log.Debugf("handleEraseMetadata: %s", errMsg)
+				deleteErrors = append(deleteErrors, errMsg)
+				continue
+			}
+		} else {
+			log.Debugf("handleEraseMetadata: removed directory %s", dir)
+		}
+
+		deletedCount++
+	}
+
+	// Report results
+	if len(deleteErrors) > 0 {
+		errChan <- fmt.Errorf("deleted %d entries but encountered errors: %s", deletedCount, strings.Join(deleteErrors, "; "))
+		return
+	}
+
+	if deletedCount == 0 {
+		log.Debugf("handleEraseMetadata: no metadata matching pattern '%s'", cmd.MetadataPattern)
+		errChan <- fmt.Errorf("no metadata matching pattern '%s'", cmd.MetadataPattern)
+		return
+	}
+
+	log.Printf("[INFO] handleEraseMetadata: successfully deleted %d metadata entries matching pattern '%s'", deletedCount, cmd.MetadataPattern)
+	errChan <- nil
 }
 
 // handleCreateBastion processes a create-bastion command to set up a bastion server.

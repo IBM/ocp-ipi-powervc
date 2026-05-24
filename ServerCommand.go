@@ -54,6 +54,7 @@ const (
 	serverCmdCreateBastion   = "create-bastion"
 	serverCmdCreateMetadata  = "create-metadata"
 	serverCmdDeleteMetadata  = "delete-metadata"
+	serverCmdEraseMetadata   = "erase-metadata"
 )
 
 // CommandHeader represents the base command structure with just the command name.
@@ -91,6 +92,21 @@ type CommandBastionCreated struct {
 type CommandSendMetadata struct {
 	Command  string         `json:"Command"`
 	Metadata CreateMetadata `json:"Metadata"`
+}
+
+// @TODO type CommandMetadataSent struct {
+//	Command string `json:"Command"`
+//	Result  string `json:"Result"`
+// }
+
+type CommandEraseMetadata struct {
+	Command         string `json:"Command"`
+	MetadataPattern string `json:"MetadataPattern"`
+}
+
+type CommandMetadataErased struct {
+	Command string `json:"Command"`
+	Result  string `json:"Result"`
 }
 
 // sendByteArray sends a byte array to the server connection followed by a newline.
@@ -244,6 +260,105 @@ func sendCheckAlive(ctx context.Context, serverIP string) error {
 	}
 
 	log.Debugf("sendCheckAlive: Server is alive")
+	return nil
+}
+
+// sendEraseMetadata sends an erase-metadata command to the server to delete metadata matching a pattern.
+//
+// Parameters:
+//   - ctx: Context for cancellation support
+//   - serverIP: IP address of the server
+//   - metadataPattern: Pattern to match metadata for deletion
+//
+// Returns:
+//   - error: Any error encountered during the operation
+func sendEraseMetadata(ctx context.Context, serverIP string, metadataPattern string) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
+	if serverIP == "" {
+		return fmt.Errorf("server IP cannot be empty")
+	}
+	if metadataPattern == "" {
+		return fmt.Errorf("metadata pattern cannot be empty")
+	}
+
+	var (
+		cmdIn          CommandEraseMetadata
+		cmdOut         CommandMetadataErased
+		marshalledData []byte
+		response       string
+		err            error
+	)
+
+	cmdIn = CommandEraseMetadata{
+		Command:         serverCmdEraseMetadata,
+		MetadataPattern: metadataPattern,
+	}
+
+	log.Debugf("sendEraseMetadata: Connecting to server at %s", serverIP)
+	log.Debugf("sendEraseMetadata: Erasing metadata matching pattern: %s", metadataPattern)
+
+	// Use net.Dialer with context for cancellation support
+	dialer := &net.Dialer{
+		Timeout: dialTimeout,
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(serverIP, serverPort))
+	if err != nil {
+		return fmt.Errorf("failed to connect to server %s:%s: %w", serverIP, serverPort, err)
+	}
+	defer conn.Close()
+
+	// Check if context was cancelled after connection
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled: %w", ctx.Err())
+	default:
+	}
+
+	marshalledData, err = json.Marshal(cmdIn)
+	if err != nil {
+		return fmt.Errorf("failed to marshal erase-metadata command: %w", err)
+	}
+	log.Debugf("sendEraseMetadata: Sending command: %s", string(marshalledData))
+
+	// Check if context was cancelled before sending
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before send: %w", ctx.Err())
+	default:
+	}
+
+	// Send the command to the server
+	err = sendByteArray(conn, marshalledData, writeTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to send erase-metadata command: %w", err)
+	}
+
+	// Check if context was cancelled before receiving
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled before receive: %w", ctx.Err())
+	default:
+	}
+
+	response, err = receiveResponse(conn, readTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to receive response: %w", err)
+	}
+	log.Debugf("sendEraseMetadata: Received response: %s", response)
+
+	err = json.Unmarshal([]byte(response), &cmdOut)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	log.Debugf("sendEraseMetadata: Parsed response: %+v", cmdOut)
+
+	if cmdOut.Result != "" {
+		return fmt.Errorf("server returned error: %s", cmdOut.Result)
+	}
+
+	log.Debugf("sendEraseMetadata: Metadata erased successfully")
 	return nil
 }
 
