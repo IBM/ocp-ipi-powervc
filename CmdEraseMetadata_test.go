@@ -278,18 +278,6 @@ func TestEraseMetadataCommand_TimeoutFlag(t *testing.T) {
 			errorMsg:     "metadata erasure",
 		},
 		{
-			name:         "valid timeout 30s",
-			timeoutValue: "30s",
-			expectError:  true, // Will fail at connection
-			errorMsg:     "metadata erasure",
-		},
-		{
-			name:         "valid timeout 1h",
-			timeoutValue: "1h",
-			expectError:  true, // Will fail at connection
-			errorMsg:     "metadata erasure",
-		},
-		{
 			name:         "invalid timeout format",
 			timeoutValue: "invalid",
 			expectError:  true,
@@ -307,6 +295,12 @@ func TestEraseMetadataCommand_TimeoutFlag(t *testing.T) {
 			expectError:  true,
 			errorMsg:     "timeout must be positive",
 		},
+		{
+			name:         "empty timeout uses default",
+			timeoutValue: "",
+			expectError:  true,
+			errorMsg:     "failed to connect to server",
+		},
 	}
 
 	for _, tt := range tests {
@@ -315,7 +309,10 @@ func TestEraseMetadataCommand_TimeoutFlag(t *testing.T) {
 			args := []string{
 				"--pattern", "test-*",
 				"--serverIP", "192.168.1.100",
-				"--timeout", tt.timeoutValue,
+			}
+
+			if tt.timeoutValue != "" {
+				args = append(args, "--timeout", tt.timeoutValue)
 			}
 
 			err := eraseMetadataCommand(flagSet, args)

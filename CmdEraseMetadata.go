@@ -53,7 +53,7 @@ const (
 	defaultErasePattern     = ""
 	defaultEraseServerIP    = ""
 	defaultEraseShouldDebug = "false"
-	defaultEraseTimeout     = "5m"
+	defaultEraseTimeout     = "1m"
 
 	// Usage messages
 	usageErasePattern     = "Pattern to match metadata entries for deletion (e.g., 'test-*', 'staging-*')"
