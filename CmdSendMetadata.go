@@ -60,7 +60,7 @@ const (
 	defaultSendDeleteMetadata = ""
 	defaultSendServerIP       = ""
 	defaultSendShouldDebug    = "false"
-	defaultSendTimeout        = "5m"
+	defaultSendTimeout        = "1m"
 
 	// Usage messages
 	usageSendCreateMetadata = "Create the metadata from this file"
