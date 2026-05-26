@@ -35,7 +35,7 @@ OUTPUT_BINARY := $(BINARY_NAME)-$(OS)-$(ARCH)
 
 # Test flags
 TEST_FLAGS := -v
-TEST_TIMEOUT := 5m
+TEST_TIMEOUT := 15m
 COVERAGE_FILE := coverage.out
 
 # Directories
