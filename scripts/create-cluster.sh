@@ -840,6 +840,121 @@ function verify_all_openstack_resources() {
 }
 
 ################################################################################
+# verify_pullsecret: Validate pull secret by testing image pull
+# Verifies that the pull secret file is valid and has access to the OpenShift
+# release images by:
+#   1. Checking pull secret file exists and is readable
+#   2. Extracting the release image URL from openshift-install version
+#   3. Attempting to pull the release image using the pull secret
+#   4. Cleaning up the pulled image
+#
+# This validation ensures that cluster installation won't fail due to invalid
+# or expired pull secrets, providing early feedback to the user.
+#
+# Prerequisites:
+#   - PULLSECRET_FILE environment variable must be set
+#   - openshift-install binary must be in PATH
+#   - podman must be installed and accessible
+#   - Network connectivity to image registry
+#
+# Global Variables Used:
+#   PULLSECRET_FILE - Path to the Red Hat pull secret file
+#
+# Exit Conditions:
+#   - Pull secret file not found or not readable
+#   - openshift-install command fails or returns empty output
+#   - Cannot extract release image URL from version output
+#   - Pull secret authentication fails
+#   - Image pull fails (network, registry, or permission issues)
+#
+# Side Effects:
+#   - Temporarily pulls container image (cleaned up after verification)
+#   - May leave orphaned image if cleanup fails (warning issued)
+#
+# Usage:
+#   verify_pullsecret
+#
+# Example Output:
+#   [INFO] Verifying pull secret...
+#   [INFO] Getting OpenShift installer version...
+#   [INFO] Extracting release image from version output...
+#   [INFO] Testing pull secret by pulling release image: quay.io/...
+#   [INFO] This may take a moment...
+#   [SUCCESS] Successfully pulled release image
+#   [INFO] Cleaning up pulled image...
+#   [SUCCESS] Cleaned up pulled image
+#   [SUCCESS] Pull secret verification completed successfully
+################################################################################
+function verify_pullsecret() {
+	local version_output
+	local release_image_line
+	local release_image
+	local pull_output
+
+	log_info "Verifying pull secret..."
+
+	# Validate pull secret file exists and is readable
+	if [[ ! -f "${PULLSECRET_FILE}" ]]; then
+		die "Pull secret file not found: ${PULLSECRET_FILE}"
+	fi
+	if [[ ! -r "${PULLSECRET_FILE}" ]]; then
+		die "Pull secret file is not readable: ${PULLSECRET_FILE}"
+	fi
+
+	# Get openshift-install version output
+	log_info "Getting OpenShift installer version..."
+	if ! version_output=$(openshift-install version 2>&1); then
+		die "Failed to execute 'openshift-install version'. Ensure openshift-install is in PATH and executable."
+	fi
+	if [[ -z "${version_output}" ]]; then
+		die "openshift-install version returned empty output"
+	fi
+
+	# Extract release image line
+	log_info "Extracting release image from version output..."
+	if ! release_image_line=$(echo "${version_output}" | grep -i 'release image'); then
+		die "Could not find 'release image' in openshift-install version output. Output was: ${version_output}"
+	fi
+
+	# Parse release image URL (format: "release image <image-url>")
+	# Use awk for more robust parsing instead of cut
+	release_image=$(echo "${release_image_line}" | awk '{print $3}')
+	if [[ -z "${release_image}" ]]; then
+		die "Failed to extract release image URL from line: ${release_image_line}"
+	fi
+
+	# Validate release image format (should be a registry URL)
+	if [[ ! "${release_image}" =~ ^[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/.+ ]]; then
+		log_warning "Release image URL format looks unusual: ${release_image}"
+	fi
+
+	# Attempt to pull the release image using the pull secret
+	log_info "Testing pull secret by pulling release image: ${release_image}"
+	log_info "This may take a moment..."
+
+	if ! pull_output=$(podman pull --quiet --authfile="${PULLSECRET_FILE}" "${release_image}" 2>&1); then
+		log_error "Failed to pull release image using the provided pull secret"
+		log_error "Image: ${release_image}"
+		log_error "Pull secret file: ${PULLSECRET_FILE}"
+		log_error "Error output: ${pull_output}"
+		die "Pull secret verification failed. Please check that your pull secret is valid and has access to the release image."
+	fi
+
+	log_success "Successfully pulled release image"
+
+	# Clean up the pulled image using the original release_image reference
+	# Note: podman pull output may contain additional text, so we use the known image reference
+	log_info "Cleaning up pulled image..."
+	if ! podman rmi "${release_image}" >/dev/null 2>&1; then
+		log_warning "Failed to remove pulled image ${release_image}. You may need to clean it up manually with: podman rmi ${release_image}"
+	else
+		log_success "Cleaned up pulled image"
+	fi
+
+	log_success "Pull secret verification completed successfully"
+}
+
+################################################################################
 # create_bastion_host: Create bastion host with HAProxy load balancer
 # Creates a bastion VM that serves as:
 #   - Jump host for cluster access
@@ -1238,6 +1353,7 @@ function main() {
 	get_rhcos_info
 
 	# Phase 4: Verify resources exist and are accessible
+	verify_pullsecret
 	verify_controller
 	verify_all_openstack_resources
 
