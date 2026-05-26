@@ -348,6 +348,11 @@ func getCISInstanceCRN(apiKey string, controllerSvc *resourcecontrollerv2.Resour
 		listZonesResponse             *zonesv1.ListZonesResp
 	)
 
+	if controllerSvc == nil {
+		err = fmt.Errorf("Error: getCISInstanceCRN: controllerSvc is nil")
+		return
+	}
+
 	listInstanceOptions = controllerSvc.NewListResourceInstancesOptions()
 	listInstanceOptions.SetResourceID(cisServiceID)
 	log.Debugf("getCISInstanceCRN: listInstanceOptions = %+v", listInstanceOptions)
