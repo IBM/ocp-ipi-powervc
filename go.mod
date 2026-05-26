@@ -3,7 +3,7 @@ module example/user/PowerVC-Tool
 go 1.26.0
 
 require (
-	github.com/IBM-Cloud/bluemix-go v0.0.0-20260424100510-275dcc5549eb
+	github.com/IBM-Cloud/bluemix-go v0.0.0-20260526083905-8316c06b6742
 	github.com/IBM/go-sdk-core/v5 v5.21.2
 	github.com/IBM/networking-go-sdk v0.53.4
 	github.com/IBM/platform-services-go-sdk v0.97.4
@@ -11,10 +11,10 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260511191110-9b69e5fa27e9
+	github.com/openshift/api v0.0.0-20260521125114-09730f85d883
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/time v0.15.0
-	k8s.io/apimachinery v0.36.0
+	k8s.io/apimachinery v0.36.1
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
 	sigs.k8s.io/yaml v1.6.0
 )
