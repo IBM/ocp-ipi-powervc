@@ -402,6 +402,20 @@ function parse_arguments() {
 				esac
 				shift 2
 				;;
+			--cloud)
+				if [[ -z "${2:-}" ]]; then
+					die "Error: --cloud requires a value"
+				fi
+				CLOUD="${2}"
+				shift 2
+				;;
+			--project)
+				if [[ -z "${2:-}" ]]; then
+					die "Error: --project requires a value"
+				fi
+				PROJECT="${2}"
+				shift 2
+				;;
 			-h|--help)
 				show_usage
 				exit 0
