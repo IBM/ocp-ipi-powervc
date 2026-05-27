@@ -6,7 +6,7 @@ require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260526083905-8316c06b6742
 	github.com/IBM/go-sdk-core/v5 v5.21.2
 	github.com/IBM/networking-go-sdk v0.53.4
-	github.com/IBM/platform-services-go-sdk v0.97.4
+	github.com/IBM/platform-services-go-sdk v0.98.0
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.12.0
