@@ -24,12 +24,13 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
-	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
-	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
+	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 
@@ -829,4 +830,46 @@ func findHypervisorInList(allHypervisors []hypervisors.Hypervisor, name string) 
 	}
 
 	return hypervisors.Hypervisor{}, fmt.Errorf("could not find hypervisor named %s in list of %d hypervisors", name, len(allHypervisors))
+}
+
+// createNetworkPort creates a network port for the server.
+// The port is named "<bastionName>-port" and attached to the specified network.
+func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID string) (*ports.Port, error) {
+	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network client: %w", err)
+	}
+
+	portCreateOpts := ports.CreateOpts{
+		Name:        fmt.Sprintf("%s-port", bastionName),
+		NetworkID:   networkID,
+		Description: "Bastion server network port",
+	}
+
+	port, err := ports.Create(ctx, connNetwork, portCreateOpts).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create port: %w", err)
+	}
+
+	return port, nil
+}
+
+// deleteNetworkPort deletes a network port by its ID.
+// Returns an error if the port cannot be deleted.
+func deleteNetworkPort(ctx context.Context, cloudName string, createdPort *ports.Port) error {
+	if createdPort == nil || createdPort.ID == "" {
+		return nil
+	}
+
+	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
+	if err != nil {
+		return fmt.Errorf("failed to create network client: %w", err)
+	}
+
+	err = ports.Delete(ctx, connNetwork, createdPort.ID).ExtractErr()
+	if err != nil {
+		return fmt.Errorf("failed to delete port: %w", err)
+	}
+
+	return nil
 }
