@@ -1,18 +1,19 @@
 module example/user/PowerVC-Tool
 
-go 1.26.0
+go 1.26.3
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260526083905-8316c06b6742
-	github.com/IBM/go-sdk-core/v5 v5.21.2
+	github.com/IBM/go-sdk-core/v5 v5.21.3
 	github.com/IBM/networking-go-sdk v0.53.4
-	github.com/IBM/platform-services-go-sdk v0.97.4
+	github.com/IBM/platform-services-go-sdk v0.98.0
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260521125114-09730f85d883
+	github.com/openshift/api v0.0.0-20260528061300-9f553042f9ae
 	github.com/sirupsen/logrus v1.9.4
+	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
 	k8s.io/apimachinery v0.36.1
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
@@ -42,13 +43,12 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
-	github.com/vincent-petithory/dataurl v1.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.6 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
