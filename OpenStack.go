@@ -31,6 +31,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 
@@ -378,15 +379,100 @@ func findNetwork(ctx context.Context, cloudName string, name string) (foundNetwo
 
 	for _, network = range allNetworks {
 		log.Debugf("findNetwork: checking network.Name = %s, network.ID = %s", network.Name, network.ID)
+	}
+	log.Debugf("findNetwork:")
+	for _, network = range allNetworks {
+		log.Debugf("findNetwork: checking network.Name = %s, network.ID = %s", network.Name, network.ID)
 
 		if network.Name == name {
-			log.Debugf("findNetwork: found network %s with ID %s", network.Name, network.ID)
+			log.Debugf("findNetwork: found network Name %s with ID %s", network.Name, network.ID)
+			foundNetwork = network
+			return foundNetwork, nil
+		}
+
+		if network.ID == name {
+			log.Debugf("findNetwork: found network ID %s", network.ID)
 			foundNetwork = network
 			return foundNetwork, nil
 		}
 	}
 
 	return networks.Network{}, fmt.Errorf("could not find network named %s", name)
+}
+
+// findSubnet searches for an OpenStack subnet by name.
+// It retrieves all available subnets and returns the one matching the specified name.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - cloudName: Name of the cloud configuration
+//   - name: Name of the subnet to find
+//
+// Returns:
+//   - subnets.Subnet: The found subnet
+//   - error: Error if subnet not found or API call fails
+func findSubnet(ctx context.Context, cloudName string, name string) (foundSubnet subnets.Subnet, err error) {
+	if cloudName == "" {
+		return subnets.Subnet{}, fmt.Errorf("cloud name cannot be empty")
+	}
+	if name == "" {
+		return subnets.Subnet{}, fmt.Errorf("subnet name cannot be empty")
+	}
+
+	var (
+		pager      pagination.Page
+		allSubnets []subnets.Subnet
+		subnet     subnets.Subnet
+	)
+
+	connNetwork, err := getServiceClient(ctx, "network", cloudName)
+	if err != nil {
+		return subnets.Subnet{}, fmt.Errorf("failed to get network service client: %w", err)
+	}
+
+	backoff := createDefaultBackoff(ctx)
+
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			err2 error
+		)
+
+		log.Debugf("findSubnet: duration = %v, calling subnets.List", leftInContext(ctx))
+		pager, err2 = subnets.List(connNetwork, subnets.ListOpts{}).AllPages(ctx)
+		if err2 != nil {
+			log.Debugf("findSubnet: subnets.List returned error: %v", err2)
+			return false, nil
+		}
+
+		allSubnets, err2 = subnets.ExtractSubnets(pager)
+		if err2 != nil {
+			log.Debugf("findSubnet: subnets.ExtractSubnets returned error: %v", err2)
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return subnets.Subnet{}, fmt.Errorf("failed to list subnets: %w", err)
+	}
+
+	for _, subnet = range allSubnets {
+		log.Debugf("findSubnet: checking subnet.Name = %s, subnet.ID = %s", subnet.Name, subnet.ID)
+
+		if subnet.Name == name {
+			log.Debugf("findSubnet: found subnet Name %s with ID %s", subnet.Name, subnet.ID)
+			foundSubnet = subnet
+			return foundSubnet, nil
+		}
+
+		if subnet.ID == name {
+			log.Debugf("findSubnet: found subnet ID %s", subnet.ID)
+			foundSubnet = subnet
+			return foundSubnet, nil
+		}
+	}
+
+	return subnets.Subnet{}, fmt.Errorf("could not find subnet named %s", name)
 }
 
 // findServer searches for an OpenStack server (VM) by name.

@@ -53,7 +53,13 @@ import (
 	"time"
 
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
+
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
+
+	"github.com/vincent-petithory/dataurl"
+
 	"k8s.io/utils/ptr"
 )
 
@@ -610,10 +616,9 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 // Workflow:
 //  1. Parse and validate command-line flags
 //  2. Initialize logging based on debug flag
-//  3. Generate Ignition configuration for bootstrap
-//  4. Find existing server or create new one
-//  5. Configure SSH known_hosts
-//  6. Set up DNS records (if IBM Cloud API key provided)
+//  3. Find existing server or create new one
+//  4. Configure SSH known_hosts
+//  5. Set up DNS records (if IBM Cloud API key provided)
 //
 // Parameters:
 //   - createRhcosFlags: FlagSet for parsing command-line arguments
@@ -631,7 +636,7 @@ func innerCreateRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) erro
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Initialize logger
+	// Step 2: Initialize logger
 	log = initLogger(config.ShouldDebug)
 	if config.ShouldDebug {
 		log.Debugf("Debug mode enabled")
@@ -649,17 +654,9 @@ func innerCreateRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) erro
 
 	log.Debugf("Operation timeout set to: %s", timeout)
 
-	// Step 2: Generate ignition user data
-	printProgress(progressStepIgnition)
-	userData, err := createBootstrapIgnition(config.PasswdHash, config.SshPublicKey)
-	if err != nil {
-		return fmt.Errorf("failed to create bootstrap ignition: %w", err)
-	}
-	log.Debugf("Ignition configuration generated successfully (%d bytes)", len(userData))
-
 	// Step 3: Find or create the server
 	printProgress(progressStepFinding)
-	foundServer, err := findOrCreateRhcosServerWithRetry(ctx, config, userData)
+	foundServer, err := findOrCreateRhcosServerWithRetry(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to find or create server: %w", err)
 	}
@@ -739,7 +736,7 @@ func printProgress(step string) {
 // Returns:
 //   - servers.Server: The found or newly created server
 //   - error: Any error encountered during search or creation
-func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
+func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.Server, error) {
 	// Check context before starting
 	if err := ctx.Err(); err != nil {
 		return servers.Server{}, fmt.Errorf("context cancelled before finding server: %w", err)
@@ -763,16 +760,76 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 		log.Debugf("Server %s not found, creating new server", config.RhcosName)
 		fmt.Printf("Server %s not found, creating...\n", config.RhcosName)
 
+		network, err := findNetwork(ctx, config.Clouds[0], config.NetworkName)
+		if err != nil {
+			return servers.Server{}, fmt.Errorf("failed to find network %q: %w", config.NetworkName, err)
+		}
+		log.Debugf("findOrCreateRhcosServer: network = %+v", network)
+
+		var (
+			subnet      subnets.Subnet
+			foundSubnet = false
+		)
+
+		for _, subnetName := range network.Subnets {
+			log.Debugf("findOrCreateRhcosServer: subnetName = %s", subnetName)
+
+			subnet, err = findSubnet(ctx, config.Clouds[0], subnetName)
+			if err != nil {
+				return servers.Server{}, fmt.Errorf("failed to find subnet %q: %w", subnetName, err)
+			}
+			foundSubnet = true
+		}
+		if !foundSubnet {
+			return servers.Server{}, fmt.Errorf("failed to find a subnet for network %q", network.Name)
+		}
+		log.Debugf("findOrCreateRhcosServer: subnet.CIDR = %s", subnet.CIDR)
+		log.Debugf("findOrCreateRhcosServer: subnet.GatewayIP = %s", subnet.GatewayIP)
+		log.Debugf("findOrCreateRhcosServer: subnet.DNSNameservers = %+v", subnet.DNSNameservers)
+
+		port, err := createNetworkPort(ctx, config.Clouds[0], config.RhcosName, network.ID)
+		if err != nil {
+			return servers.Server{}, fmt.Errorf("failed to create network port: %w", err)
+		}
+		log.Debugf("findOrCreateRhcosServer: port.ID = %v", port.ID)
+		for i, ip := range port.FixedIPs {
+			log.Debugf("findOrCreateRhcosServer: port[%d].SubnetID  = %s", i, ip.SubnetID)
+			log.Debugf("findOrCreateRhcosServer: port[%d].IPAddress = %s", i, ip.IPAddress)
+		}
+
+		// cleanupPort removes the network port if server creation fails
+		// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
+		cleanupPort := func(createdPort *ports.Port) {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupPortTimeout)
+			defer cancel()
+
+			if deleteErr := deleteNetworkPort(cleanupCtx, config.Clouds[0], createdPort); deleteErr != nil {
+				log.Debugf("Warning: failed to cleanup port %s: %v", port.ID, deleteErr)
+			}
+		}
+
+		// Generate ignition user data
+		printProgress(progressStepIgnition)
+		userData, err := createBootstrapIgnition(config, port, subnet)
+		if err != nil {
+			cleanupPort(port)
+
+			return servers.Server{}, fmt.Errorf("failed to create bootstrap ignition: %w", err)
+		}
+		log.Debugf("Ignition configuration generated successfully (%d bytes)", len(userData))
+
 		if err := createServer(ctx,
+			config.RhcosName,
 			config.Clouds[0],
 			config.AvailabilityZone,
 			config.FlavorName,
 			config.ImageName,
-			config.NetworkName,
+			port,
 			"", // No SSH key for RHCOS (uses ignition)
-			config.RhcosName,
 			userData,
 		); err != nil {
+			cleanupPort(port)
+
 			return servers.Server{}, fmt.Errorf("failed to create server: %w", err)
 		}
 
@@ -780,6 +837,8 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 
 		// Check context before retrieving server
 		if err := ctx.Err(); err != nil {
+			cleanupPort(port)
+
 			return servers.Server{}, fmt.Errorf("context cancelled before retrieving server: %w", err)
 		}
 
@@ -787,6 +846,8 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 		log.Debugf("Retrieving newly created server: %s", config.RhcosName)
 		foundServer, err = findServer(ctx, config.Clouds, config.RhcosName)
 		if err != nil {
+			cleanupPort(port)
+
 			return servers.Server{}, fmt.Errorf("failed to find newly created server: %w", err)
 		}
 	} else {
@@ -809,9 +870,9 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig, userData 
 // Returns:
 //   - servers.Server: The found or newly created server
 //   - error: Any error encountered during search or creation after all retries
-func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig, userData []byte) (servers.Server, error) {
+func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig) (servers.Server, error) {
 	return retryOperation(ctx, "find or create server", func() (servers.Server, error) {
-		return findOrCreateRhcosServer(ctx, config, userData)
+		return findOrCreateRhcosServer(ctx, config)
 	})
 }
 
@@ -1220,17 +1281,17 @@ func ensureSSHDirectory(sshDir string) error {
 // Returns:
 //   - []byte: JSON-encoded Ignition configuration
 //   - error: Any error encountered during generation or validation
-func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
+func createBootstrapIgnition(config *rhcosConfig, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
 
 	// Validate inputs
-	if passwdHash == "" {
+	if config.PasswdHash == "" {
 		return nil, &ValidationError{
 			Field:   "passwdHash",
 			Message: "cannot be empty",
 		}
 	}
-	if sshKey == "" {
+	if config.SshPublicKey == "" {
 		return nil, &ValidationError{
 			Field:   "sshKey",
 			Message: "cannot be empty",
@@ -1238,7 +1299,7 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 	}
 
 	// Build Ignition v3.2 configuration with user credentials
-	config := igntypes.Config{
+	ignConfig := igntypes.Config{
 		Ignition: igntypes.Ignition{
 			Version: igntypes.MaxVersion.String(),
 			Timeouts: igntypes.Timeouts{
@@ -1249,17 +1310,81 @@ func createBootstrapIgnition(passwdHash, sshKey string) ([]byte, error) {
 			Users: []igntypes.PasswdUser{
 				{
 					Name:         "core",
-					PasswordHash: ptr.To(passwdHash),
+					PasswordHash: ptr.To(config.PasswdHash),
 					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
-						igntypes.SSHAuthorizedKey(sshKey),
+						igntypes.SSHAuthorizedKey(config.SshPublicKey),
 					},
 				},
 			},
 		},
 	}
 
+	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
+		nmFormat := `[connection]
+id=env32
+type=ethernet
+interface-name=env32
+autoconnect=true
+
+[ipv4]
+address1=%s/%s
+gateway=%s
+dns=%s
+dns-search=
+may-fail=false
+method=manual
+`
+
+		nmConfig := fmt.Sprintf(nmFormat,
+			port.FixedIPs[0].IPAddress,
+			extractNetmask(subnet.CIDR),
+			subnet.GatewayIP,
+			strings.Join(subnet.DNSNameservers, " "),
+		)
+		log.Debugf("createBootstrapIgnition: nmConfig = %s", nmConfig)
+
+		dnsFile := buildResolvConf(subnet.DNSNameservers)
+		log.Debugf("createBootstrapIgnition: dnsFile = %s", dnsFile)
+
+		ignConfig.Storage = igntypes.Storage{
+			Files: []igntypes.File{
+				igntypes.File{
+					Node: igntypes.Node{
+						Path: "/etc/NetworkManager/system-connections/static.nmconnection",
+						User: igntypes.NodeUser{
+							Name: ptr.To("root"),
+						},
+						Overwrite: ptr.To(true),
+					},
+					FileEmbedded1: igntypes.FileEmbedded1{
+						Mode: ptr.To(0600), // NetworkManager requires 600 permissions
+						Contents: igntypes.Resource{
+							Source: ptr.To(dataurl.EncodeBytes([]byte(nmConfig))),
+						},
+					},
+				},
+				igntypes.File{
+					Node: igntypes.Node{
+						Path: "/etc/resolv.conf",
+						User: igntypes.NodeUser{
+							Name: ptr.To("root"),
+						},
+						Overwrite: ptr.To(true),
+					},
+					FileEmbedded1: igntypes.FileEmbedded1{
+						Mode: ptr.To(0644),
+						Contents: igntypes.Resource{
+							Source: ptr.To(dataurl.EncodeBytes([]byte(dnsFile))),
+						},
+					},
+				},
+			},
+		}
+
+	}
+
 	// Marshal configuration to JSON format
-	byteData, err := json.Marshal(config)
+	byteData, err := json.Marshal(ignConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal ignition config: %w", err)
 	}

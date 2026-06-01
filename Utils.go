@@ -486,3 +486,58 @@ func leftInContext(ctx context.Context) time.Duration {
 	}
 	return remaining
 }
+
+// extractNetmask extracts the netmask from an IP address with CIDR notation.
+// It accepts formats like "192.168.1.10/24" and returns just the netmask part (e.g., "24").
+// If the input doesn't contain a netmask, it returns an empty string.
+//
+// Parameters:
+//   - ipWithNetmask: IP address string that may include CIDR notation (e.g., "10.0.0.1/24")
+//
+// Returns:
+//   - string: The netmask portion (e.g., "24"), or empty string if no netmask is present
+//
+// Examples:
+//   - "192.168.1.10/24" returns "24"
+//   - "10.0.0.1/16" returns "16"
+//   - "192.168.1.10" returns ""
+//   - "2001:db8::1/64" returns "64"
+func extractNetmask(ipWithNetmask string) string {
+	// Find the position of the slash separator
+	slashIndex := strings.Index(ipWithNetmask, "/")
+
+	// If no slash found, there's no netmask
+	if slashIndex == -1 {
+		return ""
+	}
+
+	// Return everything after the slash
+	return ipWithNetmask[slashIndex+1:]
+}
+
+// buildResolvConf creates a formatted resolv.conf-style string with nameserver entries.
+// Each DNS server address is prefixed with "nameserver ".
+//
+// Parameters:
+//   - nameservers: Array of DNS server IP addresses or hostnames
+//
+// Returns:
+//   - string: A formatted string with each nameserver on a new line, prefixed with "nameserver"
+//
+// Examples:
+//   - []string{"8.8.8.8", "8.8.4.4"} returns "nameserver 8.8.8.8\nnameserver 8.8.4.4"
+//   - []string{} returns ""
+//   - []string{"192.168.1.1"} returns "nameserver 192.168.1.1"
+func buildResolvConf(nameservers []string) string {
+	if len(nameservers) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	for _, nameserver := range nameservers {
+		builder.WriteString(fmt.Sprintf("nameserver %s\n", nameserver))
+	}
+
+	return builder.String()
+}

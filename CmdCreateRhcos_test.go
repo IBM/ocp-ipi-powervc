@@ -28,6 +28,7 @@ import (
 
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 )
 
 // TestRhcosConfig_Validate tests the validation logic for rhcosConfig
@@ -483,16 +484,17 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		passwdHash  string
-		sshKey      string
+		config      *rhcosConfig
 		expectError bool
 		errorMsg    string
 		validate    func(*testing.T, []byte)
 	}{
 		{
-			name:        "valid ignition config",
-			passwdHash:  validPasswdHash,
-			sshKey:      validSSHKey,
+			name: "valid ignition config",
+			config: &rhcosConfig{
+				PasswdHash:   validPasswdHash,
+				SshPublicKey: validSSHKey,
+			},
 			expectError: false,
 			validate: func(t *testing.T, data []byte) {
 				// Verify it's valid JSON
@@ -522,23 +524,29 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 			},
 		},
 		{
-			name:        "empty password hash",
-			passwdHash:  "",
-			sshKey:      validSSHKey,
+			name: "empty password hash",
+			config: &rhcosConfig{
+				PasswdHash:   "",
+				SshPublicKey: validSSHKey,
+			},
 			expectError: true,
 			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
 		},
 		{
-			name:        "empty ssh key",
-			passwdHash:  validPasswdHash,
-			sshKey:      "",
+			name: "empty ssh key",
+			config: &rhcosConfig{
+				PasswdHash:   validPasswdHash,
+				SshPublicKey: "",
+			},
 			expectError: true,
 			errorMsg:    "validation error for field 'sshKey': cannot be empty",
 		},
 		{
-			name:        "both empty",
-			passwdHash:  "",
-			sshKey:      "",
+			name: "both empty",
+			config: &rhcosConfig{
+				PasswdHash:   "",
+				SshPublicKey: "",
+			},
 			expectError: true,
 			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
 		},
@@ -546,7 +554,7 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := createBootstrapIgnition(tt.passwdHash, tt.sshKey)
+			data, err := createBootstrapIgnition(tt.config, nil, subnets.Subnet{})
 
 			if tt.expectError {
 				if err == nil {
@@ -577,7 +585,12 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 	validSSHKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCO3alJO5kWvxwcbEPYOEu3Un+OpWqymH6Ac4dM8H9WEJzgezUStOdU3Hg/EEPb//YqMSsOGSKSXztBooTZ54GgUjkuT4rbMwvGQ+dOc1HMdjmuaONfpLO9By7RHHRinXSmyTIjm4gpxCgQoHbzk+gpDf5cboAff/T6WnpNRCJ/eJbr8x7xOlFRx2XtIuYupXpVPzr3g69wy7SJELdx/PPKbqW+6ESwuxW1mpBBPCVcuI9Jc27dwvcIn56gb5J2pW2zicPthsyNe8iiIgeDk0j+n5Sd5sdPfR/71wYdG6f9AuUQSM1ACGO4nwcnE6vMgZHDXfcSL3iIPX6bEyU1/kIj test@example.com"
 	validPasswdHash := "$6$VYFiXXFrvaiKEVT5$WIuYicg2xplrn.Id1ZclKSKsfJMIROP2qVhgjy60kSQJ8I33doMcAzOnPQilTw4bdOmw4I6pEd3Y70nDROPBM."
 
-	data, err := createBootstrapIgnition(validPasswdHash, validSSHKey)
+	config := &rhcosConfig{
+		PasswdHash:   validPasswdHash,
+		SshPublicKey: validSSHKey,
+	}
+
+	data, err := createBootstrapIgnition(config, nil, subnets.Subnet{})
 	if err != nil {
 		t.Fatalf("Failed to create ignition config: %v", err)
 	}

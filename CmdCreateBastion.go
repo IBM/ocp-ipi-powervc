@@ -32,7 +32,6 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 
 	// Third-party imports - IBM SDK
@@ -763,37 +762,95 @@ func cleanupBastionIPFile(filename string) error {
 
 // ensureServerExists checks if server exists and creates it if needed.
 // If the server already exists, it returns immediately.
-// If the server doesn't exist, it creates it and verifies the creation.
+// ensureServerExists checks if a bastion server exists and creates it if necessary.
+//
+// The function performs the following operations:
+//  1. Checks if the server already exists using findServer
+//  2. If the server exists, returns immediately (idempotent operation)
+//  3. If the server doesn't exist, creates it by:
+//     a. Finding the target network by name
+//     b. Creating a network port on that network
+//     c. Creating the server with the specified configuration
+//  4. Verifies the server was successfully created
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - config: BastionConfig containing all server creation parameters including:
+//     * BastionName: Name of the server to create
+//     * Clouds: OpenStack cloud configurations (uses first cloud for creation)
+//     * NetworkName: Network to attach the server to
+//     * AvailabilityZone: Zone where the server will be created
+//     * FlavorName: Server flavor/size
+//     * ImageName: OS image to use
+//     * SshKeyName: SSH key for server access
+//
+// Returns:
+//   - nil if the server exists or was successfully created
+//   - ErrServerNotFound wrapped error if server lookup fails unexpectedly
+//   - Wrapped error if network lookup, port creation, server creation, or verification fails
+//
+// The function is idempotent - calling it multiple times with the same configuration
+// will not create duplicate servers.
 func ensureServerExists(ctx context.Context, config *BastionConfig) error {
+	// Step 1: Check if the server already exists (idempotent check)
+	// This allows the function to be called multiple times safely
 	_, err := findServer(ctx, config.Clouds, config.BastionName)
 	if err == nil {
+		// Server found - nothing to do, return success
 		log.Debugf("Server %s already exists", config.BastionName)
 		return nil
 	}
 
+	// Handle unexpected errors from findServer (not just "not found")
+	// ErrServerNotFound is expected and means we should create the server
 	if !errors.Is(err, ErrServerNotFound) {
 		return fmt.Errorf("unknown error found in ensureServerExists: %w", err)
 	}
 
-	// Server doesn't exist, create it
+	// Step 2: Server doesn't exist, proceed with creation
 	fmt.Printf("Server %s not found, creating...\n", config.BastionName)
 
+	// Step 3: Locate the target network where the server will be attached
+	// The network must exist before we can create a port on it
+	network, err := findNetwork(ctx, config.Clouds[0], config.NetworkName)
+	if err != nil {
+		return fmt.Errorf("failed to find network %q: %w", config.NetworkName, err)
+	}
+	log.Debugf("ensureServerExists: network = %+v", network)
+
+	// Step 4: Create a network port for the server
+	// The port provides the network interface and IP address allocation
+	port, err := createNetworkPort(ctx, config.Clouds[0], config.BastionName, network.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create network port: %w", err)
+	}
+	// Log port details for debugging network connectivity issues
+	log.Debugf("ensureServerExists: port.ID = %v", port.ID)
+	for i, ip := range port.FixedIPs {
+		log.Debugf("ensureServerExists: port[%d].SubnetID  = %s", i, ip.SubnetID)
+		log.Debugf("ensureServerExists: port[%d].IPAddress = %s", i, ip.IPAddress)
+	}
+
+	// Step 5: Create the server instance with all specified configuration
+	// The server is created with the network port, SSH key, and other settings
 	if err := createServer(ctx,
+		config.BastionName,
 		config.Clouds[0],
 		config.AvailabilityZone,
 		config.FlavorName,
 		config.ImageName,
-		config.NetworkName,
+		port,
 		config.SshKeyName,
-		config.BastionName,
-		nil,
+		nil, // No user data script
 	); err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
 
 	fmt.Println("Server created successfully!")
 
-	// Verify server was created
+	// Step 6: Verify the server was actually created and is discoverable
+	// This ensures the creation operation completed successfully and the server
+	// is visible in the OpenStack API before we proceed with further operations
 	if _, err := findServer(ctx, config.Clouds, config.BastionName); err != nil {
 		return fmt.Errorf("server verification failed after creation: %w", err)
 	}
@@ -834,19 +891,44 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 	return nil
 }
 
-// createServer creates a new OpenStack server with the specified configuration.
-// It handles resource lookup, port creation, and server provisioning.
-func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, imageName, networkName, sshKeyName, bastionName string, userData []byte) error {
+// createServer creates a new OpenStack server (bastion host) with the specified configuration.
+//
+// This function orchestrates the complete server creation workflow by:
+//  1. Looking up required OpenStack resources (flavor, image, SSH keypair)
+//  2. Creating the server instance with the provided network port
+//  3. Waiting for the server to reach ACTIVE state
+//  4. Performing automatic cleanup on any failures
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - bastionName: Name to assign to the new server instance
+//   - cloudName: OpenStack cloud name from clouds.yaml
+//   - availabilityZone: Availability zone where the server will be created
+//   - flavorName: Name of the compute flavor (defines CPU, RAM, disk)
+//   - imageName: Name of the OS image to boot from
+//   - port: Pre-created network port to attach to the server
+//   - sshKeyName: Name of SSH keypair for authentication (empty string to skip)
+//   - userData: Cloud-init user data for server initialization (can be nil)
+//
+// Returns:
+//   - error: nil on success, or an error describing what went wrong
+//
+// Error Handling:
+//   - If resource lookup fails, returns immediately with error
+//   - If server creation fails, automatically deletes the network port
+//   - If server doesn't become ACTIVE in time, deletes both server and port
+//   - All cleanup operations use independent contexts to ensure completion
+func createServer(ctx context.Context, bastionName, cloudName, availabilityZone, flavorName, imageName string, port *ports.Port, sshKeyName string, userData []byte) error {
 	var (
 		flavor           flavors.Flavor
 		image            images.Image
-		network          networks.Network
 		sshKeyPair       keypairs.KeyPair
 		newServer        *servers.Server
 		err              error
 	)
 
-	// Step 1: Lookup OpenStack resources
+	// Step 1: Lookup OpenStack resources by name to get their IDs
+	// These lookups validate that all required resources exist before attempting server creation
 	flavor, err = findFlavor(ctx, cloudName, flavorName)
 	if err != nil {
 		return fmt.Errorf("failed to find flavor %q: %w", flavorName, err)
@@ -859,12 +941,7 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 	}
 	log.Debugf("createServer: image = %+v", image)
 
-	network, err = findNetwork(ctx, cloudName, networkName)
-	if err != nil {
-		return fmt.Errorf("failed to find network %q: %w", networkName, err)
-	}
-	log.Debugf("createServer: network = %+v", network)
-
+	// SSH keypair is optional - only lookup if a key name was provided
 	if sshKeyName != "" {
 		sshKeyPair, err = findKeyPair(ctx, cloudName, sshKeyName)
 		if err != nil {
@@ -873,14 +950,10 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 		log.Debugf("createServer: sshKeyPair = %+v", sshKeyPair)
 	}
 
-	// Step 2: Create network port
-	port, err := createNetworkPort(ctx, cloudName, bastionName, network.ID)
-	if err != nil {
-		return fmt.Errorf("failed to create network port: %w", err)
-	}
-	log.Debugf("createServer: port.ID = %v", port.ID)
+	// Step 2: Define cleanup functions for error recovery
+	// These use independent contexts to ensure cleanup completes even if the original context is cancelled
 
-	// Cleanup port on failure
+	// cleanupPort removes the network port if server creation fails
 	// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
 	cleanupPort := func(createdPort *ports.Port) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupPortTimeout)
@@ -891,12 +964,14 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 		}
 	}
 
+	// cleanupServerAndPort removes both the server and its network port
+	// Server must be deleted first before the port can be removed
 	cleanupServerAndPort := func(server *servers.Server, createdPort *ports.Port) {
 		// Uses a fresh context with timeout to ensure cleanup completes even if original context is cancelled
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupServerTimeout)
 		defer cancel()
 
-		// Delete server first
+		// Delete server first - port cannot be deleted while still attached to a server
 		if deleteErr := deleteServer(cleanupCtx, cloudName, server); deleteErr != nil {
 			if server == nil {
 				log.Debugf("Warning: failed to cleanup nil server: %v", deleteErr)
@@ -904,13 +979,15 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 				log.Debugf("Warning: failed to cleanup server %v: %v", server.ID, deleteErr)
 			}
 		}
+		// Then cleanup the port
 		cleanupPort(createdPort)
 	}
 
-	// Step 3: Create server
+	// Step 3: Create the server instance with all validated resources
+	// Pass resource IDs (not names) to the actual creation function
 	newServer, err = createServerInstance(ctx,
-		cloudName,
 		bastionName,
+		cloudName,
 		availabilityZone,
 		flavor.ID,
 		image.ID,
@@ -920,89 +997,85 @@ func createServer(ctx context.Context, cloudName, availabilityZone, flavorName, 
 		userData,
 	)
 	if err != nil {
+		// Server creation failed - cleanup the port since it won't be used
 		cleanupPort(port)
+
 		return fmt.Errorf("failed to create server instance: %w", err)
 	}
 	log.Debugf("createServer: newServer = %+v", newServer)
 
-	// Step 4: Wait for server to be ready
+	// Step 4: Wait for server to reach ACTIVE state
+	// This ensures the server is fully provisioned and ready for use
 	if err := waitForServer(ctx, cloudName, bastionName); err != nil {
+		// Server didn't become ready in time - cleanup both server and port
 		cleanupServerAndPort(newServer, port)
+
 		return fmt.Errorf("server creation timeout: %w", err)
 	}
 
 	return nil
 }
 
-// createNetworkPort creates a network port for the server.
-// The port is named "<bastionName>-port" and attached to the specified network.
-func createNetworkPort(ctx context.Context, cloudName, bastionName, networkID string) (*ports.Port, error) {
-	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create network client: %w", err)
-	}
-
-	portCreateOpts := ports.CreateOpts{
-		Name:        fmt.Sprintf("%s-port", bastionName),
-		NetworkID:   networkID,
-		Description: "Bastion server network port",
-	}
-
-	port, err := ports.Create(ctx, connNetwork, portCreateOpts).Extract()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create port: %w", err)
-	}
-
-	return port, nil
-}
-
-// deleteNetworkPort deletes a network port by its ID.
-// Returns an error if the port cannot be deleted.
-func deleteNetworkPort(ctx context.Context, cloudName string, createdPort *ports.Port) error {
-	if createdPort == nil || createdPort.ID == "" {
-		return nil
-	}
-
-	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
-	if err != nil {
-		return fmt.Errorf("failed to create network client: %w", err)
-	}
-
-	err = ports.Delete(ctx, connNetwork, createdPort.ID).ExtractErr()
-	if err != nil {
-		return fmt.Errorf("failed to delete port: %w", err)
-	}
-
-	return nil
-}
-
-// createServerInstance creates the actual server instance.
-// If sshKeyName is empty, the server is created without an SSH key.
-func createServerInstance(ctx context.Context, cloudName, bastionName, availabilityZone, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
+// createServerInstance creates the actual OpenStack server instance via the Nova API.
+//
+// This is a lower-level function that performs the actual server creation API call.
+// It should be called by createServer after all resources have been validated and looked up.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - bastionName: Name to assign to the server instance
+//   - cloudName: OpenStack cloud name from clouds.yaml
+//   - availabilityZone: Availability zone where the server will be created
+//   - flavorID: UUID of the compute flavor (not the name)
+//   - imageID: UUID of the OS image (not the name)
+//   - portID: UUID of the pre-created network port to attach
+//   - sshKeyName: Original SSH key name (used for conditional logic, can be empty)
+//   - sshKeyPairName: OpenStack keypair name to inject (used only if sshKeyName is not empty)
+//   - userData: Cloud-init user data for server initialization (can be nil)
+//
+// Returns:
+//   - *servers.Server: The newly created server object with its ID and initial state
+//   - error: nil on success, or an error if the API call fails
+//
+// Behavior:
+//   - If sshKeyName is empty, creates server without SSH key injection
+//   - If sshKeyName is provided, uses keypairs.CreateOptsExt to inject the SSH key
+//   - The server is created in BUILD state and transitions to ACTIVE asynchronously
+//   - Caller is responsible for waiting until the server reaches ACTIVE state
+func createServerInstance(ctx context.Context, bastionName, cloudName, availabilityZone, flavorID, imageID, portID, sshKeyName, sshKeyPairName string, userData []byte) (*servers.Server, error) {
+	// Establish connection to OpenStack Nova (compute) service
 	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloudName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
 
+	// Build the base server creation options with all required parameters
+	// Note: All IDs (flavor, image, port) must be UUIDs, not names
 	serverCreateOpts := servers.CreateOpts{
 		AvailabilityZone: availabilityZone,
 		FlavorRef:        flavorID,
 		ImageRef:         imageID,
 		Name:             bastionName,
-		Networks:         []servers.Network{{Port: portID}},
-		UserData:         userData,
+		Networks:         []servers.Network{{Port: portID}}, // Attach to pre-created port
+		UserData:         userData,                          // Cloud-init configuration
 	}
 
 	var newServer *servers.Server
+
+	// Conditionally inject SSH keypair based on whether one was provided
 	if sshKeyName != "" {
+		// Create server with SSH key injection using the keypairs extension
+		// This allows SSH access using the private key corresponding to sshKeyPairName
 		newServer, err = servers.Create(ctx,
 			connCompute,
 			keypairs.CreateOptsExt{
 				CreateOptsBuilder: serverCreateOpts,
-				KeyName:           sshKeyPairName,
+				KeyName:           sshKeyPairName, // OpenStack keypair name
 			},
 			nil).Extract()
 	} else {
+		// Create server without SSH key injection
+		// Access will depend on cloud-init userData or other authentication methods
 		newServer, err = servers.Create(ctx, connCompute, serverCreateOpts, nil).Extract()
 	}
 
@@ -1010,6 +1083,7 @@ func createServerInstance(ctx context.Context, cloudName, bastionName, availabil
 		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
 
+	// Return the server object - it will be in BUILD state initially
 	return newServer, nil
 }
 
