@@ -55,5 +55,6 @@ jobs:
           scripts/console.sh
           scripts/ssh.sh
           scripts/print-stream-json.sh
+          scripts/upload-rhcos.sh
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
