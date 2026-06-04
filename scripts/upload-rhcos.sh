@@ -971,7 +971,7 @@ function call_pvsadm() {
 #   SCRIPT_DIR - Directory containing the script (used to locate OVA file)
 #   DRY_RUN - If true, skips actual execution and only displays command
 # External Dependencies:
-#   powervc-go - PowerVC control tool (note: displays pvcctl in echo but runs powervc-go)
+#    pvcctl - PowerVC control tool
 # Command Details:
 #   - image import-linux: Import Linux image into PowerVC
 #   - --image: Path to the OVA image file (expects .ova.gz extension)
@@ -1023,8 +1023,7 @@ function call_pvcctl() {
 	fi
 
 	# Execute the pvcctl image import-linux command
-	# pvcctl \
-	powervc-go \
+	pvcctl \
 		image import-linux \
 		--image "${converted_filename}" \
 		--name "${filename}" \
