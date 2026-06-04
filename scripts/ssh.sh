@@ -262,8 +262,7 @@ function prompt_input() {
 # show_usage - Print command help and usage examples
 #
 # Displays command syntax, supported options, relevant environment variables,
-# and common invocation examples. This function writes help text to stdout and
-# does not perform argument validation itself.
+# and common invocation examples. This function writes help text to stdout.
 #
 # Arguments:
 #   None
@@ -324,9 +323,9 @@ EOF
 #
 # Processes command-line arguments, handles help and execution flags, validates
 # that a server name was provided, and determines whether the requested target
-# is an infrastructure-managed node or a custom server name. For infrastructure
-# nodes, the final OpenStack server name is derived later from the cluster
-# infraID; custom names are accepted as-is.
+# should be treated as an infra-managed node or a custom server name. Standard
+# bootstrap/master/worker names are expanded later with the cluster infraID;
+# custom names are stored directly in SERVER.
 #
 # Arguments:
 #   $@ - Command-line arguments passed to the script
@@ -478,8 +477,8 @@ function collect_cluster_directory() {
 # extract_metadata - Read cloud and infra identifiers from metadata.json
 #
 # Loads cluster metadata from CLUSTER_DIR/metadata.json and extracts the
-# OpenStack cloud name and installer-generated infraID using jq. These values
-# are required to identify the OpenStack resources associated with the cluster.
+# OpenStack cloud name and installer-generated infraID using jq. The CLOUD
+# value from metadata overrides any existing environment value.
 #
 # Arguments:
 #   None
@@ -559,8 +558,8 @@ function get_server_name() {
 #------------------------------------------------------------------------------
 # query_server_info - Fetch OpenStack server inventory and target details
 #
-# Queries OpenStack for the available server list, verifies that the cluster's
-# infrastructure nodes exist when applicable, and then retrieves shell-formatted
+# Queries OpenStack for the available server list, verifies that matching
+# infraID-based servers exist when applicable, and then retrieves shell-formatted
 # details for the target server. Output is staged in a temporary file that is
 # removed automatically on shell exit.
 #
@@ -627,8 +626,8 @@ function query_server_info() {
 # extract_server_address - Parse the SSH target IP from server details
 #
 # Reads the shell-formatted OpenStack server details captured in TMP_FILE,
-# locates the addresses field, and extracts the first parsed IP address used
-# for SSH connectivity. The parsing logic assumes the OpenStack CLI returns the
+# locates the addresses field, and extracts the IP address using the current
+# sed-based parsing logic. The parsing assumes the OpenStack CLI returns the
 # expected addresses representation.
 #
 # Arguments:
@@ -708,10 +707,10 @@ function validate_ssh_key() {
 #------------------------------------------------------------------------------
 # generate_ssh_command - Build a printable SSH helper command
 #
-# Constructs a single shell command string that refreshes the known_hosts entry
-# for the target IP, records the current host key, and opens an interactive SSH
-# session as the `core` user. This command is intended for display to users when
-# --execute is not requested.
+# Constructs a single shell command string that removes any existing known_hosts
+# entry for the target IP, records the current host key, and opens an interactive
+# SSH session as the `core` user. This command is intended for display to users
+# when --execute is not requested.
 #
 # Arguments:
 #   None
@@ -829,10 +828,11 @@ function execute_ssh_connection() {
 # cluster node:
 # 1. Parse command-line arguments
 # 2. Check required programs
-# 3. Collect cluster configuration (for infrastructure servers)
-# 4. Query server information from OpenStack
-# 5. Validate SSH key
-# 6. Generate and execute/display SSH command
+# 3. For infra targets, collect cluster configuration and extract metadata
+# 4. For custom targets, require CLOUD from the environment
+# 5. Resolve and query server information from OpenStack
+# 6. Validate SSH key
+# 7. Generate and execute/display SSH command
 #
 # Arguments:
 #   $@ - All command-line arguments (passed to parse_arguments)

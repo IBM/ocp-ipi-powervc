@@ -201,7 +201,8 @@ function validate_programs() {
 #
 # Processes each container matching the optional filter, deleting all objects
 # before removing the container itself. Continues on individual failures to
-# process as many containers as possible.
+# process as many containers as possible. Checks cloud connectivity before
+# processing and provides detailed statistics on completion.
 #
 # Arguments:
 #   $1 - (optional) Infrastructure ID filter

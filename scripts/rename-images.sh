@@ -324,12 +324,12 @@ function collect_environment_variables() {
 	if [[ ! -v PROJECT ]]; then
 		prompt_input "What project ID should we filter for" "PROJECT"
 	fi
-	
+
 	# Optional: Image pattern (defaults to rhcos-* if not set)
 	if [[ ! -v IMAGE_PATTERN ]]; then
 		prompt_input "What image name pattern to match" "IMAGE_PATTERN" "rhcos-*" true
 	fi
-	
+
 	# Optional: Dry-run mode
 	if [[ ! -v DRY_RUN ]]; then
 		DRY_RUN="false"
@@ -368,9 +368,9 @@ function validate_environment_variables() {
 function show_usage() {
 	cat <<-EOF
 		Usage: ${SCRIPT_NAME} [OPTIONS]
-		
+
 		Rename OpenStack images by adding a prefix to their names.
-		
+
 		OPTIONS:
 		    -h, --help          Show this help message
 		    -d, --dry-run       Preview changes without executing
@@ -378,14 +378,14 @@ function show_usage() {
 		    -p, --prefix TEXT   Prefix to add to image names
 		    -j, --project ID    Project ID to filter images
 		    -i, --pattern GLOB  Image name pattern (default: rhcos-*)
-		
+
 		ENVIRONMENT VARIABLES:
 		    CLOUD          - OpenStack cloud name (required)
 		    PREFIX         - Prefix to add (required)
 		    PROJECT        - Project ID (required)
 		    IMAGE_PATTERN  - Image name pattern (optional)
 		    DRY_RUN        - Set to 'true' for dry-run mode (optional)
-		
+
 		EXAMPLES:
 		    # Interactive mode
 		    ${SCRIPT_NAME}
@@ -488,13 +488,13 @@ function get_image_owner() {
 	local uuid="$1"
 	local cloud="$2"
 	local owner=""
-	
+
 	if ! owner=$(openstack --os-cloud="${cloud}" image show "${uuid}" \
 		--format=value --column=owner 2>/dev/null); then
 		log_warning "Failed to retrieve owner for image ${uuid}"
 		return 1
 	fi
-	
+
 	echo "${owner}"
 }
 
@@ -510,23 +510,23 @@ function filter_images() {
 	local name="$1"
 	local owner="$2"
 	local pattern="${3:-rhcos-*}"
-	
+
 	# Check if owner matches project
 	if [[ "${owner}" != "${PROJECT}" ]]; then
 		return 1
 	fi
-	
+
 	# Check if name matches pattern
 	if [[ ! "${name}" == ${pattern} ]]; then
 		return 1
 	fi
-	
+
 	# Skip if already has prefix
 	if [[ "${name}" == ${PREFIX}* ]]; then
 		log_info "Skipping '${name}' - already has prefix"
 		return 1
 	fi
-	
+
 	return 0
 }
 
@@ -544,19 +544,19 @@ function rename_image() {
 	local current_name="$2"
 	local new_name="$3"
 	local cloud="$4"
-	
+
 	log_info "Renaming: '${current_name}' -> '${new_name}'"
-	
+
 	if [[ "${DRY_RUN}" == "true" ]]; then
 		log_warning "[DRY-RUN] Would rename image ${uuid}"
 		return 0
 	fi
-	
+
 	if ! openstack --os-cloud="${cloud}" image set --name "${new_name}" "${uuid}" 2>&1; then
 		log_error "Failed to rename image ${uuid}"
 		return 1
 	fi
-	
+
 	log_success "Successfully renamed image ${uuid}"
 	return 0
 }
@@ -572,44 +572,44 @@ function process_images() {
 	local processed_images=0
 	local failed_images=0
 	local skipped_images=0
-	
+
 	log_info "Processing images with pattern: ${image_pattern}"
 	log_info "Target project: ${PROJECT}"
 	log_info "Prefix to add: ${PREFIX}"
-	
+
 	if [[ "${DRY_RUN}" == "true" ]]; then
 		log_warning "DRY-RUN MODE: No changes will be made"
 	fi
-	
+
 	# Get image list
 	if ! openstack --os-cloud="${CLOUD}" image list \
 		--format=value --column=ID --column=Name --column=Status > "${FILE}" 2>&1; then
 		die "Failed to retrieve image list from OpenStack"
 	fi
-	
+
 	# Process each image
 	while IFS=$' ' read -r uuid name status; do
 		# Skip empty lines
 		[[ -z "${uuid}" ]] && continue
-		
+
 		total_images=$((total_images + 1))
-		
+
 		# Get image owner
 		local owner
 		if ! owner=$(get_image_owner "${uuid}" "${CLOUD}"); then
 			failed_images=$((failed_images + 1))
 			continue
 		fi
-		
+
 		# Filter images
 		if ! filter_images "${name}" "${owner}" "${image_pattern}"; then
 			skipped_images=$((skipped_images + 1))
 			continue
 		fi
-		
+
 		# Construct new name
 		local new_name="${PREFIX}${name}"
-		
+
 		# Rename image
 		if rename_image "${uuid}" "${name}" "${new_name}" "${CLOUD}"; then
 			processed_images=$((processed_images + 1))
@@ -618,7 +618,7 @@ function process_images() {
 		fi
 	#done < "${FILE}"
         done < <(grep "${IMAGE_PATTERN}" "${FILE}")
-	
+
 	# Display summary
 	log_info "=========================================="
 	log_info "Image Processing Summary"
@@ -628,12 +628,12 @@ function process_images() {
 	log_info "Images skipped: ${skipped_images}"
 	log_info "Images failed: ${failed_images}"
 	log_info "=========================================="
-	
+
 	if [[ ${failed_images} -gt 0 ]]; then
 		log_warning "Some images failed to process"
 		return 1
 	fi
-	
+
 	return 0
 }
 
@@ -645,19 +645,19 @@ function confirm_operation() {
 	if [[ "${DRY_RUN}" == "true" ]]; then
 		return 0
 	fi
-	
+
 	log_warning "This operation will rename images in project: ${PROJECT}"
 	log_warning "Prefix to add: ${PREFIX}"
 	log_warning "Cloud: ${CLOUD}"
-	
+
 	local response
 	read -rp "Do you want to continue? (yes/no): " response
-	
+
 	if [[ "${response}" != "yes" ]]; then
 		log_info "Operation cancelled by user"
 		return 1
 	fi
-	
+
 	return 0
 }
 
@@ -685,7 +685,7 @@ function main() {
 	collect_environment_variables
 	verify_openstack_connectivity
 	validate_environment_variables
-	
+
 	# Display configuration
 	log_info "Configuration:"
 	log_info "  Cloud: ${CLOUD}"
@@ -693,13 +693,13 @@ function main() {
 	log_info "  Prefix: ${PREFIX}"
 	log_info "  Pattern: ${IMAGE_PATTERN:-rhcos-*}"
 	log_info "  Dry-run: ${DRY_RUN}"
-	
+
 	# Phase 3: Confirm and process images
 	if ! confirm_operation; then
 		log_info "Operation cancelled"
 		exit 0
 	fi
-	
+
 	if ! process_images; then
 		die "Image processing completed with errors"
 	fi

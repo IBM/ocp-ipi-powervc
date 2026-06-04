@@ -16,14 +16,16 @@
 
 #==============================================================================
 # Script: print-stream-json.sh
-# Description: Download and verify OpenShift RHCOS images for multiple releases
+# Description: Download CoreOS JSON metadata and verify RHCOS images exist in OpenStack
 #
 # Features:
 #   - Support for multiple release versions via --release parameter
 #   - Multiple output formats: text, JSON, CSV
 #   - Verbose mode for detailed debugging
 #   - Dry-run mode for testing without actual verification
-#   - Automatic fallback to multiple CoreOS JSON sources
+#   - Automatic fallback to multiple CoreOS JSON sources (rhcos.json, rhel-9, rhel-10)
+#   - RHEL version preference (rhel9 or rhel10)
+#   - Optional project name prefix for image names
 #   - Comprehensive error handling and reporting
 #   - Execution time tracking and summary statistics
 #
@@ -53,6 +55,7 @@ readonly COLOR_RED='\033[0;31m'      # Error messages
 readonly COLOR_GREEN='\033[0;32m'    # Success messages
 readonly COLOR_YELLOW='\033[1;33m'   # Warning messages
 readonly COLOR_BLUE='\033[0;34m'     # Info messages
+readonly COLOR_CYAN='\033[0;36m'     # Debug messages
 readonly COLOR_RESET='\033[0m'       # Reset to default
 
 #==============================================================================
@@ -202,7 +205,13 @@ function check_required_programs() {
 
 #------------------------------------------------------------------------------
 # Function: check_openstack_cli
-# Description: Checks for the existence of the OpenStack CLI
+# Description: Verify OpenStack CLI is available (skipped in dry-run mode)
+# Arguments: None
+# Returns:
+#   0 - OpenStack CLI found or dry-run mode enabled
+#   1 - OpenStack CLI not found (exits via die)
+# Global Variables:
+#   DRY_RUN - If true, skips the check
 # Example: check_openstack_cli
 #------------------------------------------------------------------------------
 function check_openstack_cli() {
@@ -342,6 +351,8 @@ function verify_openstack_resource() {
 #   QUIET - Suppress log output (except errors)
 #   OUTPUT_FORMAT - Output format (text, json, csv)
 #   RHEL_VERSION - RHEL version preference (rhel9, rhel10, or empty)
+#   CLOUD - OpenStack cloud name (optional, can be set via environment)
+#   PROJECT - Project name prefix for image names (optional)
 # Supported Options:
 #   --release <version> - Specify release (can be used multiple times)
 #   -v, --verbose - Enable verbose output
@@ -349,6 +360,8 @@ function verify_openstack_resource() {
 #   --dry-run - Simulate operations
 #   --format <type> - Output format (text, json, csv)
 #   --rhel <version> - RHEL version preference (rhel9 or rhel10)
+#   --cloud <name> - OpenStack cloud name (overrides CLOUD env var)
+#   --project <name> - Project name prefix for image names
 #   -h, --help - Show usage information
 # Example: parse_arguments "$@"
 #------------------------------------------------------------------------------
@@ -431,7 +444,7 @@ function parse_arguments() {
 		RELEASES=("release-4.21")
 		log_warning "No release specified, using default: release-4.21"
 	fi
-	
+
 	# Verbose and quiet are mutually exclusive
 	if [[ "${VERBOSE}" == "true" && "${QUIET}" == "true" ]]; then
 		die "Error: --verbose and --quiet cannot be used together"
@@ -442,7 +455,7 @@ function parse_arguments() {
 		log_info "Enabling quiet mode for structured output format: ${OUTPUT_FORMAT}"
 		QUIET=true
 	fi
-	
+
 	log_debug "Parsed arguments: RELEASES=(${RELEASES[*]}), VERBOSE=${VERBOSE}, QUIET=${QUIET}, DRY_RUN=${DRY_RUN}, OUTPUT_FORMAT=${OUTPUT_FORMAT}, RHEL_VERSION=${RHEL_VERSION}"
 }
 
@@ -458,13 +471,15 @@ function show_usage() {
 	cat <<EOF
 Usage: ${SCRIPT_NAME} [OPTIONS]
 
-Download and verify OpenShift RHCOS images for specified releases.
+Download CoreOS JSON metadata and verify RHCOS images exist in OpenStack.
 
 OPTIONS:
     --release <version>    Specify a release version (can be used multiple times)
                           Example: --release release-4.21 --release release-4.22
     --rhel <version>      Prefer specific RHEL version: rhel9 or rhel10
                           If not specified, tries all available versions
+    --cloud <name>        OpenStack cloud name (overrides CLOUD env var)
+    --project <name>      Project name prefix to prepend to image names
     -v, --verbose         Enable verbose output with debug information
     -q, --quiet           Suppress log output (errors still shown)
                           Cannot be used with --verbose
@@ -473,7 +488,8 @@ OPTIONS:
     -h, --help            Show this help message
 
 ENVIRONMENT VARIABLES:
-    CLOUD                 OpenStack cloud name from clouds.yaml (required)
+    CLOUD                 OpenStack cloud name from clouds.yaml (required unless --cloud used)
+    PROJECT               Project name prefix for image names (optional unless --project used)
     DEBUG                 Enable debug mode (optional, default: false)
 
 EXAMPLES:
@@ -524,11 +540,11 @@ EOF
 function can_curl() {
 	local url="$1"
 	local http_code
-	
+
 	log_debug "Checking URL: ${url}"
 	http_code=$(curl --silent --location --max-time 30 --connect-timeout 10 --output /dev/null --write-out "%{http_code}" "${url}")
 	log_debug "HTTP status code: ${http_code}"
-	
+
 	if [[ "${http_code}" -ne 200 ]]; then
 		return 1
 	fi
@@ -554,7 +570,7 @@ function can_curl() {
 function download_coreos_json() {
 	local release="$1"
 	local -a urls=()
-	
+
 	# Build URL list based on RHEL_VERSION preference
 	if [[ "${RHEL_VERSION}" == "rhel9" ]]; then
 		urls=(
@@ -578,7 +594,7 @@ function download_coreos_json() {
 		)
 		log_debug "Trying all CoreOS JSON variants in default order"
 	fi
-	
+
 	for url in "${urls[@]}"; do
 		log_debug "Trying URL: ${url}"
 		if can_curl "${url}"; then
@@ -592,7 +608,7 @@ function download_coreos_json() {
 			log_debug "URL not available: ${url}"
 		fi
 	done
-	
+
 	log_error "Could not download CoreOS JSON from any known location for release ${release}"
 	return 1
 }
@@ -618,12 +634,12 @@ function download_coreos_json() {
 #------------------------------------------------------------------------------
 function extract_image_info() {
 	local -n result=$1
-	
+
 	if ! jq -r '.architectures.ppc64le.artifacts.openstack' "${FILE1}" > "${FILE2}" 2>/dev/null; then
 		log_error "Failed to extract OpenStack artifacts from JSON"
 		return 1
 	fi
-	
+
 	result[download_url]=$(jq -r '.formats."qcow2.gz".disk.location' "${FILE2}" 2>/dev/null)
 	if [[ -z "${result[download_url]}" || "${result[download_url]}" == "null" ]]; then
 		log_error "Failed to extract download URL from JSON"
@@ -632,12 +648,13 @@ function extract_image_info() {
 
 	result[filename]="${result[download_url]##*/}"
 	result[filename]="${result[filename]%.qcow2.gz}"
+	# Optionally prepend project name if PROJECT variable is set
 	if is_var_set PROJECT; then
-		log_info "Prepending project (${PROJECT}) to RHCOS filename"
+		log_info "Prepending project name (${PROJECT}) to RHCOS filename"
 		result[filename]="${PROJECT}${result[filename]}"
 	fi
 	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
-	
+
 	return 0
 }
 
@@ -676,7 +693,7 @@ function output_result() {
 	local release="$1"
 	local -n info=$2
 	local status="$3"
-	
+
 	case "${OUTPUT_FORMAT}" in
 		json)
 			jq -n \
@@ -729,31 +746,31 @@ function process_release() {
 	image_info[filename]=""
 	image_info[download_url]=""
 	image_info[sha256]=""
-	
+
 	log_info "Processing release: ${release}"
-	
+
 	# Download CoreOS JSON
 	if ! download_coreos_json "${release}"; then
 		output_result "${release}" image_info "failed"
 		return 1
 	fi
-	
+
 	# Extract image information
 	if ! extract_image_info image_info; then
 		output_result "${release}" image_info "failed"
 		return 1
 	fi
-	
+
 	log_info "Download URL: ${image_info[download_url]}"
 	log_info "Filename: ${image_info[filename]}"
 	log_debug "SHA256: ${image_info[sha256]}"
-	
+
 	# Verify OpenStack resource
 	if ! verify_openstack_resource "image" "${image_info[filename]}"; then
 		output_result "${release}" image_info "not_found"
 		return 1
 	fi
-	
+
 	output_result "${release}" image_info "success"
 	log_success "Successfully processed release: ${release}"
 	if [[ "${QUIET}" != "true" ]]; then
@@ -795,18 +812,18 @@ function main() {
 	local start_time
 	local end_time
 	local duration
-	
+
 	start_time=$(date +%s)
-	
+
 	# Parse command line arguments first (before any logging)
 	parse_arguments "$@"
 
 	check_openstack_cli
-	
+
 	log_info "Starting OpenShift RHCOS image verification script"
 	log_info "Script: ${SCRIPT_NAME}"
 	log_info "Working directory: $(pwd)"
-	
+
 	if [[ "${DRY_RUN}" == "true" ]]; then
 		log_warning "Running in DRY RUN mode - no actual verification will be performed"
 	fi
@@ -839,20 +856,20 @@ function main() {
 	if [[ "${QUIET}" != "true" ]]; then
 		echo ""
 	fi
-	
+
 	local failed_releases=()
 	local successful_releases=()
 	local release_count=0
-	
+
 	for release in "${RELEASES[@]}"; do
 		release_count=$((release_count + 1))
-		
+
 		if process_release "${release}"; then
 			successful_releases+=("${release}")
 		else
 			failed_releases+=("${release}")
 		fi
-		
+
 		# Add comma separator for JSON (except for last item)
 		if [[ "${OUTPUT_FORMAT}" == "json" && ${release_count} -lt ${#RELEASES[@]} ]]; then
 			echo ","
@@ -879,12 +896,12 @@ function main() {
 	log_info "  Failed: ${#failed_releases[@]}"
 	log_info "  Duration: ${duration} seconds"
 	log_info "=========================================="
-	
+
 	if [[ ${#failed_releases[@]} -gt 0 ]]; then
 		log_error "Failed to process ${#failed_releases[@]} release(s): ${failed_releases[*]}"
 		exit 1
 	fi
-	
+
 	log_success "All releases processed successfully!"
 }
 

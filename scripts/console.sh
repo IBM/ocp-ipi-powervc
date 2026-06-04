@@ -46,7 +46,7 @@
 #   0 - Success
 #   1 - Error (various failure conditions)
 #
-# Copyright 2025 IBM Corp
+# Copyright 2026 IBM Corp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -400,7 +400,7 @@ function parse_arguments() {
 # check_required_programs - Verify all required programs are installed
 #
 # Checks that all required command-line tools are available in PATH.
-# Required programs: jq, openstack, yq, curl, ping
+# Required programs: jq, openstack, yq, curl, ping, sshpass
 #
 # Arguments:
 #   None

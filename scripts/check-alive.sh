@@ -40,16 +40,21 @@
 #   DEBUG               - Enable debug output (true/false, default: false)
 #   CHECK_INTERVAL      - Seconds between health checks (default: 60)
 #   TMUX_SESSION_NAME   - Name of tmux session to use (default: auto-detect)
+#   DHCP_STATS_USER     - Username for DHCP statistics (optional, can be empty)
+#   DHCP_STATS_PASSWORD - Password for DHCP statistics (optional, can be empty)
 #
 # FEATURES:
 #   - Validates all required environment variables before starting
-#   - Checks for required programs (ocp-ipi-powervc, awk, cut, ip, tmux, tr)
+#   - Checks for required programs (ocp-ipi-powervc-linux-{arch}, awk, cut, date, ip, tmux, tr)
 #   - Continuously monitors controller server availability
 #   - Automatically restarts watch-installation on server failure
 #   - Logs all output with timestamps
 #   - Supports graceful shutdown on SIGINT/SIGTERM
-#   - Auto-detects system architecture (x86_64/amd64/ppc64le)
-#   - Auto-detects network interface for DHCP
+#   - Auto-detects system architecture (x86_64->amd64, ppc64le)
+#   - Auto-detects network interface for DHCP (excludes lo and vir*)
+#   - Auto-detects tmux session if not specified
+#   - Tracks health check count and failure count
+#   - Logs server recovery after failures
 #
 # EXIT CODES:
 #   0 - Normal exit (interrupted by signal)
@@ -67,6 +72,9 @@
 #
 #   # With debug output
 #   DEBUG=true ./check-alive.sh
+#
+#   # With specific tmux session
+#   TMUX_SESSION_NAME=mysession ./check-alive.sh
 
 set -uo pipefail
 

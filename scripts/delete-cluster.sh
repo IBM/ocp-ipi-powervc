@@ -604,13 +604,18 @@ function cleanup_cluster_directory() {
 	fi
 }
 
-################################################################################
-# cleanup_on_exit: Trap handler for script exit
-# Automatically cleans up resources on script failure
-# Registered via: trap cleanup_on_exit EXIT
-# Cleans up:
-#   - Temporary cluster metadata
-################################################################################
+#------------------------------------------------------------------------------
+# Function: cleanup_on_exit
+# Description: Trap handler for script exit. Automatically cleans up temporary
+#              resources and restores metadata on script failure. Registered via
+#              trap cleanup_on_exit EXIT.
+# Side Effects:
+#   - Removes temporary directory (TEMP_DIR) if it exists
+#   - Restores metadata.json to CLUSTER_DIR if script failed and directory was removed
+# Exit Behavior:
+#   - Logs error message if exit code is non-zero
+#   - Always executes cleanup regardless of exit status
+#------------------------------------------------------------------------------
 function cleanup_on_exit() {
 	local exit_code=$?
 

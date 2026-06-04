@@ -21,16 +21,17 @@
 # This script orchestrates the complete process of creating an OpenShift cluster
 # on PowerVC infrastructure, including:
 #   - Environment validation and prerequisite checks
+#   - Pull secret validation with podman
 #   - Bastion host creation with HAProxy load balancer
 #   - DNS propagation verification
 #   - OpenShift installation configuration generation
 #   - Cluster deployment via openshift-install
-#   - Metadata management and cleanup on failure
+#   - Failure diagnostics via watch-create
 #
 # The script provides interactive prompts for required parameters or accepts
 # them via environment variables for automation.
 #
-# Environment Variables (all optional, will prompt if not set):
+# Environment Variables:
 #   CLOUD               - OpenStack cloud name from clouds.yaml
 #   BASEDOMAIN          - Base DNS domain for the cluster (e.g., example.com)
 #   BASTION_IMAGE_NAME  - OpenStack image for bastion host
@@ -38,19 +39,20 @@
 #   CLUSTER_DIR         - Installation directory (default: test)
 #   CLUSTER_NAME        - Name of the OpenShift cluster
 #   FLAVOR_NAME         - OpenStack flavor for cluster nodes
-#   MACHINE_TYPE        - OpenStack availability zone
+#   MACHINE_TYPE        - OpenStack availability zone used in install-config
 #   NETWORK_NAME        - OpenStack network for cluster
-#   PULL_SECRET         - Red Hat pull secret for image registry
-#   PULLSECRET_FILE     - Path to file containing pull secret
+#   PULL_SECRET         - Pull secret content used in install-config
+#   PULLSECRET_FILE     - Path to pull secret file used for validation/loading
 #   INSTALLER_SSHKEY    - Path to SSH public key for cluster nodes
 #   CONTROLLER_IP       - IP address of PowerVC controller
 #   SSHKEY_NAME         - OpenStack keypair name for bastion
-#   BASTION_RSA         - Path to SSH private key for bastion (failure recovery)
+#   PROJECT             - Optional prefix prepended to the RHCOS image name
+#   BASTION_RSA         - Path to SSH private key for bastion (failure diagnostics)
 #
 # Required Files:
 #   ~/.config/openstack/clouds.yaml - OpenStack authentication configuration
 #   ${INSTALLER_SSHKEY}             - SSH public key file
-#   ${PULLSECRET_FILE}              - Pull secret file (if using file)
+#   ${PULLSECRET_FILE}              - Pull secret file (when used)
 #
 # Dependencies:
 #   - ocp-ipi-powervc-linux-{arch}: PowerVC automation tool
@@ -58,24 +60,26 @@
 #   - openstack: OpenStack CLI client
 #   - jq: JSON processor
 #   - getent: DNS resolution utility
-#   - ping: Network connectivity testing
+#   - podman: Pull secret validation
+#   - ssh-keygen: Optional SSH public key validation
+#   - ping: Controller connectivity check
 #
 # Generated Files:
-#   ${CLUSTER_DIR}/install-config.yaml  - OpenShift installation configuration
-#   ${CLUSTER_DIR}/metadata.json        - Cluster metadata
-#   ${CLUSTER_DIR}/auth/kubeconfig      - Cluster admin credentials
+#   ${CLUSTER_DIR}/install-config.yaml    - OpenShift installation configuration
+#   ${CLUSTER_DIR}/metadata.json          - Cluster metadata
+#   ${CLUSTER_DIR}/auth/kubeconfig        - Cluster admin credentials
 #   ${CLUSTER_DIR}/auth/kubeadmin-password - Admin password
-#   /tmp/bastionIp                      - Temporary bastion IP storage
+#   ${TEMP_BASTION_IP}                    - Temporary bastion IP storage
 #
 # Exit Codes:
 #   0 - Cluster created successfully
 #   1 - Validation failure, missing dependencies, or cluster creation failure
 #
 # Usage Examples:
-#   # Interactive mode (prompts for all inputs)
+#   # Interactive mode (prompts for missing inputs)
 #   ./create-cluster.sh
 #
-#   # With environment variables (automated)
+#   # With environment variables
 #   export CLOUD=mycloud
 #   export BASEDOMAIN=example.com
 #   export CLUSTER_NAME=mycluster
@@ -91,43 +95,42 @@
 #   export CONTROLLER_IP=192.168.1.100
 #   ./create-cluster.sh
 #
-#   # With inline pull secret
+#   # With inline pull secret content
 #   export PULL_SECRET='{"auths":{"cloud.openshift.com":{"auth":"..."}}}'
 #   ./create-cluster.sh
 #
 # Process Flow:
-#   1. Initialize and validate prerequisites
-#   2. Collect and validate environment variables
-#   3. Verify OpenStack connectivity and resources
-#   4. Retrieve network and RHCOS image information
-#   5. Verify PowerVC controller connectivity
-#   6. Create bastion host with HAProxy
-#   7. Wait for DNS propagation (wildcard, api, api-int)
-#   8. Verify VIP matches DNS resolution
-#   9. Generate install-config.yaml
-#   10. Create ignition configs and send metadata to controller
-#   11. Create manifests
-#   12. Deploy OpenShift cluster (30-45 minutes)
-#   13. Handle failures with automatic cleanup
+#   1. Initialize the architecture-specific PowerVC tool and check dependencies
+#   2. Collect inputs, verify OpenStack connectivity, and validate variables
+#   3. Retrieve network and RHCOS image information
+#   4. Verify pull secret, controller health, and OpenStack resources
+#   5. Create bastion host and determine API/ingress VIPs
+#   6. Wait for DNS propagation and verify API DNS matches the VIP
+#   7. Generate install-config.yaml
+#   8. Create ignition configs and send metadata to the controller
+#   9. Create manifests
+#   10. Deploy OpenShift cluster (30-45 minutes)
+#   11. On failure, run diagnostic monitoring with watch-create
 #
 # Error Handling:
-#   - Automatic metadata cleanup on failure via trap
 #   - Temporary file cleanup on exit
+#   - Explicit metadata cleanup on manifest/cluster creation failures
 #   - Detailed error messages with context
 #   - Cluster monitoring on installation failure
 #
 # Security Considerations:
-#   - Pull secrets are masked in output
-#   - SSH keys are masked in output
+#   - Pull secrets are masked in displayed install-config output
+#   - SSH keys are masked in displayed install-config output
 #   - Symlink attack prevention for temporary files
-#   - Secure password input (hidden from terminal)
+#   - Secure password input for prompted secrets
 #
 # Notes:
 #   - Cluster creation typically takes 30-45 minutes
 #   - DNS propagation may take several minutes
 #   - Bastion host acts as load balancer for cluster API and ingress
+#   - PowerVC clusters created by this script use ppc64le RHCOS images
 #   - Script uses colored output for better readability
-#   - Supports ppc64le, x86_64, and aarch64 architectures
+#   - Supports x86_64, amd64, ppc64le, and aarch64 host architectures
 ################################################################################
 
 set -euo pipefail
@@ -436,11 +439,10 @@ function cleanup_metadata() {
 
 ################################################################################
 # cleanup_on_exit: Trap handler for script exit
-# Automatically cleans up resources on script failure
 # Registered via: trap cleanup_on_exit EXIT
 # Cleans up:
-#   - Cluster metadata from controller
 #   - Temporary bastion IP file
+# Logs a failure message when the script exits non-zero
 ################################################################################
 function cleanup_on_exit() {
 	local exit_code=$?
@@ -482,7 +484,7 @@ function initialize_powervc_tool() {
 }
 
 ################################################################################
-# check_required_programs: Verify all dependencies are installed
+# check_required_programs: Verify required dependencies are installed
 # Checks for required command-line tools in PATH
 # Required programs:
 #   - ocp-ipi-powervc-linux-{arch}: PowerVC automation tool
@@ -493,7 +495,7 @@ function initialize_powervc_tool() {
 # Exits: If any required program is missing
 ################################################################################
 function check_required_programs() {
-	local -a required_programs=("${POWERVC_TOOL}" "openshift-install" "openstack" "jq" "getent")
+	local -a required_programs=("${POWERVC_TOOL}" "openshift-install" "openstack" "jq" "getent" "podman" "ssh-keygen" )
 	local missing_programs=()
 
 	log_info "Checking required programs..."
@@ -646,8 +648,9 @@ function verify_controller() {
 # Prompts user for any missing environment variables
 # Handles both interactive and automated (pre-set variables) modes
 # Supports pull secret from file or direct input
-# Validates SSH key file existence
-# Sets and exports all required variables
+# Loads PULL_SECRET from PULLSECRET_FILE when provided
+# Validates installer SSH public key format and existence
+# Sets and exports variables needed by later phases
 ################################################################################
 function collect_environment_variables() {
 	log_info "Collecting environment variables..."
@@ -768,7 +771,8 @@ function collect_environment_variables() {
 }
 
 ################################################################################
-# validate_cluster_dir_not_exists: Ensures the cluster directory does not exist
+# validate_cluster_dir_not_exists: Ensure the cluster directory does not already exist
+# Exits if ${CLUSTER_DIR} is an existing directory
 ################################################################################
 function validate_cluster_dir_not_exists() {
 	if [[ -d "${CLUSTER_DIR}" ]]; then
@@ -843,22 +847,21 @@ function verify_all_openstack_resources() {
 # verify_pullsecret: Validate pull secret by testing image pull
 # Verifies that the pull secret file is valid and has access to the OpenShift
 # release images by:
-#   1. Checking pull secret file exists and is readable
+#   1. Checking the pull secret file exists and is readable
 #   2. Extracting the release image URL from openshift-install version
-#   3. Attempting to pull the release image using the pull secret
+#   3. Attempting to pull the release image with podman
 #   4. Cleaning up the pulled image
 #
-# This validation ensures that cluster installation won't fail due to invalid
-# or expired pull secrets, providing early feedback to the user.
+# This validation provides early feedback before installation begins.
 #
 # Prerequisites:
-#   - PULLSECRET_FILE environment variable must be set
+#   - PULLSECRET_FILE must reference a readable auth file
 #   - openshift-install binary must be in PATH
 #   - podman must be installed and accessible
-#   - Network connectivity to image registry
+#   - Network connectivity to the image registry
 #
 # Global Variables Used:
-#   PULLSECRET_FILE - Path to the Red Hat pull secret file
+#   PULLSECRET_FILE - Path to the pull secret file
 #
 # Exit Conditions:
 #   - Pull secret file not found or not readable
@@ -956,14 +959,12 @@ function verify_pullsecret() {
 
 ################################################################################
 # create_bastion_host: Create bastion host with HAProxy load balancer
-# Creates a bastion VM that serves as:
-#   - Jump host for cluster access
-#   - HAProxy load balancer for API and ingress traffic
+# Creates a bastion VM and stores its IP in ${TEMP_BASTION_IP}
 # Sets global variables:
-#   - VIP_API: Virtual IP for cluster API endpoint
-#   - VIP_INGRESS: Virtual IP for cluster ingress (same as VIP_API)
-# Creates: ${TEMP_BASTION_IP} file containing the bastion's IP address
-# Exits: If bastion creation fails or IP file is not created
+#   - VIP_API: API VIP read from the bastion IP file
+#   - VIP_INGRESS: Ingress VIP read from the bastion IP file
+# Creates: ${CLUSTER_DIR} and ${TEMP_BASTION_IP}
+# Exits: If bastion creation fails or the IP file is not created
 ################################################################################
 function create_bastion_host() {
 	log_info "Creating bastion host..."
@@ -1006,13 +1007,13 @@ function create_bastion_host() {
 
 ################################################################################
 # wait_for_all_dns_entries: Wait for DNS propagation of all cluster entries
-# Polls DNS servers until all required entries are resolvable:
-#   - Wildcard DNS: *.apps.<cluster>.<domain>
+# Polls until all required entries are resolvable:
+#   - Wildcard DNS is tested via a0..a60.apps.<cluster>.<domain>
 #   - API endpoint: api.<cluster>.<domain>
 #   - Internal API: api-int.<cluster>.<domain>
 # Retry strategy:
 #   - Outer loop: Up to 20 attempts
-#   - Wildcard: Up to 60 attempts with 5s intervals
+#   - Wildcard probes: 61 names with 5s intervals
 #   - API endpoints: Up to 10 attempts each with 5s intervals
 #   - Between outer attempts: 15s delay
 # Exits: If DNS entries don't propagate within timeout
@@ -1111,10 +1112,10 @@ function verify_vip_matches_dns() {
 # Creates the installation configuration file with:
 #   - Cluster metadata (name, domain)
 #   - Network configuration (CIDR ranges)
-#   - Platform-specific settings (PowerVC)
-#   - Node configuration (replicas, zones)
+#   - PowerVC platform settings with user-managed load balancer
+#   - Control plane and worker definitions for ppc64le
 #   - Authentication (pull secret, SSH key)
-# Masks sensitive data (pull secret, SSH key) in console output
+# Prints a masked version of the generated file to the console
 # Creates: ${CLUSTER_DIR}/install-config.yaml
 ################################################################################
 function create_install_config() {
@@ -1206,11 +1207,12 @@ skip { skip=0 }
 # Orchestrates the complete OpenShift installation process:
 #   1. Display installer version
 #   2. Generate ignition configs
-#   3. Send metadata to PowerVC controller
-#   4. Create manifests
-#   5. Verify controller health
-#   6. Deploy cluster (30-45 minutes)
-# Handles failures with automatic cleanup and monitoring
+#   3. Read infraID from metadata.json
+#   4. Send metadata to PowerVC controller
+#   5. Create manifests
+#   6. Verify controller health
+#   7. Deploy cluster (30-45 minutes)
+# Handles manifest and cluster creation failures explicitly
 # Creates: Multiple files in ${CLUSTER_DIR} including auth/kubeconfig
 ################################################################################
 function run_openshift_install() {
@@ -1270,12 +1272,12 @@ function run_openshift_install() {
 
 ################################################################################
 # handle_cluster_creation_failure: Recovery workflow for failed installations
-# Performs cleanup and starts cluster monitoring to help diagnose issues
+# Collects bastion access details if needed and starts watch-create to help
+# diagnose the failed installation.
 # Steps:
-#   1. Clean up metadata from controller
-#   2. Collect bastion credentials if not already set
-#   3. Start watch-create tool for cluster monitoring
-# This helps identify what went wrong during installation
+#   1. Prompt for bastion username if needed
+#   2. Prompt for bastion private key if needed
+#   3. Run watch-create, using kubeconfig when available
 ################################################################################
 function handle_cluster_creation_failure() {
 	log_warning "Handling cluster creation failure..."
@@ -1326,11 +1328,12 @@ function handle_cluster_creation_failure() {
 ################################################################################
 # main: Primary entry point for cluster creation
 # Executes the complete workflow in logical phases:
-#   Phase 1: Initialization and validation
-#   Phase 2: Environment collection and verification
-#   Phase 3: Resource verification
-#   Phase 4: Infrastructure creation
-#   Phase 5: Cluster deployment
+#   Phase 1: Initialization and dependency checks
+#   Phase 2: Input collection, connectivity checks, and validation
+#   Phase 3: Network and RHCOS discovery
+#   Phase 4: Pull secret, controller, and resource verification
+#   Phase 5: Bastion creation and DNS verification
+#   Phase 6: install-config generation and cluster deployment
 # Each phase must complete successfully before proceeding to the next
 ################################################################################
 function main() {

@@ -190,7 +190,7 @@ do
 		sleep 15s
 		continue
 	fi
-	
+
 	################################################################################
 	# Check API Endpoints
 	# Verifies that both the external API (api) and internal API (api-int)
@@ -218,7 +218,7 @@ do
 			FOUND_ALL=false
 		fi
 	done
-	
+
 	################################################################################
 	# Check Completion Status
 	# If all DNS entries (wildcard + both API endpoints) are found, exit the loop
