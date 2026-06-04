@@ -4,8 +4,8 @@ This is a Go conversion of the Python JobHistory.py script. It extracts CI run i
 
 ## Version
 
-- **Version**: 0.9.4
-- **Date**: 2023-07-20
+- **Version**: 1.0.0
+- **Date**: 2026-06-04
 - **Original Author**: Mark Hamzy (mhamzy@redhat.com)
 - **Converted to Go**: 2026-06-04
 
@@ -113,18 +113,35 @@ Correct - Flags before URL:
 
 ## Key Features
 
-1. **Flag Position Validation**: Automatically detects and reports when flags are incorrectly placed after URLs
-2. **URL Trailing Slash Handling**: Works correctly with URLs that have or don't have trailing slashes
-3. **Comprehensive Help**: Built-in help with examples and usage guidelines
-4. **Multiple Date Filters**: Support for --today, --yesterday, --last-n-days, or custom date ranges
+1. **Context Support**: All HTTP requests support context for proper cancellation and timeout handling
+2. **Improved Error Handling**: Comprehensive error checking with descriptive error messages
+3. **URL Validation**: Validates URLs before processing to catch issues early
+4. **Flag Position Validation**: Automatically detects and reports when flags are incorrectly placed after URLs
+5. **URL Trailing Slash Handling**: Works correctly with URLs that have or don't have trailing slashes
+6. **Comprehensive Help**: Built-in help with examples and usage guidelines
+7. **Multiple Date Filters**: Support for --today, --yesterday, --last-n-days, or custom date ranges
+8. **Robust HTTP Client**: Configurable timeout and proper resource cleanup
+
+## Key Improvements in v1.0.0
+
+1. **Context Support**: Added context.Context throughout for proper cancellation and timeout handling
+2. **Better Error Handling**: All errors are properly checked and wrapped with context
+3. **URL Validation**: Added validateURL() function to catch malformed URLs early
+4. **HTTP Client Wrapper**: Created HTTPClient type with context-aware methods
+5. **Input Validation**: Added validation for dates, URLs, and other inputs
+6. **Improved Logging**: Better warning and error messages with context
+7. **CSV Output Fix**: Removed non-existent "Zone" column from CSV header
+8. **Code Organization**: Better structured with clear separation of concerns
+9. **Resource Management**: Proper cleanup of HTTP responses and file handles
+10. **Type Safety**: Strongly typed structs for JSON parsing with validation
 
 ## Key Differences from Python Version
 
 1. **Dependencies**: Uses `goquery` for HTML parsing instead of BeautifulSoup
-2. **HTTP Client**: Uses Go's standard `http.Client` with cookie jar support
-3. **Concurrency**: Go version is single-threaded like the Python version, but could be enhanced with goroutines
-4. **Error Handling**: More explicit error handling with Go's error return pattern, including flag position validation
-5. **Type Safety**: Strongly typed structs for JSON parsing
+2. **HTTP Client**: Uses Go's standard `http.Client` with cookie jar support and context
+3. **Concurrency**: Single-threaded but context-aware for future enhancement with goroutines
+4. **Error Handling**: Explicit error handling with Go's error return pattern and error wrapping
+5. **Type Safety**: Strongly typed structs for JSON parsing with validation
 6. **Command-line Interface**: Uses Go's flag package with validation for proper flag placement
 
 ## Dependencies

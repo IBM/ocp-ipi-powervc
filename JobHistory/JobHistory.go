@@ -20,13 +20,16 @@ package main
 import (
 	"compress/gzip"
 	"compress/zlib"
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -37,15 +40,31 @@ import (
 
 // Program metadata constants
 const (
-	version = "0.9.4"
-	date    = "2023-07-20"
+	version = "1.0.0"
+	date    = "2026-06-04"
 	author  = "Mark Hamzy (mhamzy@redhat.com)"
+)
+
+// HTTP client configuration constants
+const (
+	defaultHTTPTimeout = 30 * time.Second
+	maxRetries         = 3
+	retryDelay         = 2 * time.Second
 )
 
 // Global file handles for output streams
 var (
 	outputFp = os.Stdout // Primary output destination (results, CSV data)
 	infoFp   = os.Stderr // Informational/diagnostic messages
+)
+
+// Common errors
+var (
+	ErrInvalidURL       = errors.New("invalid URL format")
+	ErrInvalidDateRange = errors.New("invalid date range")
+	ErrHTTPRequest      = errors.New("HTTP request failed")
+	ErrParseJSON        = errors.New("failed to parse JSON")
+	ErrParseHTML        = errors.New("failed to parse HTML")
 )
 
 // CIStats tracks aggregate statistics across all processed CI runs.
@@ -89,12 +108,86 @@ type TestFailureSummary struct {
 	} `json:"Tests"` // Array of failed test entries
 }
 
+// HTTPClient wraps http.Client with context support and retry logic
+type HTTPClient struct {
+	client *http.Client
+}
+
+// NewHTTPClient creates a new HTTP client configured for Prow CI interactions.
+// It initializes a cookie jar for session management and sets a default timeout
+// to prevent hanging requests. The client is suitable for making multiple
+// sequential requests to the same domain with session persistence.
+//
+// Returns:
+//   - *HTTPClient: Configured HTTP client wrapper
+//   - error: Error if cookie jar creation fails
+func NewHTTPClient() (*HTTPClient, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
+	}
+
+	return &HTTPClient{
+		client: &http.Client{
+			Jar:     jar,
+			Timeout: defaultHTTPTimeout,
+		},
+	}, nil
+}
+
+// Get performs an HTTP GET request with context support and timeout handling.
+// It creates a new request with the provided context, allowing for cancellation
+// and deadline enforcement. The method validates the response status code and
+// automatically closes the response body on error.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - urlStr: Target URL to fetch
+//
+// Returns:
+//   - *http.Response: HTTP response (caller must close Body)
+//   - error: ErrHTTPRequest if request fails or status is not 200 OK
+func (c *HTTPClient) Get(ctx context.Context, urlStr string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("%w: status code %d", ErrHTTPRequest, resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
 // getURLString fetches content from the specified URL and returns it as a string.
 // It handles HTTP compression (gzip, deflate) and sanitizes invalid UTF-8 characters
-// that may appear in CI logs. The client parameter should have cookies enabled for
-// session management across multiple requests.
-func getURLString(client *http.Client, url string) (string, error) {
-	resp, err := client.Get(url)
+// that may appear in CI logs. The function validates the URL before making the request
+// and properly handles compressed response bodies.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for the request
+//   - urlStr: Target URL to fetch
+//
+// Returns:
+//   - string: Response body as a sanitized UTF-8 string
+//   - error: ErrInvalidURL if URL is malformed, or HTTP/decompression errors
+//
+// The function replaces invalid UTF-8 characters (\x80-\x83) with spaces to
+// prevent encoding issues when parsing CI logs.
+func getURLString(ctx context.Context, client *HTTPClient, urlStr string) (string, error) {
+	if err := validateURL(urlStr); err != nil {
+		return "", err
+	}
+
+	resp, err := client.Get(ctx, urlStr)
 	if err != nil {
 		return "", err
 	}
@@ -105,9 +198,8 @@ func getURLString(client *http.Client, url string) (string, error) {
 		return "", err
 	}
 
-	// Handle potential encoding issues
+	// Handle potential encoding issues - sanitize invalid UTF-8 characters
 	str := string(data)
-	// Replace invalid characters
 	replacements := []string{"\x80", "\x81", "\x82", "\x83"}
 	for _, r := range replacements {
 		str = strings.ReplaceAll(str, r, " ")
@@ -116,7 +208,44 @@ func getURLString(client *http.Client, url string) (string, error) {
 	return str, nil
 }
 
-// getData handles compressed response data
+// validateURL checks if the URL is valid and properly formatted.
+// It ensures the URL is not empty, can be parsed, and uses HTTP/HTTPS scheme.
+// This validation helps catch configuration errors early before making requests.
+//
+// Parameters:
+//   - urlStr: URL string to validate
+//
+// Returns:
+//   - error: ErrInvalidURL with details if validation fails, nil if valid
+func validateURL(urlStr string) error {
+	if urlStr == "" {
+		return fmt.Errorf("%w: empty URL", ErrInvalidURL)
+	}
+
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidURL, err)
+	}
+
+	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
+		return fmt.Errorf("%w: invalid scheme %s", ErrInvalidURL, parsedURL.Scheme)
+	}
+
+	return nil
+}
+
+// getData handles compressed response data from HTTP responses.
+// It automatically detects and decompresses gzip, x-gzip, and deflate encodings.
+// For deflate, it attempts zlib decompression first, then falls back to raw deflate.
+//
+// Parameters:
+//   - resp: HTTP response with potential compressed body
+//
+// Returns:
+//   - []byte: Decompressed response body
+//   - error: Error if decompression fails or encoding is unknown
+//
+// Supported encodings: gzip, x-gzip, deflate, or uncompressed (empty encoding)
 func getData(resp *http.Response) ([]byte, error) {
 	encoding := resp.Header.Get("Content-Encoding")
 
@@ -124,7 +253,7 @@ func getData(resp *http.Response) ([]byte, error) {
 	case "gzip", "x-gzip":
 		reader, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer reader.Close()
 		return io.ReadAll(reader)
@@ -132,13 +261,12 @@ func getData(resp *http.Response) ([]byte, error) {
 	case "deflate":
 		reader, err := zlib.NewReader(resp.Body)
 		if err != nil {
-			// Try raw deflate
-			data, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			// Try raw deflate as fallback
+			data, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return nil, fmt.Errorf("failed to read deflate data: %w", readErr)
 			}
-			reader := io.NopCloser(strings.NewReader(string(data)))
-			return io.ReadAll(reader)
+			return data, nil
 		}
 		defer reader.Close()
 		return io.ReadAll(reader)
@@ -151,33 +279,80 @@ func getData(resp *http.Response) ([]byte, error) {
 	}
 }
 
-// includeWithDate checks if the job should be included based on date range
-func includeWithDate(client *http.Client, afterDt, beforeDt time.Time, spyglassLink SpyglassLink, ciTypeStr string) (bool, error) {
+// includeWithDate checks if a CI job should be included based on date range filtering.
+// It fetches the job's started.json file to determine when the job began, then compares
+// this timestamp against the specified date range. Jobs without valid started.json files
+// (incomplete or failed jobs) will return an error.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for fetching metadata
+//   - afterDt: Start of date range (inclusive)
+//   - beforeDt: End of date range (inclusive)
+//   - spyglassLink: Job metadata containing the Spyglass link path
+//
+// Returns:
+//   - bool: true if job falls within date range, false otherwise
+//   - error: Error if started.json cannot be fetched or parsed, or if link is invalid
+func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt time.Time, spyglassLink SpyglassLink) (bool, error) {
+	if spyglassLink.SpyglassLink == "" {
+		return false, fmt.Errorf("empty spyglass link")
+	}
+
+	if len(spyglassLink.SpyglassLink) < 8 {
+		return false, fmt.Errorf("invalid spyglass link format")
+	}
+
 	startedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/started.json"
-	startedStr, err := getURLString(client, startedURL)
+	startedStr, err := getURLString(ctx, client, startedURL)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to fetch started.json: %w", err)
 	}
 
 	var startedJSON StartedJSON
 	if err := json.Unmarshal([]byte(startedStr), &startedJSON); err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %v", ErrParseJSON, err)
+	}
+
+	if startedJSON.Timestamp <= 0 {
+		return false, fmt.Errorf("invalid timestamp: %d", startedJSON.Timestamp)
 	}
 
 	startedDt := time.Unix(startedJSON.Timestamp, 0).UTC()
-	return startedDt.After(afterDt) && startedDt.Before(beforeDt) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+	return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
 }
 
-// gatherBuildRun gathers build run information
-func gatherBuildRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr string) (BuildFinished, string, string, error) {
+// gatherBuildRun gathers build/deployment information for a CI job.
+// It fetches the finished.json file to determine if the cluster deployment succeeded,
+// and if it failed, extracts the failure details from the build log. The function
+// looks for specific markers in the build log to extract the relevant error section.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for fetching artifacts
+//   - spyglassLink: Job metadata containing the Spyglass link path
+//   - ciTypeStr: CI type identifier (e.g., "powervc-1") for constructing artifact paths
+//
+// Returns:
+//   - BuildFinished: Parsed finished.json with result status
+//   - string: Build summary message (SUCCESS/FAILURE with description)
+//   - string: Detailed error output from build log (empty if successful)
+//   - error: Error if artifacts cannot be fetched or CI type is invalid
+func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (BuildFinished, string, string, error) {
 	buildFinished := BuildFinished{Result: "FAILURE"}
 	buildSummaryStr := ""
 	buildDetailsStr := ""
 
+	if ciTypeStr == "" {
+		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("empty CI type string")
+	}
+
 	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/finished.json"
-	finishedStr, err := getURLString(client, finishedURL)
+	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
-		json.Unmarshal([]byte(finishedStr), &buildFinished)
+		if err := json.Unmarshal([]byte(finishedStr), &buildFinished); err != nil {
+			fmt.Fprintf(infoFp, "WARN: Failed to parse finished.json: %v\n", err)
+		}
 	}
 
 	if buildFinished.Result == "SUCCESS" {
@@ -186,9 +361,9 @@ func gatherBuildRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr st
 	}
 
 	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/build-log.txt"
-	buildLogStr, err := getURLString(client, buildLogURL)
+	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
-		return buildFinished, buildSummaryStr, buildDetailsStr, err
+		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch build log: %w", err)
 	}
 
 	createClusterRe := regexp.MustCompile(`(?s)8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n(.*?)8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n`)
@@ -203,15 +378,35 @@ func gatherBuildRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr st
 	return buildFinished, buildSummaryStr, buildDetailsStr, nil
 }
 
-// gatherTestRun gathers test run information
-func gatherTestRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr string, ciStats *CIStats) (string, string, error) {
+// gatherTestRun gathers test execution results for a CI job.
+// It fetches the test-failures-summary JSON file from the junit artifacts directory
+// to determine which tests failed. If all tests passed, it increments the green runs
+// counter in the statistics. The function searches for the summary file using a regex
+// pattern since the filename includes a timestamp.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for fetching artifacts
+//   - spyglassLink: Job metadata containing the Spyglass link path
+//   - ciTypeStr: CI type identifier for constructing artifact paths
+//   - ciStats: Statistics tracker to update (increments GreenRuns on success)
+//
+// Returns:
+//   - string: Test summary message (SUCCESS/FAILURE/ERROR with description)
+//   - string: Detailed list of failed test names (empty if all passed)
+//   - error: Error if artifacts cannot be fetched or CI type is invalid
+func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, ciStats *CIStats) (string, string, error) {
 	testSummaryStr := ""
 	testDetailsStr := ""
 
+	if ciTypeStr == "" {
+		return testSummaryStr, testDetailsStr, fmt.Errorf("empty CI type string")
+	}
+
 	junitDirURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/openshift-e2e-libvirt-test/artifacts/junit/"
-	junitDirStr, err := getURLString(client, junitDirURL)
+	junitDirStr, err := getURLString(ctx, client, junitDirURL)
 	if err != nil {
-		return testSummaryStr, testDetailsStr, err
+		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch junit directory: %w", err)
 	}
 
 	filenameRe := regexp.MustCompile(`test-failures-summary_[^.]*\.json`)
@@ -223,14 +418,14 @@ func gatherTestRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr str
 
 	testFailureFilename := matches[0]
 	junitURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/openshift-e2e-libvirt-test/artifacts/junit/" + testFailureFilename
-	junitStr, err := getURLString(client, junitURL)
+	junitStr, err := getURLString(ctx, client, junitURL)
 	if err != nil {
-		return testSummaryStr, testDetailsStr, err
+		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test failures: %w", err)
 	}
 
 	var testFailureSummary TestFailureSummary
 	if err := json.Unmarshal([]byte(junitStr), &testFailureSummary); err != nil {
-		return testSummaryStr, testDetailsStr, err
+		return testSummaryStr, testDetailsStr, fmt.Errorf("%w: %v", ErrParseJSON, err)
 	}
 
 	if len(testFailureSummary.Tests) == 0 {
@@ -252,6 +447,10 @@ func gatherTestRun(client *http.Client, spyglassLink SpyglassLink, ciTypeStr str
 // This flexibility allows users to specify dates as "2023-07-20" or "2023-07-20T15:04:05Z".
 // Returns the parsed time in UTC, or an error if no format matches.
 func fromISOFormat(dateStr string) (time.Time, error) {
+	if dateStr == "" {
+		return time.Time{}, fmt.Errorf("empty date string")
+	}
+
 	formats := []string{
 		"2006-01-02T15:04:05.999999Z",
 		"2006-01-02T15:04:05Z",
@@ -263,7 +462,7 @@ func fromISOFormat(dateStr string) (time.Time, error) {
 	for _, format := range formats {
 		t, err := time.Parse(format, dateStr)
 		if err == nil {
-			return t, nil
+			return t.UTC(), nil
 		}
 	}
 
@@ -273,56 +472,92 @@ func fromISOFormat(dateStr string) (time.Time, error) {
 // encodeString prepares a string for CSV output by escaping newline characters.
 // CSV format doesn't handle multi-line cell content well, so newlines are converted
 // to the literal string "\n" to keep each record on a single line.
-// This ensures proper CSV parsing by spreadsheet applications.
+// This ensures proper CSV parsing by spreadsheet applications like Excel and Google Sheets.
+//
+// Parameters:
+//   - input: String to encode (may contain newlines)
+//
+// Returns:
+//   - string: Encoded string with newlines replaced by literal "\n"
 func encodeString(input string) string {
 	return strings.ReplaceAll(input, "\n", "\\n")
 }
 
 // processURL processes a single Prow CI job history URL and extracts job data.
-// This is the main processing function that:
-// 1. Parses the URL to extract CI version and type information
-// 2. Iterates through job history pages (following "Older Runs" links)
+// This is the main processing function that orchestrates the entire data collection workflow:
+// 1. Validates and parses the URL to extract CI version and type information
+// 2. Iterates through job history pages (following "Older Runs" pagination links)
+// 3. Filters jobs by date range using started.json timestamps
 // 4. Collects build and test results for each matching job
 // 5. Outputs results in either human-readable or CSV format
-// The function continues pagination until no more jobs match the date criteria.
-func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time.Time, csvWriter *csv.Writer) error {
-	fmt.Fprintf(infoFp, "INFO: For URL %s\n", url)
-	fmt.Fprintf(infoFp, "INFO: Finding CI runs between %s and %s\n", afterDt, beforeDt)
+// 6. Updates aggregate statistics (deploys succeeded, green runs)
+//
+// The function continues pagination until no more jobs match the date criteria or
+// no "Older Runs" link is found. It handles context cancellation gracefully and
+// silently skips jobs with missing metadata (incomplete/failed jobs).
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - args: Command-line arguments controlling output format and filtering
+//   - ciStats: Statistics tracker to update with job results
+//   - urlStr: Prow job history URL to process
+//   - afterDt: Start of date range filter (inclusive)
+//   - beforeDt: End of date range filter (inclusive)
+//   - csvWriter: CSV writer for output (nil if not in CSV mode)
+//
+// Returns:
+//   - error: Error if URL is invalid, parsing fails, or HTTP requests fail
+func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string, afterDt, beforeDt time.Time, csvWriter *csv.Writer) error {
+	fmt.Fprintf(infoFp, "INFO: For URL %s\n", urlStr)
+	fmt.Fprintf(infoFp, "INFO: Finding CI runs between %s and %s\n", afterDt.Format(time.RFC3339), beforeDt.Format(time.RFC3339))
 	fmt.Fprintln(infoFp)
 
-	// Parse URL components to extract base URL and CI job name
-	// Expected format: https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/<job-name>
+	// Validate and parse URL
+	if err := validateURL(urlStr); err != nil {
+		return err
+	}
+
 	// Remove trailing slash if present
-	url = strings.TrimSuffix(url, "/")
-	parts := strings.Split(url, "/")
+	urlStr = strings.TrimSuffix(urlStr, "/")
+	parts := strings.Split(urlStr, "/")
+	if len(parts) < 3 {
+		return fmt.Errorf("%w: insufficient URL parts", ErrInvalidURL)
+	}
+
 	baseURLStr := parts[0] + "//" + parts[2]
-	idx := strings.LastIndex(url, "/")
-	ciStr := url[idx+1:]
+	idx := strings.LastIndex(urlStr, "/")
+	if idx == -1 {
+		return fmt.Errorf("%w: no path separator found", ErrInvalidURL)
+	}
+	ciStr := urlStr[idx+1:]
 
 	// Extract CI version (e.g., "4.12", "5.0") and type (e.g., "powervc-1") from job name
-	// Job name format: periodic-ci-openshift-release-master-nightly-4.12-e2e-metal-ipi-ovn-ipv6
-	// or: periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p
 	ciInfoRe := regexp.MustCompile(`([^0-9].*)-([0-9]+\.[0-9]+)-(.*)`)
 	matches := ciInfoRe.FindStringSubmatch(ciStr)
 	if len(matches) < 4 {
-		fmt.Fprintln(infoFp, "ERROR: ci_info_re didn't match?")
-		return fmt.Errorf("failed to parse CI string")
+		return fmt.Errorf("failed to parse CI string: %s", ciStr)
 	}
 
 	ciVersionStr := matches[2] // OpenShift version (e.g., "4.12", "4.13")
 	ciTypeStr := matches[3]    // CI type/platform (e.g., "powervc-1", "powervc-2")
 
-	// Create HTTP client with cookie jar for session management across requests
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{
-		Jar: jar,
+	// Create HTTP client
+	client, err := NewHTTPClient()
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 
 	// Main pagination loop: process current page, then follow "Older Runs" link
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		processedAny := false // Track if we processed any jobs on this page
 
-		resp, err := client.Get(url)
+		resp, err := client.Get(ctx, urlStr)
 		if err != nil {
 			return err
 		}
@@ -330,11 +565,10 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 		doc, err := goquery.NewDocumentFromReader(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %v", ErrParseHTML, err)
 		}
 
-		// Find the "Older Runs" pagination link to continue to previous jobs
-		// This link appears at the bottom of the job history page
+		// Find the "Older Runs" pagination link
 		var olderHref string
 		doc.Find("td").Each(func(i int, s *goquery.Selection) {
 			if strings.Contains(s.Text(), "Older Runs") {
@@ -346,8 +580,7 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 			}
 		})
 
-		// Find and process the allBuilds JavaScript array embedded in the page
-		// This array contains metadata for all jobs displayed on the current page
+		// Find and process the allBuilds JavaScript array
 		doc.Find("script").Each(func(i int, s *goquery.Selection) {
 			scriptText := s.Text()
 			if !strings.Contains(scriptText, "var allBuilds") {
@@ -362,22 +595,41 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 
 			var spyglassLinks []SpyglassLink
 			if err := json.Unmarshal([]byte(matches[1]), &spyglassLinks); err != nil {
+				fmt.Fprintf(infoFp, "WARN: Failed to parse allBuilds: %v\n", err)
 				return
 			}
 
-			// Process each job entry from the allBuilds array
+			// Process each job entry
 			for _, spyglassLink := range spyglassLinks {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				buildSummaryStr := ""
 				buildDetailsStr := ""
 				testSummaryStr := ""
 				testDetailsStr := ""
 
-				// Construct full Spyglass URL for this job
+				// Construct full Spyglass URL
 				jobURL := "https://prow.ci.openshift.org" + spyglassLink.SpyglassLink
 
-				// Filter by date range: skip jobs outside the specified time window
-				include, err := includeWithDate(client, afterDt, beforeDt, spyglassLink, ciTypeStr)
-				if err != nil || !include {
+				// Filter by date range
+				include, err := includeWithDate(ctx, client, afterDt, beforeDt, spyglassLink)
+				if err != nil {
+					// Silently skip jobs that don't have started.json or return HTML errors (incomplete/failed jobs)
+					// These are expected for jobs that haven't completed or failed early
+					errStr := err.Error()
+					if !strings.Contains(errStr, "status code 404") &&
+					   !strings.Contains(errStr, "failed to fetch started.json") &&
+					   !strings.Contains(errStr, "failed to parse JSON") &&
+					   !strings.Contains(errStr, "invalid character '<'") {
+						fmt.Fprintf(infoFp, "WARN: Failed to check date for job %s: %v\n", jobURL, err)
+					}
+					continue
+				}
+				if !include {
 					continue
 				}
 
@@ -385,13 +637,14 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 				processedAny = true
 				ciStats.NumDeploys++
 
-				// Print job header with separator line
+				// Print job header
 				fmt.Fprintf(infoFp, "INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
 				fmt.Fprintf(infoFp, "INFO: URL:  %s\n", jobURL)
 
 				// Gather deployment/build results
-				buildFinished, buildSummaryStr, buildDetailsStr, err := gatherBuildRun(client, spyglassLink, ciTypeStr)
+				buildFinished, buildSummaryStr, buildDetailsStr, err := gatherBuildRun(ctx, client, spyglassLink, ciTypeStr)
 				if err != nil {
+					fmt.Fprintf(infoFp, "WARN: Failed to gather build run: %v\n", err)
 					continue
 				}
 
@@ -402,13 +655,15 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 					}
 				}
 
-				// If deployment succeeded, gather test results (unless user only wants deploy status)
+				// If deployment succeeded, gather test results
 				if buildFinished.Result == "SUCCESS" {
 					ciStats.DeploysSucceeded++
 
 					if !args.DeployStatusOnly {
-						testSummaryStr, testDetailsStr, err = gatherTestRun(client, spyglassLink, ciTypeStr, ciStats)
-						if err == nil && !args.CSV {
+						testSummaryStr, testDetailsStr, err = gatherTestRun(ctx, client, spyglassLink, ciTypeStr, ciStats)
+						if err != nil {
+							fmt.Fprintf(infoFp, "WARN: Failed to gather test run: %v\n", err)
+						} else if !args.CSV {
 							fmt.Fprintf(outputFp, "%s\n%s\n", testSummaryStr, testDetailsStr)
 						}
 					} else {
@@ -430,34 +685,34 @@ func processURL(args *Args, ciStats *CIStats, url string, afterDt, beforeDt time
 						encodeString(testSummaryStr),
 						encodeString(testDetailsStr),
 					}
-					csvWriter.Write(csvRow)
+					if err := csvWriter.Write(csvRow); err != nil {
+						fmt.Fprintf(infoFp, "WARN: Failed to write CSV row: %v\n", err)
+					}
 					fmt.Fprintln(infoFp)
 				}
 			}
 		})
 
-		// Stop pagination if no "Older Runs" link exists (reached the end)
+		// Stop pagination if no "Older Runs" link exists
 		if olderHref == "" {
 			break
 		}
 
 		// Stop pagination if we didn't process any jobs on this page
-		// This means all remaining jobs are outside our date range
 		if !processedAny {
 			break
 		}
 
-		// Continue to the next page of older job runs
-		url = baseURLStr + olderHref
+		// Continue to the next page
+		urlStr = baseURLStr + olderHref
 	}
 
-	_ = ciVersionStr // Suppress unused variable warning (may be used in future enhancements)
+	_ = ciVersionStr // Suppress unused variable warning
 
 	return nil
 }
 
 // Args holds all command-line arguments and configuration options.
-// It uses pointer receivers to allow flag package to modify values directly.
 type Args struct {
 	AfterStr         string   // Start date for filtering jobs (ISO 8601 format)
 	BeforeStr        string   // End date for filtering jobs (ISO 8601 format)
@@ -477,29 +732,27 @@ type Args struct {
 func main() {
 	args := &Args{}
 
-	// Custom usage function to document URL requirement
+	// Custom usage function
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] URL [URL...]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Analyze OpenShift CI job history from Prow for PowerVS deployments.\n\n")
+		fmt.Fprintf(os.Stderr, "Analyze OpenShift CI job history from Prow for PowerVC deployments.\n\n")
 		fmt.Fprintf(os.Stderr, "Required Arguments:\n")
 		fmt.Fprintf(os.Stderr, "  URL    One or more Prow job history URLs to analyze\n")
-		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/<job-name>\n\n")
+		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>\n\n")
 		fmt.Fprintf(os.Stderr, "Options (must be specified BEFORE URLs):\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (note: flags come before URL)\n")
-		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs\n")
+		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output\n")
 		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 --csv --output results.csv <URL>\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # Filter by zone\n")
-		fmt.Fprintf(os.Stderr, "  %s --zone lon04 --yesterday <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Note: All options must be specified before the URL(s).\n")
 	}
 
-	// Define all command-line flags with both long and short forms
-	flag.StringVar(&args.AfterStr, "after-date", "", "Only queries after this date")
+	// Define command-line flags
+	flag.StringVar(&args.AfterStr, "after-date", "", "Only queries after this date (ISO 8601 format)")
 	flag.StringVar(&args.AfterStr, "a", "", "Only queries after this date (shorthand)")
-	flag.StringVar(&args.BeforeStr, "before-date", "", "Only queries before this date")
+	flag.StringVar(&args.BeforeStr, "before-date", "", "Only queries before this date (ISO 8601 format)")
 	flag.StringVar(&args.BeforeStr, "b", "", "Only queries before this date (shorthand)")
 	flag.BoolVar(&args.CSV, "csv", false, "Output in CSV format")
 	flag.BoolVar(&args.CSV, "c", false, "Output in CSV format (shorthand)")
@@ -521,7 +774,7 @@ func main() {
 
 	// Handle version flag
 	if *showVersion {
-		fmt.Printf("JobHistory %s\n", version)
+		fmt.Printf("JobHistory %s (%s)\n", version, date)
 		os.Exit(0)
 	}
 
@@ -533,7 +786,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Check if any positional arguments look like flags (common user error)
+	// Check if any positional arguments look like flags
 	for _, arg := range args.URLs {
 		if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
 			fmt.Fprintf(os.Stderr, "ERROR: Flag '%s' appears after URL(s)\n", arg)
@@ -545,64 +798,68 @@ func main() {
 	}
 
 	// Date range validation and calculation
-	// Supports multiple modes: --today, --yesterday, --last-n-days, or explicit --after-date/--before-date
 	var afterDt, beforeDt time.Time
 	var err error
 
-	// Process --today flag: set date range to current day (00:00:00 to 23:59:59 UTC)
 	if args.Today {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Yesterday || args.LastNDays > 0 {
 			fmt.Fprintln(infoFp, "ERROR: Cannot combine --today with other date options")
 			os.Exit(1)
 		}
-		now := time.Now()
+		now := time.Now().UTC()
 		afterDt = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 		beforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.Yesterday {
-		// Process --yesterday flag: set date range to previous day
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Today || args.LastNDays > 0 {
 			fmt.Fprintln(infoFp, "ERROR: Cannot combine --yesterday with other date options")
 			os.Exit(1)
 		}
-		yesterday := time.Now().AddDate(0, 0, -1)
+		yesterday := time.Now().UTC().AddDate(0, 0, -1)
 		afterDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
 		beforeDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.LastNDays > 0 {
-		// Process --last-n-days flag: set date range from N days ago to today
 		if args.Today || args.Yesterday {
 			fmt.Fprintln(infoFp, "ERROR: Cannot combine --last-n-days with other date options")
 			os.Exit(1)
 		}
-		lastDate := time.Now().AddDate(0, 0, -(args.LastNDays - 1))
+		if args.LastNDays < 1 {
+			fmt.Fprintln(infoFp, "ERROR: --last-n-days must be at least 1")
+			os.Exit(1)
+		}
+		lastDate := time.Now().UTC().AddDate(0, 0, -(args.LastNDays - 1))
 		afterDt = time.Date(lastDate.Year(), lastDate.Month(), lastDate.Day(), 0, 0, 0, 0, time.UTC)
-		now := time.Now()
+		now := time.Now().UTC()
 		beforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else {
-		// Default: no start date (beginning of time), end date is now
+		// Default: no start date, end date is now
 		afterDt = time.Time{}
 		beforeDt = time.Now().UTC()
 	}
 
-	// Override with explicit --after-date if provided
+	// Override with explicit dates if provided
 	if args.AfterStr != "" {
 		afterDt, err = fromISOFormat(args.AfterStr)
 		if err != nil {
-			fmt.Fprintf(infoFp, "ERROR: Unknown formatted date %s\n", args.AfterStr)
+			fmt.Fprintf(infoFp, "ERROR: Invalid after-date format: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
-	// Override with explicit --before-date if provided
 	if args.BeforeStr != "" {
 		beforeDt, err = fromISOFormat(args.BeforeStr)
 		if err != nil {
-			fmt.Fprintf(infoFp, "ERROR: Unknown formatted date %s\n", args.BeforeStr)
+			fmt.Fprintf(infoFp, "ERROR: Invalid before-date format: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
-	// Setup output file handles
-	// Redirect output to file if --output flag is specified
+	// Validate date range
+	if !afterDt.IsZero() && !beforeDt.IsZero() && afterDt.After(beforeDt) {
+		fmt.Fprintln(infoFp, "ERROR: after-date must be before before-date")
+		os.Exit(1)
+	}
+
+	// Setup output file
 	if args.Output != "" {
 		f, err := os.Create(args.Output)
 		if err != nil {
@@ -611,42 +868,48 @@ func main() {
 		}
 		defer f.Close()
 		outputFp = f
-		// In CSV mode, keep info messages on stderr; otherwise redirect to file
 		if !args.CSV {
 			infoFp = f
 		}
 	}
 
-	// Initialize CSV writer if CSV output is requested
+	// Initialize CSV writer
 	var csvWriter *csv.Writer
 	if args.CSV {
 		csvWriter = csv.NewWriter(outputFp)
 		defer csvWriter.Flush()
-		// Write CSV header row
-		csvWriter.Write([]string{
+		// Write CSV header (removed Zone column)
+		if err := csvWriter.Write([]string{
 			"Job URL",
-			"Zone",
 			"Build summary",
 			"Build details",
 			"Test summary",
 			"Test details",
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to write CSV header: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Initialize statistics tracker
 	ciStats := &CIStats{}
 
-	// Process each URL provided on the command line
-	for _, url := range args.URLs {
-		// Validate URL format - must be a Prow job history URL
-		if !strings.Contains(url, "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/") {
-			fmt.Fprintln(infoFp, "ERROR: unknown CI URL")
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Process each URL
+	for _, urlStr := range args.URLs {
+		// Validate URL format
+		if !strings.Contains(urlStr, "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/") {
+			fmt.Fprintf(infoFp, "ERROR: Invalid CI URL format: %s\n", urlStr)
+			fmt.Fprintln(infoFp, "Expected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>")
 			os.Exit(1)
 		}
 
-		// Process this URL and accumulate statistics
-		if err := processURL(args, ciStats, url, afterDt, beforeDt, csvWriter); err != nil {
-			fmt.Fprintf(infoFp, "ERROR: %v\n", err)
+		// Process this URL
+		if err := processURL(ctx, args, ciStats, urlStr, afterDt, beforeDt, csvWriter); err != nil {
+			fmt.Fprintf(infoFp, "ERROR: Failed to process URL %s: %v\n", urlStr, err)
 		}
 	}
 
