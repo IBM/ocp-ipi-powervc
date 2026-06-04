@@ -104,6 +104,26 @@ install: build ## Install the binary to GOPATH/bin
 	@cp $(OUTPUT_BINARY) $(GOPATH)/bin/$(BINARY_NAME)
 	@echo "Installation complete"
 
+.PHONY: init-jobhistory
+init-jobhistory: ## Initialize JobHistory Go module and download dependencies
+	@echo "Initializing JobHistory module..."
+	@cd JobHistory && $(GO) mod download
+	@cd JobHistory && $(GO) mod tidy
+	@echo "JobHistory module initialized"
+
+.PHONY: build-jobhistory
+build-jobhistory: ## Build the JobHistory tool
+	@echo "Building JobHistory..."
+	@cd JobHistory && $(GO) build $(GOFLAGS) -o JobHistory *.go
+	@echo "JobHistory build complete: JobHistory/JobHistory"
+
+.PHONY: install-jobhistory
+install-jobhistory: build-jobhistory ## Install JobHistory to GOPATH/bin
+	@echo "Installing JobHistory to $(GOPATH)/bin/JobHistory..."
+	@mkdir -p $(GOPATH)/bin
+	@cp JobHistory/JobHistory $(GOPATH)/bin/JobHistory
+	@echo "JobHistory installation complete"
+
 .PHONY: test
 test: ## Run all tests
 	@echo "Running tests..."
@@ -175,6 +195,7 @@ clean: ## Clean build artifacts
 	@rm -f $(COVERAGE_FILE) coverage.html
 	@rm -rf $(BUILD_DIR) $(DIST_DIR)
 	@rm -f ocp-ipi-powervc-test
+	@rm -f JobHistory/JobHistory
 	@echo "Clean complete"
 
 .PHONY: clean-all
