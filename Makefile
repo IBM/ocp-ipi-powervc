@@ -107,8 +107,9 @@ install: build ## Install the binary to GOPATH/bin
 .PHONY: init-jobhistory
 init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 	@echo "Initializing JobHistory module..."
-	@cd JobHistory && $(GO) mod download
-	@cd JobHistory && $(GO) mod tidy
+	@cd JobHistory && rm -f go.mod go.sum
+	@cd JobHistory && go mod init github.com/openshift/ocp-ipi-powervc/JobHistory
+	@cd JobHistory && go mod tidy
 	@echo "JobHistory module initialized"
 
 .PHONY: build-jobhistory
