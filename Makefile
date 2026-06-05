@@ -124,6 +124,17 @@ install-jobhistory: build-jobhistory ## Install JobHistory to GOPATH/bin
 	@cp JobHistory/JobHistory $(GOPATH)/bin/JobHistory
 	@echo "JobHistory installation complete"
 
+.PHONY: dist-jobhistory
+dist-jobhistory: build-jobhistory
+	@echo "Installing JobHistory to $(DIST_DIR)."
+	@mkdir -p $(DIST_DIR)
+	@cd JobHistory
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-amd64 *.go
+	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-arm64 *.go
+	GOOS=linux GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-ppc64le *.go
+	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-darwin-amd64 *.go
+	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-darwin-arm64 *.go
+
 .PHONY: test
 test: ## Run all tests
 	@echo "Running tests..."
