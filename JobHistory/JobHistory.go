@@ -38,11 +38,14 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-// Program metadata constants
-const (
-	version = "1.0.0"
-	date    = "2026-06-04"
-	author  = "Mark Hamzy (mhamzy@redhat.com)"
+var (
+	// version is the build version, replaced at build time with:
+	//   -ldflags="-X main.version=$(git describe --always --long --dirty)"
+	version = "undefined"
+
+	// release is the release tag, replaced at build time with:
+	//   -ldflags="-X main.release=$(git describe --tags --abbrev=0)"
+	release = "undefined"
 )
 
 // HTTP client configuration constants
@@ -774,7 +777,7 @@ func main() {
 
 	// Handle version flag
 	if *showVersion {
-		fmt.Printf("JobHistory %s (%s)\n", version, date)
+		fmt.Printf("Program version is %v, release = %v\n", version, release)
 		os.Exit(0)
 	}
 

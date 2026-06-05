@@ -114,7 +114,7 @@ init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 .PHONY: build-jobhistory
 build-jobhistory: ## Build the JobHistory tool
 	@echo "Building JobHistory..."
-	@cd JobHistory && $(GO) build $(GOFLAGS) -o JobHistory *.go
+	@cd JobHistory && $(GO) build -ldflags="$(LDFLAGS)" $(GOFLAGS) -o JobHistory *.go
 	@echo "JobHistory build complete: JobHistory/JobHistory"
 
 .PHONY: install-jobhistory
