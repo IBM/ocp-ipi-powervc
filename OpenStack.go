@@ -246,6 +246,58 @@ func findFlavor(ctx context.Context, cloudName string, name string) (foundFlavor
 	return flavors.Flavor{}, fmt.Errorf("could not find flavor named %s", name)
 }
 
+// getAllImages retrieves all images from the specified OpenStack cloud.
+// It uses the image service client to list all available images with pagination support.
+// The function implements exponential backoff retry logic to handle transient API failures.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - cloudName: Name of the cloud configuration
+//
+// Returns:
+//   - []images.Image: List of all images available in the cloud
+//   - error: Error if cloud name is empty or API call fails
+func getAllImages(ctx context.Context, cloudName string) (allImages []images.Image, err error) {
+	if cloudName == "" {
+		return nil, fmt.Errorf("cloud name cannot be empty")
+	}
+
+	var pager pagination.Page
+
+	connImage, err := getServiceClient(ctx, "image", cloudName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image service client: %w", err)
+	}
+
+	backoff := createDefaultBackoff(ctx)
+
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			err2 error
+		)
+
+		log.Debugf("getAllImages: duration = %v, calling images.List", leftInContext(ctx))
+		pager, err2 = images.List(connImage, images.ListOpts{}).AllPages(ctx)
+		if err2 != nil {
+			log.Debugf("getAllImages: images.List returned error: %v", err2)
+			return false, nil
+		}
+
+		allImages, err2 = images.ExtractImages(pager)
+		if err2 != nil {
+			log.Debugf("getAllImages: images.ExtractImages returned error: %v", err2)
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list images: %w", err)
+	}
+
+	return allImages, nil
+}
+
 // findImage searches for an OpenStack image by name.
 // It retrieves all available images and returns the one matching the specified name.
 //
@@ -265,44 +317,12 @@ func findImage(ctx context.Context, cloudName string, name string) (foundImage i
 		return images.Image{}, fmt.Errorf("image name cannot be empty")
 	}
 
-	var (
-		pager     pagination.Page
-		allImages []images.Image
-		image     images.Image
-	)
-
-	connImage, err := getServiceClient(ctx, "image", cloudName)
+	allImages, err := getAllImages(ctx, cloudName)
 	if err != nil {
-		return images.Image{}, fmt.Errorf("failed to get image service client: %w", err)
+		return images.Image{}, err
 	}
 
-	backoff := createDefaultBackoff(ctx)
-
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var (
-			err2 error
-		)
-
-		log.Debugf("findImage: duration = %v, calling images.List", leftInContext(ctx))
-		pager, err2 = images.List(connImage, images.ListOpts{}).AllPages(ctx)
-		if err2 != nil {
-			log.Debugf("findImage: images.List returned error: %v", err2)
-			return false, nil
-		}
-
-		allImages, err2 = images.ExtractImages(pager)
-		if err2 != nil {
-			log.Debugf("findImage: images.ExtractImages returned error: %v", err2)
-			return false, nil
-		}
-
-		return true, nil
-	})
-	if err != nil {
-		return images.Image{}, fmt.Errorf("failed to list images: %w", err)
-	}
-
-	for _, image = range allImages {
+	for _, image := range allImages {
 		log.Debugf("findImage: checking image.Name = %s, image.ID = %s", image.Name, image.ID)
 
 		if image.Name == name {

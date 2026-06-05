@@ -170,6 +170,7 @@ const (
 	cmdCreateRhcos       = "create-rhcos"
 	cmdCreateCluster     = "broken-create-cluster"
 	cmdEraseMetadata     = "erase-metadata"
+	cmdRhcosExists       = "rhcos-exists"
 	cmdSendMetadata      = "send-metadata"
 	cmdWatchInstallation = "watch-installation"
 	cmdWatchCreate       = "watch-create"
@@ -238,6 +239,7 @@ var (
 		{cmdCreateRhcos,       "Create RHCOS image"},
 		{cmdCreateCluster,     "Create OpenShift cluster"},
 		{cmdEraseMetadata,     "Erase metadata matching pattern from server"},
+		{cmdRhcosExists,       "Verifies RHCOS image exists"},
 		{cmdSendMetadata,      "Send metadata to cluster"},
 		{cmdWatchInstallation, "Watch cluster installation progress"},
 		{cmdWatchCreate,       "Watch cluster creation process"},
@@ -252,6 +254,7 @@ var (
 		cmdCreateCluster:     createClusterCommand,
 		cmdCreateRhcos:       createRhcosCommand,
 		cmdEraseMetadata:     eraseMetadataCommand,
+		cmdRhcosExists:       rhcosExistsCommand,
 		cmdSendMetadata:      sendMetadataCommand,
 		cmdWatchInstallation: watchInstallationCommand,
 		cmdWatchCreate:       watchCreateClusterCommand,
