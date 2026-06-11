@@ -52,6 +52,7 @@ const (
 
 	// Server status constants
 	serverStatusActive = "ACTIVE"
+	serverStatusError  = "ERROR"
 )
 
 // getUserAgent generates a Gophercloud UserAgent to help cloud operators
@@ -581,6 +582,10 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 		if foundServer.Status == serverStatusActive && foundServer.PowerState == servers.RUNNING {
 			log.Debugf("waitForServer: server %s is active and running", name)
 			return true, nil
+		}
+		if foundServer.Status == serverStatusError {
+			log.Debugf("waitForServer: server %s has %s state", name, foundServer.Status)
+			return false, fmt.Errorf ("server has ERROR state")
 		}
 
 		log.Debugf("waitForServer: server %s not ready yet (Status=%s, PowerState=%d)", name, foundServer.Status, foundServer.PowerState)
