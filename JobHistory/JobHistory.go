@@ -89,6 +89,12 @@ type SpyglassLink struct {
 	Refs         interface{} `json:"Refs"`         // Git references (branch, PR info)
 }
 
+// ConfFinished represents the structure of the finished.json artifact file.
+// This file is created by Prow at the end of each job step to record its outcome.
+type ConfFinished struct {
+	Result string `json:"result"` // Step result: SUCCESS, FAILURE, ABORTED, etc.
+}
+
 // BuildFinished represents the structure of the finished.json artifact file.
 // This file is created by Prow at the end of each job step to record its outcome.
 type BuildFinished struct {
@@ -323,6 +329,65 @@ func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt 
 
 	startedDt := time.Unix(startedJSON.Timestamp, 0).UTC()
 	return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+}
+
+// gatherConfRun gathers build/conf information for a CI job.
+// It fetches the finished.json file to determine if the cluster configuration succeeded,
+// and if it failed, extracts the failure details from the build log. The function
+// looks for specific markers in the build log to extract the relevant error section.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for fetching artifacts
+//   - spyglassLink: Job metadata containing the Spyglass link path
+//   - ciTypeStr: CI type identifier (e.g., "powervc-1") for constructing artifact paths
+//
+// Returns:
+//   - ConfFinished: Parsed finished.json with result status
+//   - string: Conf summary message (SUCCESS/FAILURE with description)
+//   - string: Detailed error output from build log (empty if successful)
+//   - error: Error if artifacts cannot be fetched or CI type is invalid
+func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (ConfFinished, string, string, error) {
+	confFinished := ConfFinished{Result: "FAILURE"}
+	confSummaryStr := ""
+	confDetailsStr := ""
+
+	if ciTypeStr == "" {
+		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("empty CI type string")
+	}
+
+	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/finished.json"
+	finishedStr, err := getURLString(ctx, client, finishedURL)
+	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
+		if err := json.Unmarshal([]byte(finishedStr), &confFinished); err != nil {
+			fmt.Fprintf(infoFp, "WARN: Failed to parse finished.json: %v\n", err)
+		}
+	}
+
+	if confFinished.Result == "SUCCESS" {
+		confSummaryStr = "SUCCESS: conf succeeded!"
+		return confFinished, confSummaryStr, confDetailsStr, nil
+	}
+
+	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-conf-powervc/build-log.txt"
+
+	buildLogStr, err := getURLString(ctx, client, buildLogURL)
+	if err != nil {
+		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf log: %w", err)
+	}
+
+	//imageExistsRe := regexp.MustCompile(`Checking if (.*) exists in PowerVC`)
+	imageExistsRe := regexp.MustCompile(`ERROR: RHCOS image '(.*)' not found in PowerVC cloud`)
+	matches := imageExistsRe.FindStringSubmatch(buildLogStr)
+
+	if len(matches) >= 2 {
+		confSummaryStr = "FAILURE: conf failed!"
+		confDetailsStr = matches[0]
+	} else {
+		confSummaryStr = "FAILURE: Could not find conf?"
+	}
+
+	return confFinished, confSummaryStr, confDetailsStr, nil
 }
 
 // gatherBuildRun gathers build/deployment information for a CI job.
@@ -643,6 +708,25 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 				// Print job header
 				fmt.Fprintf(infoFp, "INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
 				fmt.Fprintf(infoFp, "INFO: URL:  %s\n", jobURL)
+
+				// Gather deployment/conf results
+				confFinished, confSummaryStr, confDetailsStr, err := gatherConfRun(ctx, client, spyglassLink, ciTypeStr)
+				if err != nil {
+					fmt.Fprintf(infoFp, "WARN: Failed to gather conf run: %v\n", err)
+					continue
+				}
+
+				// Output build results unless user only wants test status
+				if !args.TestStatusOnly {
+					if !args.CSV {
+						fmt.Fprintf(outputFp, "%s\n%s\n", confSummaryStr, confDetailsStr)
+					}
+				}
+
+				// If conf succeeded,
+				if confFinished.Result == "SUCCESS" {
+				} else {
+				}
 
 				// Gather deployment/build results
 				buildFinished, buildSummaryStr, buildDetailsStr, err := gatherBuildRun(ctx, client, spyglassLink, ciTypeStr)
