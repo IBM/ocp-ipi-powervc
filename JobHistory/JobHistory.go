@@ -816,7 +816,16 @@ type Args struct {
 // main is the entry point for the JobHistory tool.
 // It parses command-line arguments, validates date ranges, processes each CI URL,
 // and outputs aggregated statistics about deployment success and test pass rates.
-func main() {
+// parseAndValidateArgs parses command-line arguments and validates them.
+// It sets up flag definitions, parses the command line, validates the arguments,
+// and calculates the date range based on the provided options.
+//
+// Returns:
+//   - *Args: Parsed and validated arguments
+//   - time.Time: Start date for filtering (afterDt)
+//   - time.Time: End date for filtering (beforeDt)
+//   - error: Error if validation fails, nil otherwise
+func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	args := &Args{}
 
 	// Custom usage function
@@ -868,19 +877,13 @@ func main() {
 	// Collect positional arguments as URLs
 	args.URLs = flag.Args()
 	if len(args.URLs) == 0 {
-		fmt.Fprintln(os.Stderr, "ERROR: At least one URL is required")
-		flag.Usage()
-		os.Exit(1)
+		return nil, time.Time{}, time.Time{}, fmt.Errorf("at least one URL is required")
 	}
 
 	// Check if any positional arguments look like flags
 	for _, arg := range args.URLs {
 		if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
-			fmt.Fprintf(os.Stderr, "ERROR: Flag '%s' appears after URL(s)\n", arg)
-			fmt.Fprintln(os.Stderr, "All options must be specified BEFORE the URL arguments.")
-			fmt.Fprintln(os.Stderr, "")
-			flag.Usage()
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("flag '%s' appears after URL(s); all options must be specified BEFORE the URL arguments", arg)
 		}
 	}
 
@@ -890,28 +893,24 @@ func main() {
 
 	if args.Today {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Yesterday || args.LastNDays > 0 {
-			fmt.Fprintln(infoFp, "ERROR: Cannot combine --today with other date options")
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --today with other date options")
 		}
 		now := time.Now().UTC()
 		afterDt = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 		beforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.Yesterday {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Today || args.LastNDays > 0 {
-			fmt.Fprintln(infoFp, "ERROR: Cannot combine --yesterday with other date options")
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --yesterday with other date options")
 		}
 		yesterday := time.Now().UTC().AddDate(0, 0, -1)
 		afterDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
 		beforeDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.LastNDays > 0 {
 		if args.Today || args.Yesterday {
-			fmt.Fprintln(infoFp, "ERROR: Cannot combine --last-n-days with other date options")
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --last-n-days with other date options")
 		}
 		if args.LastNDays < 1 {
-			fmt.Fprintln(infoFp, "ERROR: --last-n-days must be at least 1")
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("--last-n-days must be at least 1")
 		}
 		lastDate := time.Now().UTC().AddDate(0, 0, -(args.LastNDays - 1))
 		afterDt = time.Date(lastDate.Year(), lastDate.Month(), lastDate.Day(), 0, 0, 0, 0, time.UTC)
@@ -927,22 +926,49 @@ func main() {
 	if args.AfterStr != "" {
 		afterDt, err = fromISOFormat(args.AfterStr)
 		if err != nil {
-			fmt.Fprintf(infoFp, "ERROR: Invalid after-date format: %v\n", err)
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid after-date format: %w", err)
 		}
 	}
 
 	if args.BeforeStr != "" {
 		beforeDt, err = fromISOFormat(args.BeforeStr)
 		if err != nil {
-			fmt.Fprintf(infoFp, "ERROR: Invalid before-date format: %v\n", err)
-			os.Exit(1)
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid before-date format: %w", err)
 		}
 	}
 
 	// Validate date range
 	if !afterDt.IsZero() && !beforeDt.IsZero() && afterDt.After(beforeDt) {
-		fmt.Fprintln(infoFp, "ERROR: after-date must be before before-date")
+		return nil, time.Time{}, time.Time{}, fmt.Errorf("after-date must be before before-date")
+	}
+
+	return args, afterDt, beforeDt, nil
+}
+
+// main is the entry point for the JobHistory program.
+// It analyzes OpenShift CI job history from Prow for PowerVC deployments.
+//
+// The program performs the following steps:
+//  1. Parses and validates command-line arguments
+//  2. Sets up output file and CSV writer if requested
+//  3. Initializes statistics tracking
+//  4. Processes each provided Prow job history URL
+//  5. Prints summary statistics of deployment and test results
+//
+// The program supports various filtering options:
+//   - Date range filtering (--after-date, --before-date, --today, --yesterday, --last-n-days)
+//   - Output format options (--csv, --output)
+//   - Result filtering (--deploy-status-only, --test-status-only)
+//
+// Exit codes:
+//   - 0: Success
+//   - 1: Error (invalid arguments, file I/O error, or processing error)
+func main() {
+	// Parse and validate arguments
+	args, afterDt, beforeDt, err := parseAndValidateArgs()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		flag.Usage()
 		os.Exit(1)
 	}
 
