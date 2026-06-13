@@ -288,6 +288,48 @@ func getData(resp *http.Response) ([]byte, error) {
 	}
 }
 
+// getZone extracts the PowerVS zone identifier from a CI job's build log.
+// It parses the build-log.txt file to find the lease acquisition message that
+// indicates which PowerVS zone was allocated for the test run. This information
+// is useful for tracking which zones are being used and correlating failures
+// with specific infrastructure locations.
+//
+// The function searches for a log line matching the pattern:
+//   "Acquired 1 lease(s) for powervs-[1-9]-quota-slice: [zone-name]"
+//
+// For example, if the log contains:
+//   "Acquired 1 lease(s) for powervs-1-quota-slice: [dal-10]"
+// The function will return "dal-10".
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - client: HTTP client to use for fetching the build log
+//   - spyglassLink: Job metadata containing the Spyglass link path to construct the log URL
+//   - ciTypeStr: CI type identifier (currently unused, reserved for future use)
+//
+// Returns:
+//   - string: The zone identifier (e.g., "dal-10", "lon-06") if found, empty string if not found
+//   - error: Error if the build log cannot be fetched or HTTP request fails
+//
+// Note: This function returns an empty string (not an error) if the lease acquisition
+// pattern is not found in the log, which may occur for jobs that failed before
+// acquiring a zone lease or for non-PowerVS CI jobs.
+func getZone(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (string, error) {
+	zoneLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
+	zoneLogStr, err := getURLString(ctx, client, zoneLogURL)
+	if err != nil {
+		return "", err
+	}
+
+	zoneLogRe := regexp.MustCompile(`Acquired 1 lease\(s\) for powervs-[1-9]-quota-slice: \[([^\]]+)\]`)
+	matches := zoneLogRe.FindStringSubmatch(zoneLogStr)
+	if matches == nil {
+		return "", nil
+	}
+
+	return matches[1], nil
+}
+
 // includeWithDate checks if a CI job should be included based on date range filtering.
 // It fetches the job's started.json file to determine when the job began, then compares
 // this timestamp against the specified date range. Jobs without valid started.json files
