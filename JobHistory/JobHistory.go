@@ -382,7 +382,7 @@ func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt 
 //   - ctx: Context for cancellation and timeout control
 //   - client: HTTP client to use for fetching artifacts
 //   - spyglassLink: Job metadata containing the Spyglass link path
-//   - ciTypeStr: CI type identifier (e.g., "powervc-1") for constructing artifact paths
+//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 //
 // Returns:
 //   - ConfFinished: Parsed finished.json with result status
@@ -441,7 +441,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 //   - ctx: Context for cancellation and timeout control
 //   - client: HTTP client to use for fetching artifacts
 //   - spyglassLink: Job metadata containing the Spyglass link path
-//   - ciTypeStr: CI type identifier (e.g., "powervc-1") for constructing artifact paths
+//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 //
 // Returns:
 //   - BuildFinished: Parsed finished.json with result status
@@ -648,8 +648,9 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 		return fmt.Errorf("failed to parse CI string: %s", ciStr)
 	}
 
-	ciVersionStr := matches[2] // OpenShift version (e.g., "4.12", "4.13")
-	ciTypeStr := matches[3]    // CI type/platform (e.g., "powervc-1", "powervc-2")
+	// _ := matches[1]            (e.g. "periodic-ci-openshift-multiarch-main-nightly")
+	ciVersionStr := matches[2] // OpenShift version (e.g., "4.21", "4.22")
+	ciTypeStr := matches[3]    // CI type/platform (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 
 	// Create HTTP client
 	client, err := NewHTTPClient()
