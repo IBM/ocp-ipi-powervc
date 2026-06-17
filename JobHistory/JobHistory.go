@@ -373,6 +373,98 @@ func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt 
 	return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
 }
 
+// CiType represents the type of CI (Continuous Integration) environment being used.
+// It is used to differentiate between different cloud infrastructure platforms
+// and determine the appropriate step names and configurations for each platform.
+type CiType int
+
+// CI type constants define the supported cloud infrastructure platforms.
+// These values are used to identify which platform-specific logic should be applied
+// during CI pipeline execution.
+const (
+	CI_TYPE_UNKNOWN CiType = iota // Unknown or unsupported CI type (value: 0)
+	CI_TYPE_POWERVC               // PowerVC cloud infrastructure platform (value: 1)
+	CI_TYPE_POWERVS               // PowerVS cloud infrastructure platform (value: 2)
+)
+
+// getCiType determines the CI type from a string identifier.
+// It examines the input string for platform-specific markers to identify
+// which cloud infrastructure platform is being used.
+//
+// Parameters:
+//   - ciTypeStr: A string containing the CI type identifier, typically from a job name
+//     or configuration that includes platform markers like "-powervc-" or "-powervs-"
+//
+// Returns:
+//   - CI_TYPE_POWERVC if the string contains "-powervc-"
+//   - CI_TYPE_POWERVS if the string contains "-powervs-"
+//   - CI_TYPE_UNKNOWN if no recognized platform marker is found
+func getCiType(ciTypeStr string) CiType {
+	if strings.Contains(ciTypeStr, "-powervc-") {
+		return CI_TYPE_POWERVC
+	} else if strings.Contains(ciTypeStr, "-powervs-") {
+		return CI_TYPE_POWERVS
+	} else {
+		return CI_TYPE_UNKNOWN
+	}
+}
+
+// CI step phase constants define the different phases of a CI pipeline execution.
+// These constants are used with getCiStepName to retrieve the appropriate step name
+// for a given CI type and phase.
+const (
+	CI_STEP_CONF    = iota // Configuration phase (value: 0) - cluster configuration setup
+	CI_STEP_INSTALL        // Installation phase (value: 1) - OpenShift installation
+	CI_STEP_TEST           // Testing phase (value: 2) - end-to-end testing
+)
+
+// getCiStepName returns the CI step name for a given CI type and step phase.
+// It maps CI types (PowerVC or PowerVS) to their corresponding step names
+// for different phases of the CI pipeline (configuration, installation, testing).
+//
+// The function supports two CI types:
+//   - PowerVC: Identified by "-powervc-" in the CI type string
+//   - PowerVS: Identified by "-powervs-" in the CI type string
+//
+// Step phases are defined as constants:
+//   - CI_STEP_CONF (0): Configuration phase ("/ipi-conf-powervc" or "/ipi-conf-powervs")
+//   - CI_STEP_INSTALL (1): Installation phase ("/ipi-install-powervc-install")
+//   - CI_STEP_TEST (2): Testing phase ("/openshift-e2e-libvirt-test")
+//
+// Parameters:
+//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
+//   - stepPhase: Phase constant (CI_STEP_CONF, CI_STEP_INSTALL, or CI_STEP_TEST)
+//
+// Returns:
+//   - string: The step name path for the given CI type and phase
+//   - error: Error if stepPhase is out of range or CI type is not recognized
+func getCiStepName(ciType CiType, stepPhase int) (string, error) {
+	var (
+		ciStepName = map[CiType][]string {
+			CI_TYPE_POWERVC: {
+				"/ipi-conf-powervc",
+				"/ipi-install-powervc-install",
+				"/openshift-e2e-libvirt-test",
+			},
+			CI_TYPE_POWERVS: {
+				"/ipi-conf-powervs",
+				"/ipi-install-powervc-install",
+				"/openshift-e2e-libvirt-test",
+			},
+		}
+	)
+
+	if stepPhase < CI_STEP_CONF || stepPhase > CI_STEP_TEST {
+		return "", fmt.Errorf("Unknown step phase %d", stepPhase)
+	}
+
+	if ciType <= CI_TYPE_UNKNOWN || ciType > CI_TYPE_POWERVS {
+		return "", fmt.Errorf("Unknown CI type %d", ciType)
+	}
+
+	return ciStepName[ciType][stepPhase], nil
+}
+
 // gatherConfRun gathers build/conf information for a CI job.
 // It fetches the finished.json file to determine if the cluster configuration succeeded,
 // and if it failed, extracts the failure details from the build log. The function
@@ -398,7 +490,17 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("empty CI type string")
 	}
 
-	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/finished.json"
+	ciType := getCiType(ciTypeStr)
+	if ciType == CI_TYPE_UNKNOWN {
+		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+	}
+
+	ciStepName, err := getCiStepName(ciType, CI_STEP_CONF)
+	if err != nil {
+		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf name: %w", err)
+	}
+
+	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &confFinished); err != nil {
@@ -411,7 +513,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, nil
 	}
 
-	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-conf-powervc/build-log.txt"
+	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
@@ -457,7 +559,17 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("empty CI type string")
 	}
 
-	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/finished.json"
+	ciType := getCiType(ciTypeStr)
+	if ciType == CI_TYPE_UNKNOWN {
+		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+	}
+
+	ciStepName, err := getCiStepName(ciType, CI_STEP_INSTALL)
+	if err != nil {
+		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch install name: %w", err)
+	}
+
+	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &buildFinished); err != nil {
@@ -470,7 +582,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, nil
 	}
 
-	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/ipi-install-powervc-install/build-log.txt"
+	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch build log: %w", err)
@@ -513,7 +625,17 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return testSummaryStr, testDetailsStr, fmt.Errorf("empty CI type string")
 	}
 
-	junitDirURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/openshift-e2e-libvirt-test/artifacts/junit/"
+	ciType := getCiType(ciTypeStr)
+	if ciType == CI_TYPE_UNKNOWN {
+		return testSummaryStr, testDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+	}
+
+	ciStepName, err := getCiStepName(ciType, CI_STEP_TEST)
+	if err != nil {
+		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test name: %w", err)
+	}
+
+	junitDirURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/"
 	junitDirStr, err := getURLString(ctx, client, junitDirURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch junit directory: %w", err)
@@ -527,7 +649,7 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 	}
 
 	testFailureFilename := matches[0]
-	junitURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + "/openshift-e2e-libvirt-test/artifacts/junit/" + testFailureFilename
+	junitURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/" + testFailureFilename
 	junitStr, err := getURLString(ctx, client, junitURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test failures: %w", err)
