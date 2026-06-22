@@ -86,27 +86,12 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		default:
 		}
 
-		outb, _ := runSplitCommand2([]string{
-			"ssh",
-			"-o", "BatchMode=yes",
-			"-o", "ConnectTimeout=30",
-			"-o", "StrictHostKeyChecking=no",
-			"-i", cfg.KeyPath,
-			fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
-			"echo", "ready",
-		})
+		outs, err := sshAccessSuccess(cfg)
+		if err != nil {
+			return err
+		}
 
-		outs := strings.TrimSpace(string(outb))
 		log.Debugf("SSH check attempt %d/%d: %q", i+1, cfg.MaxRetries, outs)
-
-		if outs == "ready" {
-			log.Debugf("SSH is ready on %s", cfg.Host)
-			return nil
-		}
-
-		if strings.Contains(outs, "Permission denied") {
-			return fmt.Errorf("SSH publickey permission denied for %s", cfg.Host)
-		}
 
 		if i < cfg.MaxRetries-1 {
 			time.Sleep(cfg.RetryDelay)
@@ -114,6 +99,53 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	}
 
 	return fmt.Errorf("SSH not ready after %d attempts on %s", cfg.MaxRetries, cfg.Host)
+}
+
+// sshAccessSuccess tests SSH connectivity to a remote host.
+// It attempts a single SSH connection using the provided configuration and executes
+// a simple "echo ready" command to verify that SSH access is working properly.
+//
+// The function uses the following SSH options:
+//   - BatchMode=yes: Disables password prompts and interactive authentication
+//   - ConnectTimeout=30: Sets a 30-second timeout for the connection attempt
+//   - StrictHostKeyChecking=no: Disables host key verification (accepts unknown hosts)
+//
+// Parameters:
+//   - cfg: SSH configuration containing host, user, key path, and retry settings
+//
+// Returns:
+//   - string: The trimmed output from the SSH command
+//   - error: nil if SSH is ready (output is "ready"), otherwise an error describing the failure
+//
+// Error cases:
+//   - Returns "SSH publickey permission denied" error if authentication fails
+//   - Returns "unknown ssh response" error if the output is not "ready" and no permission error
+//
+// Note: This function is typically called by waitForSSH in a retry loop to handle
+// transient connection failures during host initialization.
+func sshAccessSuccess(cfg *sshConfig) (string, error) {
+	outb, _ := runSplitCommand2([]string{
+		"ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=30",
+		"-o", "StrictHostKeyChecking=no",
+		"-i", cfg.KeyPath,
+		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
+		"echo", "ready",
+	})
+
+	outs := strings.TrimSpace(string(outb))
+
+	if outs == "ready" {
+		log.Debugf("SSH is ready on %s", cfg.Host)
+		return outs, nil
+	}
+
+	if strings.Contains(outs, "Permission denied") {
+		return outs, fmt.Errorf("SSH publickey permission denied for %s", cfg.Host)
+	}
+
+	return outs, fmt.Errorf("unknown ssh response: %v", outs)
 }
 
 // execSSHCommand executes a command via SSH with context support.
