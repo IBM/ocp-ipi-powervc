@@ -1052,6 +1052,23 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 		}
 	}
 
+	// Check if any URL is unsupported
+	for _, url := range args.URLs {
+		// Validate and parse URL
+		if err := validateURL(url); err != nil {
+			return nil, time.Time{}, time.Time{}, err
+		}
+
+		// Validate URL format
+		if !strings.Contains(url, "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/") {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("ERROR: Invalid CI URL format: %s\nExpected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>", url)
+		}
+
+		if ciType := getCiType(url); ciType == CI_TYPE_UNKNOWN {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("Unknown CI type")
+		}
+	}
+
 	// Date range validation and calculation
 	var afterDt, beforeDt time.Time
 	var err error
@@ -1178,13 +1195,6 @@ func main() {
 
 	// Process each URL
 	for _, urlStr := range args.URLs {
-		// Validate URL format
-		if !strings.Contains(urlStr, "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/") {
-			fmt.Fprintf(infoFp, "ERROR: Invalid CI URL format: %s\n", urlStr)
-			fmt.Fprintln(infoFp, "Expected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>")
-			os.Exit(1)
-		}
-
 		// Process this URL
 		if err := processURL(ctx, args, ciStats, urlStr, afterDt, beforeDt, csvWriter); err != nil {
 			fmt.Fprintf(infoFp, "ERROR: Failed to process URL %s: %v\n", urlStr, err)
