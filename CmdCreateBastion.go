@@ -87,13 +87,24 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		}
 
 		outs, err := sshAccessSuccess(cfg)
-		if err != nil {
+		log.Debugf("sshAccessSuccess: err = %v", err)
+		log.Debugf("waitForSSHReady: SSH check attempt %d/%d: %q", i+1, cfg.MaxRetries, outs)
+
+		if err == nil {
 			return err
 		}
 
-		log.Debugf("SSH check attempt %d/%d: %q", i+1, cfg.MaxRetries, outs)
+		shouldContinue := false
+		if err != nil && strings.Contains(err.Error(), "No route to host") {
+			shouldContinue = true
+		}
+
+		if !shouldContinue {
+			return err
+		}
 
 		if i < cfg.MaxRetries-1 {
+			log.Debugf("Sleeping for %s seconds", cfg.RetryDelay)
 			time.Sleep(cfg.RetryDelay)
 		}
 	}
@@ -131,12 +142,12 @@ func sshAccessSuccess(cfg *sshConfig) (string, error) {
 		"-o", "StrictHostKeyChecking=no",
 		"-i", cfg.KeyPath,
 		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
-		"echo", "ready",
+		"echo", "bastion-is-ready",
 	})
 
 	outs := strings.TrimSpace(string(outb))
 
-	if outs == "ready" {
+	if strings.Contains(outs, "bastion-is-ready") {
 		log.Debugf("SSH is ready on %s", cfg.Host)
 		return outs, nil
 	}
@@ -407,8 +418,8 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 
 // setupHAProxyOnServer performs complete HAProxy setup on the bastion server.
 // It executes the following steps in order:
-//  1. Add server to known_hosts
-//  2. Wait for SSH to be ready
+//  1. Wait for SSH to be ready
+//  2. Add server to known_hosts
 //  3. Ensure HAProxy is installed
 //  4. Configure HAProxy file permissions
 //  5. Configure SELinux for HAProxy
@@ -417,20 +428,23 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) error {
 	cfg := newSSHConfig(ipAddress, bastionRsa)
 
-	// Step 1: Add server to known_hosts
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before adding to known_hosts: %w", err)
-	}
-	if err := addServerKnownHosts(ctx, ipAddress); err != nil {
-		return fmt.Errorf("failed to add server to known_hosts: %w", err)
-	}
+	cfg.MaxRetries = 20
+	cfg.RetryDelay = 20 * time.Second
 
-	// Step 2: Wait for SSH to be ready
+	// Step 1: Wait for SSH to be ready
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before SSH ready check: %w", err)
 	}
 	if err := waitForSSHReady(ctx, cfg); err != nil {
 		return fmt.Errorf("SSH not ready: %w", err)
+	}
+
+	// Step 2: Add server to known_hosts
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before adding to known_hosts: %w", err)
+	}
+	if err := addServerKnownHosts(ctx, ipAddress); err != nil {
+		return fmt.Errorf("failed to add server to known_hosts: %w", err)
 	}
 
 	// Step 3: Ensure HAProxy is installed
