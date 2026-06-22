@@ -1152,7 +1152,12 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		if err != nil {
 			// Failed to add to known_hosts - SSH configuration issue, but not critical
 			log.Warnf("[WARN] Failed to add bastion %s (%s) to known_hosts: %v", bastionServer.Name, bastionIpAddress, err)
-			// Continue anyway - this is not critical for monitoring
+			continue
+		}
+
+		_, err = sshAccessSuccess(newSSHConfig(bastionIpAddress, bastionInformation.InstallerRsa))
+		if err != nil {
+			return fmt.Errorf("failed to echo success to bastion at %s: %w", bastionInformation.IPAddress, err)
 		}
 
 		currentVMs := 0
@@ -1560,7 +1565,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			fmt.Sprintf("%s@%s:/etc/haproxy/haproxy.cfg", bastionInformation.Username, bastionInformation.IPAddress),
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to scp to bastion at %s: %w", bastionInformation.IPAddress, err)
 		}
 
 		err = runSplitCommand([]string{
@@ -1574,7 +1579,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			"haproxy.service",
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to restart haproxy to bastion at %s: %w", bastionInformation.IPAddress, err)
 		}
 	}
 
