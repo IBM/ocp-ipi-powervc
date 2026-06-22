@@ -4,19 +4,19 @@ go 1.26.3
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260605140443-e006e534aa6d
-	github.com/IBM/go-sdk-core/v5 v5.21.4
-	github.com/IBM/networking-go-sdk v0.53.4
-	github.com/IBM/platform-services-go-sdk v0.99.0
+	github.com/IBM/go-sdk-core/v5 v5.22.0
+	github.com/IBM/networking-go-sdk v0.53.5
+	github.com/IBM/platform-services-go-sdk v0.99.2
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.12.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
-	github.com/openshift/api v0.0.0-20260605005319-1194f4c62539
+	github.com/openshift/api v0.0.0-20260619095050-5346161d1bf2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
-	k8s.io/apimachinery v0.36.1
-	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
+	k8s.io/apimachinery v0.36.2
+	k8s.io/utils v0.0.0-20260617174310-a95e086a2553
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -46,16 +46,16 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.6 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.35.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
+	k8s.io/kube-openapi v0.0.0-20260519202549-bbf5c5577288 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
