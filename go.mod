@@ -3,7 +3,7 @@ module example/user/PowerVC-Tool
 go 1.26.3
 
 require (
-	github.com/IBM-Cloud/bluemix-go v0.0.0-20260605140443-e006e534aa6d
+	github.com/IBM-Cloud/bluemix-go v0.0.0-20260624064701-576d2f801297
 	github.com/IBM/go-sdk-core/v5 v5.22.0
 	github.com/IBM/networking-go-sdk v0.53.5
 	github.com/IBM/platform-services-go-sdk v0.99.2
