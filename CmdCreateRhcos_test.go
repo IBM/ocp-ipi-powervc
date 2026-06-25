@@ -554,7 +554,7 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := createBootstrapIgnition(tt.config, nil, subnets.Subnet{})
+			data, err := createBootstrapIgnition(tt.config.PasswdHash, tt.config.SshPublicKey, nil, subnets.Subnet{})
 
 			if tt.expectError {
 				if err == nil {
@@ -590,7 +590,7 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 		SshPublicKey: validSSHKey,
 	}
 
-	data, err := createBootstrapIgnition(config, nil, subnets.Subnet{})
+	data, err := createBootstrapIgnition(config.PasswdHash, config.SshPublicKey, nil, subnets.Subnet{})
 	if err != nil {
 		t.Fatalf("Failed to create ignition config: %v", err)
 	}
