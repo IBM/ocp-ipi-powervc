@@ -810,7 +810,11 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 
 		// Generate ignition user data
 		printProgress(progressStepIgnition)
-		userData, err := createBootstrapIgnition(config, port, subnet)
+		userData, err := createBootstrapIgnition(
+			config.PasswdHash,
+			config.SshPublicKey,
+			port,
+			subnet)
 		if err != nil {
 			cleanupPort(port)
 
@@ -818,16 +822,14 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 		}
 		log.Debugf("Ignition configuration generated successfully (%d bytes)", len(userData))
 
-		if err := createServer(ctx,
-			config.RhcosName,
-			config.Clouds[0],
-			config.AvailabilityZone,
-			config.FlavorName,
-			config.ImageName,
-			port,
-			"", // No SSH key for RHCOS (uses ignition)
-			userData,
-		); err != nil {
+		bc := BastionConfig{
+			Clouds:            config.Clouds,
+			BastionName:       config.RhcosName,
+			AvailabilityZone:  config.AvailabilityZone,
+			FlavorName:        config.FlavorName,
+			ImageName:         config.ImageName,
+		}
+		if err := createServer(ctx, &bc, port,subnet, userData); err != nil {
 			cleanupPort(port)
 
 			return servers.Server{}, fmt.Errorf("failed to create server: %w", err)
@@ -1281,17 +1283,17 @@ func ensureSSHDirectory(sshDir string) error {
 // Returns:
 //   - []byte: JSON-encoded Ignition configuration
 //   - error: Any error encountered during generation or validation
-func createBootstrapIgnition(config *rhcosConfig, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
+func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
 
 	// Validate inputs
-	if config.PasswdHash == "" {
+	if passwdHash == "" {
 		return nil, &ValidationError{
 			Field:   "passwdHash",
 			Message: "cannot be empty",
 		}
 	}
-	if config.SshPublicKey == "" {
+	if sshPublicKey == "" {
 		return nil, &ValidationError{
 			Field:   "sshKey",
 			Message: "cannot be empty",
@@ -1310,9 +1312,9 @@ func createBootstrapIgnition(config *rhcosConfig, port *ports.Port, subnet subne
 			Users: []igntypes.PasswdUser{
 				{
 					Name:         "core",
-					PasswordHash: ptr.To(config.PasswdHash),
+					PasswordHash: ptr.To(passwdHash),
 					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
-						igntypes.SSHAuthorizedKey(config.SshPublicKey),
+						igntypes.SSHAuthorizedKey(sshPublicKey),
 					},
 				},
 			},
@@ -1321,15 +1323,15 @@ func createBootstrapIgnition(config *rhcosConfig, port *ports.Port, subnet subne
 
 	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
 		nmFormat := `[connection]
-id=env32
+id=env2
 type=ethernet
-interface-name=env32
+interface-name=env2
 autoconnect=true
 
 [ipv4]
 address1=%s/%s
 gateway=%s
-dns=%s
+dns=%s;
 dns-search=
 may-fail=false
 method=manual
@@ -1339,7 +1341,7 @@ method=manual
 			port.FixedIPs[0].IPAddress,
 			extractNetmask(subnet.CIDR),
 			subnet.GatewayIP,
-			strings.Join(subnet.DNSNameservers, " "),
+			strings.Join(subnet.DNSNameservers, ";"),
 		)
 		log.Debugf("createBootstrapIgnition: nmConfig = %s", nmConfig)
 

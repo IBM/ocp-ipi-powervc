@@ -33,6 +33,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 
 	// Third-party imports - IBM SDK
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
@@ -753,20 +754,24 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 // HAProxy Setup Orchestration
 // ============================================================================
 
-// setupHAProxyOnServer performs complete HAProxy setup on the bastion server.
+// setupHAProxyOnServer prepares HAProxy on the bastion server over SSH.
 // It executes the following steps in order:
-//  1. Wait for SSH to be ready
-//  2. Add server to known_hosts
-//  3. Ensure HAProxy is installed
-//  4. Configure HAProxy file permissions
-//  5. Configure SELinux for HAProxy
-//  6. Enable and start HAProxy service
-// The operation respects context cancellation and timeout, checking before each major step.
-func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) error {
+//  1. Create the SSH configuration for the bastion server.
+//  2. Wait for SSH to become ready.
+//  3. Add the bastion host key to known_hosts.
+//  4. Ensure HAProxy is installed.
+// The function returns a wrapped error for the first failed step.
+// The operation respects context cancellation and timeout, checking before each
+// major step before invoking the corresponding SSH operation.
+func setupHAProxyOnServer(ctx context.Context, config *BastionConfig, ipAddress, bastionRsa string) error {
 	cfg := newSSHConfig(ipAddress, bastionRsa)
 
 	cfg.MaxRetries = 20
 	cfg.RetryDelay = 20 * time.Second
+	log.Debugf("setupHAProxyOnServer: config.ResolvedImageName = %s", config.ResolvedImageName)
+	if strings.Contains(config.ResolvedImageName, "rhcos") {
+		cfg.User = "core"
+	}
 
 	// Step 1: Wait for SSH to be ready
 	if err := ctx.Err(); err != nil {
@@ -790,30 +795,6 @@ func setupHAProxyOnServer(ctx context.Context, ipAddress, bastionRsa string) err
 	}
 	if err := ensureHAProxyInstalled(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to ensure HAProxy installation: %w", err)
-	}
-
-	// Step 4: Configure HAProxy file permissions
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before HAProxy permissions: %w", err)
-	}
-	if err := ensureHAProxyConfigPermissions(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to configure HAProxy permissions: %w", err)
-	}
-
-	// Step 5: Configure SELinux for HAProxy
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before HAProxy SELinux: %w", err)
-	}
-	if err := ensureHAProxySELinux(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to configure HAProxy SELinux: %w", err)
-	}
-
-	// Step 6: Enable and start HAProxy service
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before HAProxy service start: %w", err)
-	}
-	if err := enableAndStartHAProxy(ctx, cfg); err != nil {
-		return fmt.Errorf("failed to start HAProxy service: %w", err)
 	}
 
 	log.Debugf("HAProxy setup completed successfully on %s", ipAddress)
@@ -862,6 +843,9 @@ type BastionConfig struct {
 	DomainName    string // DNS domain for bastion records (optional, requires IBMCLOUD_API_KEY)
 	EnableHAProxy bool   // Enable HAProxy load balancer (default: true)
 	ShouldDebug   bool   // Enable debug logging (default: false)
+
+	// Internal use
+	ResolvedImageName string // The OpenStack image name in case the user specified a UUID
 }
 
 // Validate checks if the configuration is valid and returns detailed errors.
@@ -1201,6 +1185,27 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 	}
 	log.Debugf("ensureServerExists: network = %+v", network)
 
+	var (
+		subnet      subnets.Subnet
+		foundSubnet = false
+	)
+
+	for _, subnetName := range network.Subnets {
+		log.Debugf("ensureServerExists: subnetName = %s", subnetName)
+
+		subnet, err = findSubnet(ctx, config.Clouds[0], subnetName)
+		if err != nil {
+			return fmt.Errorf("failed to find subnet %q: %w", subnetName, err)
+		}
+		foundSubnet = true
+	}
+	if !foundSubnet {
+		return fmt.Errorf("failed to find a subnet for network %q", network.Name)
+	}
+	log.Debugf("ensureServerExists: subnet.CIDR = %s", subnet.CIDR)
+	log.Debugf("ensureServerExists: subnet.GatewayIP = %s", subnet.GatewayIP)
+	log.Debugf("ensureServerExists: subnet.DNSNameservers = %+v", subnet.DNSNameservers)
+
 	// Step 4: Create a network port for the server
 	// The port provides the network interface and IP address allocation
 	port, err := createNetworkPort(ctx, config.Clouds[0], config.BastionName, network.ID)
@@ -1216,16 +1221,7 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 
 	// Step 5: Create the server instance with all specified configuration
 	// The server is created with the network port, SSH key, and other settings
-	if err := createServer(ctx,
-		config.BastionName,
-		config.Clouds[0],
-		config.AvailabilityZone,
-		config.FlavorName,
-		config.ImageName,
-		port,
-		config.SshKeyName,
-		nil, // No user data script
-	); err != nil {
+	if err := createServer(ctx, config, port, subnet, nil); err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
 
@@ -1262,13 +1258,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 	}
 
 	fmt.Println("Setting up bastion locally...")
-	if err := setupBastionServer(ctx,
-		config.EnableHAProxy,
-		config.Clouds,
-		config.BastionName,
-		config.DomainName,
-		config.BastionRsa,
-	); err != nil {
+	if err := setupBastionServer(ctx, config); err != nil {
 		return fmt.Errorf("local setup failed: %w", err)
 	}
 	return nil
@@ -1301,7 +1291,7 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 //   - If server creation fails, automatically deletes the network port
 //   - If server doesn't become ACTIVE in time, deletes both server and port
 //   - All cleanup operations use independent contexts to ensure completion
-func createServer(ctx context.Context, bastionName, cloudName, availabilityZone, flavorName, imageName string, port *ports.Port, sshKeyName string, userData []byte) error {
+func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, subnet subnets.Subnet, userData []byte) error {
 	var (
 		flavor           flavors.Flavor
 		image            images.Image
@@ -1309,26 +1299,29 @@ func createServer(ctx context.Context, bastionName, cloudName, availabilityZone,
 		newServer        *servers.Server
 		err              error
 	)
+	log.Debugf("createServer: userData = %v", string(userData))
 
 	// Step 1: Lookup OpenStack resources by name to get their IDs
 	// These lookups validate that all required resources exist before attempting server creation
-	flavor, err = findFlavor(ctx, cloudName, flavorName)
+	flavor, err = findFlavor(ctx, config.Clouds[0], config.FlavorName)
 	if err != nil {
-		return fmt.Errorf("failed to find flavor %q: %w", flavorName, err)
+		return fmt.Errorf("failed to find flavor %q: %w", config.FlavorName, err)
 	}
 	log.Debugf("createServer: flavor = %+v", flavor)
 
-	image, err = findImage(ctx, cloudName, imageName)
+	image, err = findImage(ctx, config.Clouds[0], config.ImageName)
 	if err != nil {
-		return fmt.Errorf("failed to find image %q: %w", imageName, err)
+		return fmt.Errorf("failed to find image %q: %w", config.ImageName, err)
 	}
 	log.Debugf("createServer: image = %+v", image)
+	log.Debugf("createServer: filling in config.ResolvedImageName")
+	config.ResolvedImageName = image.Name
 
 	// SSH keypair is optional - only lookup if a key name was provided
-	if sshKeyName != "" {
-		sshKeyPair, err = findKeyPair(ctx, cloudName, sshKeyName)
+	if config.SshKeyName != "" {
+		sshKeyPair, err = findKeyPair(ctx, config.Clouds[0], config.SshKeyName)
 		if err != nil {
-			return fmt.Errorf("failed to find SSH keypair %q: %w", sshKeyName, err)
+			return fmt.Errorf("failed to find SSH keypair %q: %w", config.SshKeyName, err)
 		}
 		log.Debugf("createServer: sshKeyPair = %+v", sshKeyPair)
 	}
@@ -1342,9 +1335,24 @@ func createServer(ctx context.Context, bastionName, cloudName, availabilityZone,
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupPortTimeout)
 		defer cancel()
 
-		if deleteErr := deleteNetworkPort(cleanupCtx, cloudName, createdPort); deleteErr != nil {
+		if deleteErr := deleteNetworkPort(cleanupCtx, config.Clouds[0], createdPort); deleteErr != nil {
 			log.Debugf("Warning: failed to cleanup port %s: %v", port.ID, deleteErr)
 		}
+	}
+
+	if strings.Contains(image.Name, "rhcos") {
+		log.Debugf("createServer: found rhcos in %s", image.Name)
+		log.Debugf("createServer: userData = %v", string(userData))
+
+		userData, err = createBootstrapIgnition(
+			"$1$nt2LMmfV$gHmLQRT0xNm86H.iW7DIi0", // passwdHash
+			"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCbXCby9r69mn+lGn7/mjZRkr+ShGWmVcXT4pbwA8IJBkjJg/EtXFuL1VjP5QbbWvjakQ1ZpMEYkL4V1Gm1etzkoDuMV+VhvvL8uW59XezLH1My9RQ5vtXY7GpB3t4qbTX2AQ5abAlTAoRgOxr5mKT62m3uUpU6HBWkcqwhNGRNPQOhUBybbpxMyakJ/TyS5F7GOajsCWdhx3ErldXrtUgbArPwR16Nh0lA3jO81QJnKzbkcaVlCNd8A3to0Dx1g5cel2HDK37Ri6xYZssh1qGN+fecc7Gf4lqvp1gGMtKMyZw8t54/cJrSeVhzi+mq8aeTIaOAwpoa8C4H80HE35wog1tsS0WALlPdNZ8IyPZRfhH3iG12X0WttB5x2hHngQaYzSWzs1TvEGwrci1Y8EFE1xXG6ArAPG5Iy79tmXlOZM/R/D1K6oVRrVB6T4fWKtHFHJExlRI6HWT+Qxye96RPWxEdKEhWzOLRrBiWPSXYCtT4SCbBirP4C/htnDNcMGlT/HIETVf0R+ixjnsqeYYQn15cXvWSSDQ4LTnW9vBrDLsWVFV8hJ4outZ67Ztf/tBuGKfUFzLkTCFhWJER1bbH7Zhxn5xCplI4REr2+PKnhRaPCrz6W2TRO94pACkJG3M4eP3OyCbVfC1N1c0+MPwwJ0R7TAllli94t5jQthu8xw==", // sshPublicKey
+			port,
+			subnet)
+		log.Debugf("createServer: err = %v", err)
+		if err != nil {
+		}
+		log.Debugf("createServer: userData = %v", string(userData))
 	}
 
 	// cleanupServerAndPort removes both the server and its network port
@@ -1355,7 +1363,7 @@ func createServer(ctx context.Context, bastionName, cloudName, availabilityZone,
 		defer cancel()
 
 		// Delete server first - port cannot be deleted while still attached to a server
-		if deleteErr := deleteServer(cleanupCtx, cloudName, server); deleteErr != nil {
+		if deleteErr := deleteServer(cleanupCtx, config.Clouds[0], server); deleteErr != nil {
 			if server == nil {
 				log.Debugf("Warning: failed to cleanup nil server: %v", deleteErr)
 			} else {
@@ -1369,13 +1377,13 @@ func createServer(ctx context.Context, bastionName, cloudName, availabilityZone,
 	// Step 3: Create the server instance with all validated resources
 	// Pass resource IDs (not names) to the actual creation function
 	newServer, err = createServerInstance(ctx,
-		bastionName,
-		cloudName,
-		availabilityZone,
+		config.BastionName,
+		config.Clouds[0],
+		config.AvailabilityZone,
 		flavor.ID,
 		image.ID,
 		port.ID,
-		sshKeyName,
+		config.SshKeyName,
 		sshKeyPair.Name,
 		userData,
 	)
@@ -1389,7 +1397,7 @@ func createServer(ctx context.Context, bastionName, cloudName, availabilityZone,
 
 	// Step 4: Wait for server to reach ACTIVE state
 	// This ensures the server is fully provisioned and ready for use
-	if err := waitForServer(ctx, cloudName, bastionName); err != nil {
+	if err := waitForServer(ctx, config.Clouds[0], config.BastionName); err != nil {
 		// Server didn't become ready in time - cleanup both server and port
 		cleanupServerAndPort(newServer, port)
 
@@ -1580,9 +1588,9 @@ func appendToFile(filePath string, data []byte) error {
 //  2. Extract and validate the server's IP address
 //  3. Setup HAProxy if enabled
 //  4. Configure DNS records if IBM Cloud API key is available
-func setupBastionServer(ctx context.Context, enableHAProxy bool, clouds cloudFlags, serverName, domainName, bastionRsa string) error {
+func setupBastionServer(ctx context.Context, config *BastionConfig) error {
 	// Step 1: Find the server
-	server, err := findServer(ctx, clouds, serverName)
+	server, err := findServer(ctx, config.Clouds, config.BastionName)
 	if err != nil {
 		return fmt.Errorf("failed to find server: %w", err)
 	}
@@ -1594,13 +1602,13 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, clouds cloudFla
 		return err
 	}
 	log.Debugf("Server IP address: %s", ipAddress)
-	log.Debugf("Bastion RSA key: %s", bastionRsa)
+	log.Debugf("Bastion RSA key: %s", config.BastionRsa)
 
 	fmt.Printf("Setting up server %s...\n", server.Name)
 
 	// Step 3: Setup HAProxy if enabled
-	if enableHAProxy {
-		if err := setupHAProxyOnServer(ctx, ipAddress, bastionRsa); err != nil {
+	if config.EnableHAProxy {
+		if err := setupHAProxyOnServer(ctx, config, ipAddress, config.BastionRsa); err != nil {
 			return fmt.Errorf("failed to setup HAProxy: %w", err)
 		}
 	}
@@ -1608,7 +1616,7 @@ func setupBastionServer(ctx context.Context, enableHAProxy bool, clouds cloudFla
 	// Step 4: Setup DNS if API key is available
 	apiKey := os.Getenv("IBMCLOUD_API_KEY")
 	if apiKey != "" {
-		if err := dnsForServer(ctx, clouds, apiKey, serverName, domainName); err != nil {
+		if err := dnsForServer(ctx, config.Clouds, apiKey, config.BastionName, config.DomainName); err != nil {
 			return fmt.Errorf("failed to setup DNS: %w", err)
 		}
 	} else {

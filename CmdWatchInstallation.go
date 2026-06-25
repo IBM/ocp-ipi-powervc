@@ -3006,7 +3006,14 @@ func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 	defer cancel()
 
 	// Use the EnableHAProxy field from the command structure
-	err = setupBastionServer(ctx, cmd.EnableHAProxy, clouds, cmd.ServerName, cmd.DomainName, bastionRsa)
+	bc := BastionConfig{
+		EnableHAProxy:     cmd.EnableHAProxy,
+		Clouds:            clouds,
+		BastionName:       cmd.DomainName,
+		BastionRsa:        bastionRsa,
+		ResolvedImageName: "@TODO",
+	}
+	err = setupBastionServer(ctx, &bc)
 	log.Debugf("handleCreateBastion: setupBastionServer returns %v", err)
 	errChan <- err
 }
