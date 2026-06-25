@@ -247,7 +247,19 @@ type watchCreateConfig struct {
 	shouldDebug     bool
 }
 
-// parseWatchCreateFlags parses and validates command-line flags
+// parseWatchCreateFlags parses command-line flags into a watchCreateConfig.
+// It defines all flags on flagSet, parses args, validates required fields, and
+// reads the IBMCLOUD_API_KEY environment variable. Validation messages are written
+// to preLog so they can be replayed after the logger is initialised.
+//
+// Parameters:
+//   - preLog: Buffer for pre-logger messages
+//   - flagSet: FlagSet to define and parse flags on
+//   - args: Command-line arguments to parse
+//
+// Returns:
+//   - *watchCreateConfig: Populated configuration on success
+//   - error: Any error encountered during parsing or validation
 func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args []string) (*watchCreateConfig, error) {
 	// Define command-line flags
 	ptrCloud := flagSet.String(flagWatchCreateCloud, defaultWatchCreateCloud, usageWatchCreateCloud)
@@ -292,7 +304,18 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 	}, nil
 }
 
-// validateRequiredFlags validates that all required flags are provided
+// validateRequiredFlags checks that all required watch-create flags are non-empty.
+// Informational messages for each valid field are written to preLog.
+//
+// Parameters:
+//   - preLog: Buffer for pre-logger messages
+//   - cloud: OpenStack cloud name
+//   - metadata: Path to the metadata.json file
+//   - bastionUsername: SSH username for the bastion VM
+//   - bastionRsa: Path to the RSA private key for the bastion VM
+//
+// Returns:
+//   - error: An error naming the first missing required flag, or nil if all are present
 func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionUsername, bastionRsa string) error {
 	if cloud == "" {
 		return fmt.Errorf("%scloud name is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateCloud)
@@ -317,7 +340,15 @@ func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionUser
 	return nil
 }
 
-// validateIBMCloudAPIKey validates the IBM Cloud API key if provided
+// validateIBMCloudAPIKey validates the IBM Cloud API key when one is provided.
+// An empty key is accepted (DNS component will simply be skipped).
+// A non-empty key is validated by attempting to initialise the IBM Cloud service.
+//
+// Parameters:
+//   - apiKey: IBM Cloud API key, may be empty
+//
+// Returns:
+//   - error: nil if the key is empty or valid; an error if initialisation fails
 func validateIBMCloudAPIKey(apiKey string) error {
 	if apiKey == "" {
 		log.Printf("[INFO] No IBM Cloud API key provided (optional)")
@@ -332,7 +363,13 @@ func validateIBMCloudAPIKey(apiKey string) error {
 	return nil
 }
 
-// validateMetadataFile validates that the metadata file exists and is readable
+// validateMetadataFile checks that the metadata file at metadataPath exists and is readable.
+//
+// Parameters:
+//   - metadataPath: Path to the metadata.json file
+//
+// Returns:
+//   - error: nil if the file can be read; an error describing the access failure otherwise
 func validateMetadataFile(metadataPath string) error {
 	if _, err := os.ReadFile(metadataPath); err != nil {
 		return fmt.Errorf("%sfailed to read metadata file '%s': %w", errPrefixWatchCreate, metadataPath, err)
@@ -341,7 +378,14 @@ func validateMetadataFile(metadataPath string) error {
 	return nil
 }
 
-// validateBastionRsaFile validates that the bastion RSA file exists and is readable
+// validateBastionRsaFile checks that the bastion RSA private key file exists,
+// is a regular file, and is readable.
+//
+// Parameters:
+//   - rsaPath: Path to the RSA private key file
+//
+// Returns:
+//   - error: nil if the file is accessible; an error describing the failure otherwise
 func validateBastionRsaFile(rsaPath string) error {
 	fileInfo, err := os.Stat(rsaPath)
 	if err != nil {
@@ -365,7 +409,14 @@ func validateBastionRsaFile(rsaPath string) error {
 	return nil
 }
 
-// validateKubeConfigFile validates that the kubeconfig file exists and is readable
+// validateKubeConfigFile checks that the kubeconfig file exists, is a regular file,
+// and is readable. It is only called when a kubeconfig path was provided.
+//
+// Parameters:
+//   - kubeConfigPath: Path to the kubeconfig file
+//
+// Returns:
+//   - error: nil if the file is accessible; an error describing the failure otherwise
 func validateKubeConfigFile(kubeConfigPath string) error {
 	fileInfo, err := os.Stat(kubeConfigPath)
 	if err != nil {
@@ -389,7 +440,18 @@ func validateKubeConfigFile(kubeConfigPath string) error {
 	return nil
 }
 
-// buildComponentList builds the list of components to monitor based on configuration
+// buildComponentList constructs the ordered list of RunnableObject factories to
+// initialise based on the provided configuration.
+//
+// The OpenShift Cluster component is added only when a kubeconfig is provided.
+// The IBM DNS component is added only when a base domain is provided.
+// VMs and Load Balancer are always added.
+//
+// Parameters:
+//   - config: Parsed watch-create configuration
+//
+// Returns:
+//   - []NewRunnableObjectsEntry: Ordered list of component factories
 func buildComponentList(config *watchCreateConfig) []NewRunnableObjectsEntry {
 	robjsFuncs := make([]NewRunnableObjectsEntry, 0, 4)
 
@@ -412,7 +474,15 @@ func buildComponentList(config *watchCreateConfig) []NewRunnableObjectsEntry {
 	return robjsFuncs
 }
 
-// initializeServices loads metadata and creates the services object
+// initializeServices reads the metadata file and constructs a Services instance
+// that provides shared cluster configuration to all RunnableObject implementations.
+//
+// Parameters:
+//   - config: Parsed watch-create configuration
+//
+// Returns:
+//   - *Services: Initialised services object
+//   - error: Any error encountered loading metadata or creating services
 func initializeServices(config *watchCreateConfig) (*Services, error) {
 	log.Printf("[INFO] Loading metadata from file")
 	metadata, err := NewMetadataFromCCMetadata(config.metadata)
@@ -438,7 +508,16 @@ func initializeServices(config *watchCreateConfig) (*Services, error) {
 	return services, nil
 }
 
-// queryComponentStatus sorts components by priority and queries their status
+// queryComponentStatus sorts the provided RunnableObjects by priority and calls
+// ClusterStatus on each in order. All components are queried even if individual
+// ones fail; errors are accumulated and returned together at the end.
+//
+// Parameters:
+//   - ctx: Context for cancellation support (checked before each component)
+//   - robjsCluster: List of initialised RunnableObjects to query
+//
+// Returns:
+//   - error: nil if all components succeed; an aggregated error listing each failure
 func queryComponentStatus(ctx context.Context, robjsCluster []RunnableObject) error {
 	if len(robjsCluster) == 0 {
 		log.Printf("[INFO] No components to query")

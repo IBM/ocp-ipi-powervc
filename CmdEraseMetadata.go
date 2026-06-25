@@ -181,24 +181,9 @@ func eraseMetadataWithRetry(ctx context.Context, pattern, serverIP string) error
 	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
-// eraseMetadataCommand executes the erase-metadata command with the given flags and arguments.
-//
-// This function handles pattern-based metadata deletion operations. It validates
-// the pattern and server IP, and sends the erase command to the remote server
-// with timeout support.
-//
-// Parameters:
-//   - eraseMetadataFlags: The FlagSet containing command-line flags (must not be nil)
-//   - args: Command-line arguments to parse
-//
-// Returns:
-//   - error: Any error encountered during flag parsing, validation, or operation execution
-//
-// Example usage:
-//   err := eraseMetadataCommand(flagSet, []string{
-//       "--pattern", "test-*",
-//       "--serverIP", "192.168.1.100",
-//   })
+// eraseMetadataCommand is the top-level handler for the erase-metadata command.
+// It delegates to innerEraseMetadataCommand and, on failure, prints the error
+// and displays flag usage before returning the error.
 func eraseMetadataCommand(eraseMetadataFlags *flag.FlagSet, args []string) error {
 	err := innerEraseMetadataCommand(eraseMetadataFlags, args)
 	if err != nil {

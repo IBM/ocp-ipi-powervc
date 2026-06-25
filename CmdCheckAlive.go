@@ -70,33 +70,9 @@ const (
 	errPrefixCheckAlive = "[check-alive] "
 )
 
-// checkAliveCommand executes the check-alive command to verify server availability.
-//
-// This function performs a health check on a specified server by sending a check-alive
-// command and waiting for a response. It validates all inputs, initializes logging based
-// on the debug flag, and provides clear feedback on the server's status.
-//
-// Parameters:
-//   - checkAliveFlags: FlagSet containing command-line flags for the check-alive command.
-//     Must not be nil.
-//   - args: Command-line arguments to parse. Can be empty but not nil.
-//
-// Returns:
-//   - error: Any error encountered during execution, nil on success
-//
-// Required Flags:
-//   - serverIP: Must be a valid IP address (IPv4 or IPv6) or resolvable hostname
-//
-// Optional Flags:
-//   - shouldDebug: Must be "true" or "false" (case-insensitive), defaults to "false"
-//
-// Example Usage:
-//
-//	flagSet := flag.NewFlagSet("check-alive", flag.ExitOnError)
-//	err := checkAliveCommand(flagSet, []string{"--serverIP", "192.168.1.100"})
-//	if err != nil {
-//	    log.Fatalf("Check-alive failed: %v", err)
-//	}
+// checkAliveCommand is the top-level handler for the check-alive command.
+// It delegates to innerCheckAliveCommand and, on failure, prints the error
+// and displays flag usage before returning the error.
 func checkAliveCommand(checkAliveFlags *flag.FlagSet, args []string) error {
 	err := innerCheckAliveCommand(checkAliveFlags, args)
 	if err != nil {

@@ -105,6 +105,8 @@ type ValidationError struct {
 	Message string
 }
 
+// Error implements the error interface, returning a message that names the
+// invalid field and describes the validation failure.
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
 }
@@ -115,10 +117,13 @@ type RetryableError struct {
 	Attempt int
 }
 
+// Error implements the error interface, including the attempt number and
+// the underlying error message.
 func (e *RetryableError) Error() string {
 	return fmt.Sprintf("retryable error (attempt %d): %v", e.Attempt, e.Err)
 }
 
+// Unwrap returns the underlying error so that errors.Is/As can inspect it.
 func (e *RetryableError) Unwrap() error {
 	return e.Err
 }
@@ -710,7 +715,8 @@ func innerCreateRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) erro
 	return nil
 }
 
-// printProgress prints a progress message to stderr
+// printProgress prints a step label to stderr in the format "==> <step>...".
+// It is used to report high-level progress to the user during server provisioning.
 func printProgress(step string) {
 	fmt.Fprintf(os.Stderr, "\n==> %s...\n", step)
 }

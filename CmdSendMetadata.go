@@ -257,24 +257,9 @@ func sendMetadataWithRetry(ctx context.Context, metadataFile, serverIP string, s
 	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
-// sendMetadataCommand executes the send-metadata command with the given flags and arguments.
-//
-// This function handles both metadata creation and deletion operations. It validates
-// that exactly one operation is specified, validates the metadata file and server IP,
-// and sends the metadata to the remote server with timeout support.
-//
-// Parameters:
-//   - sendMetadataFlags: The FlagSet containing command-line flags (must not be nil)
-//   - args: Command-line arguments to parse
-//
-// Returns:
-//   - error: Any error encountered during flag parsing, validation, or operation execution
-//
-// Example usage:
-//   err := sendMetadataCommand(flagSet, []string{
-//       "--createMetadata", "metadata.json",
-//       "--serverIP", "192.168.1.100",
-//   })
+// sendMetadataCommand is the top-level handler for the send-metadata command.
+// It delegates to innerSendMetadataCommand and, on failure, prints the error
+// and displays flag usage before returning the error.
 func sendMetadataCommand(sendMetadataFlags *flag.FlagSet, args []string) error {
 	err := innerSendMetadataCommand(sendMetadataFlags, args)
 	if err != nil {

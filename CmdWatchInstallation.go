@@ -590,7 +590,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	return err
 }
 
-// innerWwatchInstallationCommand executes the watch-installation command with the given flags and arguments.
+// innerWatchInstallationCommand executes the watch-installation command with the given flags and arguments.
 //
 // This function continuously monitors OpenShift cluster installations and manages associated
 // infrastructure resources including DNS records, HAProxy configuration, and optionally DHCP
