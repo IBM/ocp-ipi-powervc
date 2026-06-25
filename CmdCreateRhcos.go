@@ -169,8 +169,9 @@ type rhcosConfig struct {
 
 // validate performs comprehensive validation of the RHCOS configuration.
 // It checks for required fields, validates formats, and ensures security requirements.
+// As a side-effect, if AvailabilityZone is empty it is set to defaultAvailZone.
 //
-// Returns a ValidationError if any validation check fails, with a descriptive message
+// Returns a *ValidationError if any validation check fails, with a descriptive message
 // indicating which field failed validation and why.
 func (c *rhcosConfig) validate() error {
 	// Validate required string fields
@@ -236,10 +237,11 @@ func (c *rhcosConfig) validate() error {
 // validateSSHKey validates the SSH public key format and length.
 // It performs comprehensive validation including:
 //   - Presence check
-//   - Length validation
+//   - Minimum character-length check (minSSHKeyLength)
 //   - Format validation (key type, base64 data, optional comment)
-//   - Base64 decoding validation
-//   - Key type verification
+//   - Key type verification against the supported-types allowlist
+//   - Base64 decoding of the key data field
+//   - Minimum decoded byte-size check per key type (via getMinKeyDataSize)
 func (c *rhcosConfig) validateSSHKey() error {
 	if c.SshPublicKey == "" {
 		return &ValidationError{
@@ -580,24 +582,9 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	return config, nil
 }
 
-// createRhcosCommand is the main entry point for the RHCOS server creation workflow.
-// It orchestrates the entire process: configuration parsing, ignition generation,
-// server provisioning, SSH setup, and DNS configuration.
-//
-// Workflow:
-//  1. Parse and validate command-line flags
-//  2. Initialize logging based on debug flag
-//  3. Generate Ignition configuration for bootstrap
-//  4. Find existing server or create new one
-//  5. Configure SSH known_hosts
-//  6. Set up DNS records (if IBM Cloud API key provided)
-//
-// Parameters:
-//   - createRhcosFlags: FlagSet for parsing command-line arguments
-//   - args: Command-line arguments
-//
-// Returns:
-//   - error: Any error encountered during the workflow, nil on success
+// createRhcosCommand is the top-level handler for the create-rhcos command.
+// It delegates to innerCreateRhcosCommand and, on failure, prints the error
+// and displays flag usage before returning the error.
 func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	err := innerCreateRhcosCommand(createRhcosFlags, args)
 	if err != nil {
@@ -609,16 +596,20 @@ func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	return err
 }
 
-// innerCreateRhcosCommand is the main entry point for the RHCOS server creation workflow.
-// It orchestrates the entire process: configuration parsing, ignition generation,
-// server provisioning, SSH setup, and DNS configuration.
+// innerCreateRhcosCommand is the core handler for the RHCOS server creation workflow.
+// It orchestrates the entire provisioning process in the following steps:
+//  1. Parse and validate command-line flags (including timeout and debug).
+//  2. Initialize logging and create a context with the configured timeout.
+//  3. Find an existing server or create a new one (including Ignition generation
+//     and network port setup), retrying on transient failures.
+//  4. Validate that the server is in ACTIVE state, then set up SSH known_hosts,
+//     retrying on transient failures.
+//  5. Configure DNS records via IBM Cloud if IBMCLOUD_API_KEY is set.
 //
-// Workflow:
-//  1. Parse and validate command-line flags
-//  2. Initialize logging based on debug flag
-//  3. Find existing server or create new one
-//  4. Configure SSH known_hosts
-//  5. Set up DNS records (if IBM Cloud API key provided)
+// A deferred cleanup handler attempts to delete the server if any error is returned
+// before setupCompleted is set to true. Note: serverWasCreated is always treated as
+// true regardless of whether the server pre-existed, so the cleanup may also run
+// for pre-existing servers if setup fails.
 //
 // Parameters:
 //   - createRhcosFlags: FlagSet for parsing command-line arguments
@@ -728,10 +719,17 @@ func printProgress(step string) {
 // or creates a new one if not found. This function implements idempotent
 // server provisioning.
 //
+// When the server does not exist the function:
+//  1. Finds the target network and iterates its subnets to locate a valid subnet.
+//  2. Creates a network port on that network.
+//  3. Generates an Ignition v3.2 bootstrap configuration from config.PasswdHash,
+//     config.SshPublicKey, and the port/subnet details.
+//  4. Creates the server via createServer (which waits for ACTIVE state).
+//  5. Verifies the new server is discoverable via findServer.
+//
 // Parameters:
 //   - ctx: Context for timeout and cancellation
 //   - config: RHCOS configuration containing server details
-//   - userData: Ignition configuration data for server bootstrap
 //
 // Returns:
 //   - servers.Server: The found or newly created server
@@ -867,7 +865,6 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 // Parameters:
 //   - ctx: Context for timeout and cancellation
 //   - config: RHCOS configuration containing server details
-//   - userData: Ignition configuration data for server bootstrap
 //
 // Returns:
 //   - servers.Server: The found or newly created server
@@ -879,8 +876,8 @@ func findOrCreateRhcosServerWithRetry(ctx context.Context, config *rhcosConfig) 
 }
 
 // configureDNS sets up DNS records for the RHCOS server using IBM Cloud DNS.
-// This function is optional and only executes if IBMCLOUD_API_KEY is set.
-// If no API key is available, it logs a warning and returns successfully.
+// This function is optional and only executes if config.APIKey is non-empty.
+// If no API key is available, it prints two warning lines to stderr and returns nil.
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
@@ -910,8 +907,12 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 }
 
 // setupRhcosServer performs post-creation setup for the RHCOS server.
-// Currently, this includes adding the server's SSH host key to known_hosts
-// to enable passwordless SSH access.
+// It executes the following steps:
+//  1. Extracts and validates the server's IP address (returns an error if empty
+//     or unparseable, and logs a warning for IPv6 addresses).
+//  2. Ensures the server's SSH host key is present in ~/.ssh/known_hosts via
+//     ensureSSHHostKey, to enable passwordless SSH access on first connection.
+// Context cancellation is checked before each major step.
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
@@ -983,16 +984,23 @@ func setupRhcosServerWithRetry(ctx context.Context, server servers.Server) error
 }
 
 // retryOperation performs an operation with exponential backoff retry logic.
-// It retries transient failures up to maxRetryAttempts times and respects context cancellation.
+// It checks for context cancellation before each attempt and waits between retries
+// using a delay that starts at retryInitialDelay and doubles (up to retryMaxDelay)
+// after each failed attempt.
+//
+// Only errors classified as retryable by isRetryableError are retried; a
+// non-retryable error is returned immediately after the first failed attempt.
+// The operation is attempted at most maxRetryAttempts times.
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
 //   - operationName: Name of the operation for logging
-//   - operation: The operation to retry
+//   - operation: The function to execute and potentially retry
 //
 // Returns:
-//   - servers.Server: The result of the operation
-//   - error: Any error encountered after all retries
+//   - servers.Server: The result of the operation on success
+//   - error: The last error encountered if all attempts fail, or a context error
+//     if the context is cancelled before or during a retry wait
 func retryOperation(ctx context.Context, operationName string, operation func() (servers.Server, error)) (servers.Server, error) {
 	var lastErr error
 	delay := retryInitialDelay
@@ -1089,12 +1097,13 @@ func isRetryableError(err error) bool {
 // race conditions when multiple processes or goroutines access the known_hosts file.
 //
 // The function:
-//  1. Ensures the .ssh directory exists with proper permissions
-//  2. Acquires mutex lock to prevent concurrent in-process access
-//  3. Checks if the host key already exists using ssh-keygen
-//  4. If not found, scans the server using ssh-keyscan
-//  5. Acquires file lock before writing to known_hosts
-//  6. Atomically appends the scanned key to known_hosts
+//  1. Ensures the ~/.ssh directory exists with proper permissions (0700).
+//  2. Acquires the in-process knownHostsMutex to serialise goroutine access.
+//  3. Runs ssh-keygen -F to check whether a host key for ipAddress already exists
+//     (exit code 0 = found, exit code 1 = not found).
+//  4. If not found, calls keyscanServer to retrieve the host key via ssh-keyscan.
+//  5. Calls appendToKnownHostsWithLock to write the key to known_hosts under an
+//     exclusive file lock (see that function for full locking details).
 //
 // Parameters:
 //   - ctx: Context for timeout and cancellation
@@ -1165,10 +1174,19 @@ func ensureSSHHostKey(ctx context.Context, ipAddress string) error {
 // appendToKnownHostsWithLock appends a host key to the known_hosts file with file-level locking.
 // This prevents race conditions when multiple processes try to write to the file simultaneously.
 //
+// The function:
+//  1. Opens (or creates) the file in append mode with 0644 permissions.
+//  2. Checks the file's current permissions and attempts to correct them to 0644 if wrong.
+//  3. Acquires an exclusive flock on the file descriptor to serialise concurrent writers.
+//  4. Re-reads the file after acquiring the lock and returns early (no-op) if the IP
+//     address is already present (added by another process while waiting for the lock).
+//  5. Appends the host key and calls Sync to flush to disk.
+//  6. Releases the lock via a deferred flock(LOCK_UN) call.
+//
 // Parameters:
 //   - knownHostsPath: Path to the known_hosts file
-//   - hostKey: The SSH host key to append
-//   - ipAddress: IP address for logging purposes
+//   - hostKey: The SSH host key bytes to append
+//   - ipAddress: IP address used both for the duplicate-check and for log messages
 //
 // Returns:
 //   - error: Any error encountered during the operation
@@ -1271,14 +1289,21 @@ func ensureSSHDirectory(sshDir string) error {
 // The configuration includes user credentials (password hash and SSH key) for the 'core' user.
 //
 // The generated configuration:
-//  - Uses Ignition v3.2 format (latest stable)
-//  - Sets HTTP response timeout to 120 seconds
-//  - Configures the 'core' user with provided credentials
-//  - Is validated against OpenStack nova user data size limits (64KB)
+//   - Uses Ignition v3.2 format (latest stable)
+//   - Sets HTTP response timeout to 120 seconds
+//   - Configures the 'core' user with the provided password hash and SSH public key
+//   - When port and subnet information is provided (non-nil port, non-empty CIDR,
+//     GatewayIP, and at least one DNS nameserver), also embeds:
+//     * A NetworkManager keyfile at /etc/NetworkManager/system-connections/static.nmconnection
+//       that configures a static IPv4 address, gateway, and DNS servers (mode 0600)
+//     * A /etc/resolv.conf file populated from the subnet's DNS nameservers (mode 0644)
+//   - Is validated against the OpenStack nova user data base64-encoded size limit (64 KB)
 //
 // Parameters:
 //   - passwdHash: Crypt-formatted password hash for the core user
-//   - sshKey: SSH public key for the core user
+//   - sshPublicKey: SSH public key for the core user
+//   - port: Network port containing the assigned IP address; may be nil to skip network config
+//   - subnet: Subnet details (CIDR, GatewayIP, DNSNameservers) used for static network config
 //
 // Returns:
 //   - []byte: JSON-encoded Ignition configuration
@@ -1402,13 +1427,14 @@ method=manual
 }
 
 // validateIgnitionSize validates that the ignition configuration fits within
-// OpenStack nova user data size limits when base64 encoded.
+// the OpenStack nova user data size limit (novaUserDataMaxSize = 65535 bytes)
+// when base64 encoded. It also emits a warning log if utilisation exceeds 80%.
 //
 // Parameters:
 //   - data: The JSON-encoded ignition configuration
 //
 // Returns:
-//   - error: An error if the size exceeds limits, nil otherwise
+//   - error: An error if the base64-encoded size exceeds the limit, nil otherwise
 func validateIgnitionSize(data []byte) error {
 	// Encode to base64 for OpenStack nova user data format
 	strData := base64.StdEncoding.EncodeToString(data)
