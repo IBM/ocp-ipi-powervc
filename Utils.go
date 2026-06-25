@@ -529,6 +529,8 @@ func extractNetmask(ipWithNetmask string) string {
 //   - []string{} returns ""
 //   - []string{"192.168.1.1"} returns "nameserver 192.168.1.1"
 func buildResolvConf(nameservers []string) string {
+	log.Debugf("buildResolvConf: nameservers = %+v", nameservers)
+
 	if len(nameservers) == 0 {
 		return ""
 	}
