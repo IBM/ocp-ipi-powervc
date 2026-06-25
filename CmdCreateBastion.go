@@ -95,8 +95,11 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		}
 
 		shouldContinue := false
-		if err != nil && strings.Contains(err.Error(), "No route to host") {
-			shouldContinue = true
+		if err != nil {
+			if strings.Contains(err.Error(), "No route to host") ||
+			   strings.Contains(err.Error(), "Connection timed out") {
+				shouldContinue = true
+			}
 		}
 
 		if !shouldContinue {
@@ -137,6 +140,7 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 func sshAccessSuccess(cfg *sshConfig) (string, error) {
 	outb, _ := runSplitCommand2([]string{
 		"ssh",
+		"-o", "IdentitiesOnly=yes",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=30",
 		"-o", "StrictHostKeyChecking=no",
@@ -165,6 +169,7 @@ func sshAccessSuccess(cfg *sshConfig) (string, error) {
 func execSSHCommand(ctx context.Context, cfg *sshConfig, command []string) (string, error) {
 	args := []string{
 		"ssh",
+		"-o", "IdentitiesOnly=yes",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=30",
 		"-o", "StrictHostKeyChecking=no",
@@ -172,6 +177,7 @@ func execSSHCommand(ctx context.Context, cfg *sshConfig, command []string) (stri
 		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
 	}
 	args = append(args, command...)
+	log.Debugf("execSSHCommand: args = %+v", args)
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	outb, err := cmd.CombinedOutput()
