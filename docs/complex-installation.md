@@ -179,7 +179,16 @@ $ ssh-keygen
 $ chmod 0600 /home/cloud-user/.ssh/id_installer_rsa
 ```
 
-Run the ocp-ipi-powervc-linux-$(uname -a) to create the bastion VM. This command will also set up HAProxy and configure DNS entries via IBM Cloud.
+Run the ocp-ipi-powervc-linux-$(uname -a) to create the bastion VM. When `--enableHAProxy true` is used, the bastion HAProxy setup performs these steps automatically:
+
+1. Wait for SSH access to become ready on the new bastion VM.
+2. Add the bastion host key to `known_hosts`.
+3. Ensure HAProxy is installed on the bastion.
+4. Configure HAProxy file permissions.
+5. Configure SELinux for HAProxy.
+6. Enable and start the HAProxy service.
+
+If `IBMCLOUD_API_KEY` is set, the command can also configure DNS entries via IBM Cloud.
 
 ```
 $ export IBMCLOUD_API_KEY="your-api-key"
