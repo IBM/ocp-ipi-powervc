@@ -270,17 +270,316 @@ func installHAProxy(ctx context.Context, cfg *sshConfig) error {
 	return nil
 }
 
-// ensureHAProxyInstalled ensures HAProxy is installed, installing if necessary.
-// It checks if HAProxy is installed and installs it if not found.
+// osRelease represents the type of the installed OS
+type osRelease int
+
+const (
+	// osReleaseUNKNOWN indicates an unknown OS
+	osReleaseUNKNOWN osRelease = iota
+
+        // osReleaseRHEL indicates a RHEL OS
+        osReleaseRHEL
+
+	// osReleaseCENTOS indicates a CentOS OS
+	osReleaseCENTOS
+
+	// osReleaseCOREOS indicates a RHCOS OS
+	osReleaseCOREOS
+)
+
+// getOSRelease detects the remote operating system from /etc/os-release.
+// It executes the following steps in order:
+//  1. Read the ID field from /etc/os-release over SSH.
+//  2. Read the VARIANT_ID field from /etc/os-release over SSH.
+//  3. Map the detected values to COREOS, RHEL, CENTOS, or UNKNOWN.
+// The operation respects context cancellation and timeout through the SSH
+// commands it invokes.
+func getOSRelease(ctx context.Context, cfg *sshConfig) (osRelease, error) {
+	outputID, err := execSSHCommand(ctx, cfg, []string{"grep", "^ID=", "/etc/os-release"})
+	if err != nil {
+		return osReleaseUNKNOWN, fmt.Errorf("failed to grep ID in bastion: %v", err)
+	}
+
+	outputVARIANT_ID, err := execSSHCommand(ctx, cfg, []string{"grep", "^VARIANT_ID=", "/etc/os-release"})
+	if err != nil {
+		return osReleaseUNKNOWN, fmt.Errorf("failed to grep VARIANT_ID in bastion: %v", err)
+	}
+
+	if outputID == `ID="rhel"` {
+		if outputVARIANT_ID == "VARIANT_ID=coreos" {
+			return osReleaseCOREOS, nil
+		}
+
+		return osReleaseRHEL, nil
+	}
+
+	if outputID == `ID="centos"` {
+		return osReleaseCENTOS, nil
+	}
+
+	return osReleaseUNKNOWN, nil
+}
+
+// ensureHAProxyInstalled ensures HAProxy is installed on the bastion server.
+// It executes the following steps in order:
+//  1. Delegate HAProxy installation and configuration to the dnf-based or
+//     coreos-based helper.
 // The operation respects context cancellation and timeout.
 func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
+
+	release, err := getOSRelease(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("could not get OS release: %v", err)
+	}
+
+	switch release {
+	case osReleaseRHEL, osReleaseCENTOS:
+		return ensureDnfHAProxyInstalled(ctx, cfg)
+	case osReleaseCOREOS:
+		return ensureCoreosHAProxyInstalled(ctx, cfg)
+	default:
+		return fmt.Errorf("unknown release in ensureHAProxyInstalled: %d", release)
+	}
+}
+
+// ensureDnfHAProxyInstalled ensures HAProxy is installed and configured using dnf.
+// It executes the following steps in order:
+//  1. Check whether HAProxy is already installed.
+//  2. Install HAProxy with dnf if it is not present.
+//  3. Configure HAProxy file permissions.
+//  4. Configure SELinux for HAProxy.
+//  5. Enable and start the HAProxy service.
+// The operation respects context cancellation and timeout.
+func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
+	// Step 1: Is it installed?
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before isHAProxyInstalled: %w", err)
+	}
 	installed, err := isHAProxyInstalled(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
 	if !installed {
-		return installHAProxy(ctx, cfg)
+		err = installHAProxy(ctx, cfg)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Step 2: Configure HAProxy file permissions
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy permissions: %w", err)
+	}
+	if err := ensureHAProxyConfigPermissions(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to configure HAProxy permissions: %w", err)
+	}
+
+	// Step 3: Configure SELinux for HAProxy
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy SELinux: %w", err)
+	}
+	if err := ensureHAProxySELinux(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to configure HAProxy SELinux: %w", err)
+	}
+
+	// Step 4: Enable and start HAProxy service
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before HAProxy service start: %w", err)
+	}
+	if err := enableAndStartHAProxy(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to start HAProxy service: %w", err)
+	}
+
+	return nil
+}
+
+// ensureCoreosHAProxyInstalled sets up HAProxy as a containerized service on a CoreOS bastion host.
+//
+// This function performs a complete installation and configuration of HAProxy running in a Podman
+// container as a systemd service. It creates all necessary files, builds the container image,
+// and enables the service to start automatically.
+//
+// The installation process consists of 7 steps:
+//  1. Create Containerfile for HAProxy container image
+//  2. Build the HAProxy container image using Podman
+//  3. Create the HAProxy configuration directory
+//  4. Create an empty HAProxy configuration file
+//  5. Create a systemd service unit file for HAProxy
+//  6. Reload systemd to recognize the new service
+//  7. Enable and start the HAProxy service
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control. Each step checks for context cancellation
+//     before proceeding, allowing graceful termination of the installation process.
+//   - cfg: SSH configuration containing connection details (host, port, user, key) for executing
+//     remote commands on the bastion host.
+//
+// Returns:
+//   - error: nil on success, or an error describing which step failed and why. Each step returns
+//     a wrapped error with context about the specific operation that failed.
+//
+// Container Details:
+//   - Base Image: registry.access.redhat.com/ubi9/ubi (Red Hat Universal Base Image 9)
+//   - Installed Package: haproxy (installed via dnf)
+//   - Container Name: localhost/haproxy:latest
+//   - Runtime: Podman with --net=host for direct network access
+//
+// Service Configuration:
+//   - Service Name: haproxy.service
+//   - Service Type: systemd unit with automatic restart on failure
+//   - Restart Policy: Always restart with 5-second delay
+//   - Network Mode: Host networking (--net=host) for direct port access
+//   - Volume Mount: /etc/haproxy/haproxy.cfg mounted into container with SELinux label (:Z)
+//
+// File Locations:
+//   - Containerfile: /tmp/Containerfile.haproxy (temporary build file)
+//   - Config Directory: /etc/haproxy/
+//   - Config File: /etc/haproxy/haproxy.cfg (initially empty, populated later)
+//   - Service Unit: /etc/systemd/system/haproxy.service
+//
+// Notes:
+//   - The HAProxy configuration file is created empty and must be populated separately
+//     (typically by updateHAProxyConfig or similar functions)
+//   - The service is configured to automatically kill and remove any existing container
+//     before starting (ExecStartPre directives)
+//   - All operations require sudo privileges on the remote host
+//   - Each step logs debug output for troubleshooting
+//   - Context cancellation is checked before each step to allow early termination
+//
+// Example Usage:
+//   cfg := &sshConfig{
+//       host: "bastion.example.com",
+//       port: "22",
+//       user: "core",
+//       key:  "/path/to/ssh/key",
+//   }
+//   if err := ensureCoreosHAProxyInstalled(ctx, cfg); err != nil {
+//       log.Fatalf("Failed to install HAProxy: %v", err)
+//   }
+func ensureCoreosHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
+	log.Debugf("ensureCoreosHAProxyInstalled: cfg = %+v", cfg)
+
+	// Step 1: Create Containerfile for building HAProxy image
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before cat > /tmp/Containerfile.haproxy: %w", err)
+	}
+	output, err := execSSHCommandWithStdin(ctx,
+		cfg,
+		[]string{
+			"cat", ">", "/tmp/Containerfile.haproxy",
+		},
+		`FROM registry.access.redhat.com/ubi9/ubi
+RUN dnf install -y haproxy && dnf clean all
+CMD ["haproxy", "-f", "/etc/haproxy/haproxy.cfg"]
+`)
+	log.Debugf("cat > /tmp/Containerfile.haproxy\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed cat > /tmp/Containerfile.haproxy: %w", err)
+	}
+
+	// Step 2: Build the Containerfile
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"podman", "build", "-t", "localhost/haproxy:latest", "-f", "/tmp/Containerfile.haproxy",
+		})
+	log.Debugf("sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy: %w", err)
+	}
+
+	// Step 3: Make sure /etc/haproxy exists
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo mkdir -p /etc/haproxy: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"mkdir", "-p", "/etc/haproxy",
+		})
+	log.Debugf("sudo mkdir -p /etc/haproxy\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo mkdir -p /etc/haproxy: %w", err)
+	}
+
+	// Step 4: Make sure /etc/haproxy/haproxy.cfg exists
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo tee /etc/haproxy/haproxy.cfg: %w", err)
+	}
+	output, err = execSSHSudoCommandWithStdin(ctx,
+		cfg,
+		[]string{
+			"sudo", "tee", "/etc/haproxy/haproxy.cfg",
+		},
+		``)
+	log.Debugf("sudo tee /etc/haproxy/haproxy.cfg\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo tee /etc/haproxy/haproxy.cfg: %w", err)
+	}
+
+	// Step 5: Make sure /etc/systemd/system/haproxy.service exists
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo tee /etc/systemd/system/haproxy.service: %w", err)
+	}
+	output, err = execSSHSudoCommandWithStdin(ctx,
+		cfg,
+		[]string{
+			"sudo", "tee", "/etc/systemd/system/haproxy.service",
+		},
+		`[Unit]
+Description=HAProxy Load Balancer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+TimeoutStartSec=0
+ExecStartPre=-/bin/podman kill haproxy
+ExecStartPre=-/bin/podman rm haproxy
+ExecStart=/bin/podman run --name haproxy \
+    --net=host \
+    --volume /etc/haproxy/haproxy.cfg:/etc/haproxy/haproxy.cfg:Z \
+    localhost/haproxy:latest
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`)
+	log.Debugf("sudo tee /etc/systemd/system/haproxy.service\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo tee /etc/systemd/system/haproxy.service: %w", err)
+	}
+
+	// Step 6: Make sure systemctl gets reloaded
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo systemctl daemon-reload: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"systemctl", "daemon-reload",
+		})
+	log.Debugf("sudo systemctl daemon-reload\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo systemctl daemon-reload: %w", err)
+	}
+
+	// Step 7: Make sure haproxy.service is enabled
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo systemctl enable --now haproxy.service: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"systemctl", "enable", "--now", "haproxy.service",
+		})
+	log.Debugf("sudo systemctl enable --now haproxy.service\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo systemctl enable --now haproxy.service: %w", err)
 	}
 
 	return nil
