@@ -49,7 +49,7 @@ $ ocp-ipi-powervc-linux-${ARCH} check-alive --serverIP "${CONTROLLER_IP}"
 
 ## The bastion node should be up and running with haproxy process running.
 
-Check on the status of the haproxy daemon with ssh.
+Check on the status of the haproxy daemon with ssh. The bastion setup is expected to wait for SSH readiness, add the bastion to `known_hosts`, ensure HAProxy is installed, configure HAProxy permissions and SELinux settings, and then enable and start the service. If this check fails, verify those setup stages completed successfully.
 
 ```
 $ ssh -i ${HOME}/.ssh/id_bastion cloud-user@${BASTION_IP} sudo systemctl status haproxy.service --no-pager -l
