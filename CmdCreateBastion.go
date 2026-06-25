@@ -76,7 +76,10 @@ func newSSHConfig(host, keyPath string) *sshConfig {
 
 // waitForSSHReady waits for SSH to become available on the server.
 // It retries up to MaxRetries times with RetryDelay between attempts.
-// Returns an error if SSH doesn't become ready or if permission is denied.
+// Only "No route to host" and "Connection timed out" errors are retried;
+// any other error (including permission denied) causes an immediate return.
+// Returns an error if the context is cancelled, if SSH doesn't become ready
+// after all attempts, or if a non-retryable error is encountered.
 func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	log.Debugf("Waiting for SSH to be ready on %s", cfg.Host)
 
@@ -118,7 +121,7 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 
 // sshAccessSuccess tests SSH connectivity to a remote host.
 // It attempts a single SSH connection using the provided configuration and executes
-// a simple "echo ready" command to verify that SSH access is working properly.
+// "echo bastion-is-ready" to verify that SSH access is working properly.
 //
 // The function uses the following SSH options:
 //   - BatchMode=yes: Disables password prompts and interactive authentication
@@ -130,13 +133,13 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 //
 // Returns:
 //   - string: The trimmed output from the SSH command
-//   - error: nil if SSH is ready (output is "ready"), otherwise an error describing the failure
+//   - error: nil if SSH is ready (output contains "bastion-is-ready"), otherwise an error describing the failure
 //
 // Error cases:
 //   - Returns "SSH publickey permission denied" error if authentication fails
-//   - Returns "unknown ssh response" error if the output is not "ready" and no permission error
+//   - Returns "unknown ssh response" error if the output does not contain "bastion-is-ready"
 //
-// Note: This function is typically called by waitForSSH in a retry loop to handle
+// Note: This function is typically called by waitForSSHReady in a retry loop to handle
 // transient connection failures during host initialization.
 func sshAccessSuccess(cfg *sshConfig) (string, error) {
 	outb, _ := runSplitCommand2([]string{
@@ -216,8 +219,7 @@ func execSSHCommandWithStdin(ctx context.Context, cfg *sshConfig, command []stri
 	return strings.TrimSpace(string(outb)), err
 }
 
-// execSSHSudoCommandWithStdin executes a command with sudo, context support, and input to stdin via SSH
-// with context support.
+// execSSHSudoCommandWithStdin executes a command with sudo via SSH, passing input to stdin, with context support.
 // The command is prefixed with "sudo" automatically.
 // The command will be cancelled if the context is cancelled or times out.
 func execSSHSudoCommandWithStdin(ctx context.Context, cfg *sshConfig, command []string, stdin string) (string, error) {
@@ -345,11 +347,10 @@ func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 
 // ensureDnfHAProxyInstalled ensures HAProxy is installed and configured using dnf.
 // It executes the following steps in order:
-//  1. Check whether HAProxy is already installed.
-//  2. Install HAProxy with dnf if it is not present.
-//  3. Configure HAProxy file permissions.
-//  4. Configure SELinux for HAProxy.
-//  5. Enable and start the HAProxy service.
+//  1. Check whether HAProxy is already installed; install it with dnf if not present.
+//  2. Configure HAProxy file permissions.
+//  3. Configure SELinux for HAProxy.
+//  4. Enable and start the HAProxy service.
 // The operation respects context cancellation and timeout.
 func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	// Step 1: Is it installed?
@@ -755,14 +756,15 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 // ============================================================================
 
 // setupHAProxyOnServer prepares HAProxy on the bastion server over SSH.
-// It executes the following steps in order:
-//  1. Create the SSH configuration for the bastion server.
-//  2. Wait for SSH to become ready.
-//  3. Add the bastion host key to known_hosts.
-//  4. Ensure HAProxy is installed.
+// It configures an SSH client (with 20 retries, 20-second delay, and "core" user
+// when the resolved image name contains "rhcos"), then executes the following
+// steps in order:
+//  1. Wait for SSH to become ready.
+//  2. Add the bastion host key to known_hosts.
+//  3. Ensure HAProxy is installed.
 // The function returns a wrapped error for the first failed step.
 // The operation respects context cancellation and timeout, checking before each
-// major step before invoking the corresponding SSH operation.
+// step before invoking the corresponding SSH operation.
 func setupHAProxyOnServer(ctx context.Context, config *BastionConfig, ipAddress, bastionRsa string) error {
 	cfg := newSSHConfig(ipAddress, bastionRsa)
 
@@ -1047,14 +1049,9 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	return config, nil
 }
 
-// createBastionCommand is the main entry point for the create-bastion command.
-// It orchestrates the entire bastion creation process:
-//  1. Parse and validate configuration
-//  2. Initialize logging
-//  3. Clean up previous bastion IP file
-//  4. Ensure server exists (create if needed)
-//  5. Setup bastion server (HAProxy, DNS)
-//  6. Write bastion IP to file
+// createBastionCommand is the top-level handler for the create-bastion command.
+// It delegates to innerCreateBastionCommand and, on failure, prints the error
+// and displays flag usage before returning the error.
 func createBastionCommand(createBastionFlags *flag.FlagSet, args []string) error {
 	err := innerCreateBastionCommand(createBastionFlags, args)
 	if err != nil {
@@ -1127,18 +1124,15 @@ func cleanupBastionIPFile(filename string) error {
 	return nil
 }
 
-// ensureServerExists checks if server exists and creates it if needed.
-// If the server already exists, it returns immediately.
 // ensureServerExists checks if a bastion server exists and creates it if necessary.
 //
 // The function performs the following operations:
-//  1. Checks if the server already exists using findServer
-//  2. If the server exists, returns immediately (idempotent operation)
-//  3. If the server doesn't exist, creates it by:
-//     a. Finding the target network by name
-//     b. Creating a network port on that network
-//     c. Creating the server with the specified configuration
-//  4. Verifies the server was successfully created
+//  1. Checks if the server already exists using findServer; returns immediately if found (idempotent).
+//  2. Finds the target network by name.
+//  3. Iterates over the network's subnets to locate a valid subnet.
+//  4. Creates a network port on the target network.
+//  5. Creates the server with the specified configuration.
+//  6. Verifies the server was successfully created and is discoverable via findServer.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -1153,8 +1147,9 @@ func cleanupBastionIPFile(filename string) error {
 //
 // Returns:
 //   - nil if the server exists or was successfully created
-//   - ErrServerNotFound wrapped error if server lookup fails unexpectedly
-//   - Wrapped error if network lookup, port creation, server creation, or verification fails
+//   - An error if findServer returns an unexpected error (not ErrServerNotFound)
+//   - Wrapped error if network lookup, subnet lookup, port creation, server creation,
+//     or post-creation verification fails
 //
 // The function is idempotent - calling it multiple times with the same configuration
 // will not create duplicate servers.
@@ -1274,14 +1269,12 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
-//   - bastionName: Name to assign to the new server instance
-//   - cloudName: OpenStack cloud name from clouds.yaml
-//   - availabilityZone: Availability zone where the server will be created
-//   - flavorName: Name of the compute flavor (defines CPU, RAM, disk)
-//   - imageName: Name of the OS image to boot from
+//   - config: BastionConfig containing server creation parameters (BastionName, Clouds,
+//     AvailabilityZone, FlavorName, ImageName, SshKeyName). ResolvedImageName is populated
+//     as a side effect when the image lookup succeeds.
 //   - port: Pre-created network port to attach to the server
-//   - sshKeyName: Name of SSH keypair for authentication (empty string to skip)
-//   - userData: Cloud-init user data for server initialization (can be nil)
+//   - subnet: Subnet associated with the port (used when generating CoreOS ignition user data)
+//   - userData: Cloud-init user data for server initialization (can be nil; overridden for rhcos images)
 //
 // Returns:
 //   - error: nil on success, or an error describing what went wrong
@@ -1626,8 +1619,7 @@ func setupBastionServer(ctx context.Context, config *BastionConfig) error {
 	return nil
 }
 
-// writeBastionIP writes the bastion server's IP address to a file.
-// The IP address is written to the file specified by bastionIpFilename constant.
+// writeBastionIP writes the bastion server's IP address to the file specified by config.BastionIpFile.
 func writeBastionIP(ctx context.Context, config *BastionConfig, serverName string) error {
 	server, err := findServer(ctx, config.Clouds, serverName)
 	if err != nil {
