@@ -192,6 +192,38 @@ func execSSHSudoCommand(ctx context.Context, cfg *sshConfig, command []string) (
 	return execSSHCommand(ctx, cfg, sudoCmd)
 }
 
+// execSSHCommandWithStdin executes a command via SSH with context support and passes input to stdin.
+// The input string is written to the command's stdin.
+// The command will be cancelled if the context is cancelled or times out.
+func execSSHCommandWithStdin(ctx context.Context, cfg *sshConfig, command []string, stdin string) (string, error) {
+	args := []string{
+		"ssh",
+		"-o", "IdentitiesOnly=yes",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=30",
+		"-o", "StrictHostKeyChecking=no",
+		"-i", cfg.KeyPath,
+		fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
+	}
+	args = append(args, command...)
+	log.Debugf("execSSHCommandWithStdin: args = %+v", args)
+	log.Debugf("execSSHCommandWithStdin: stdin = %+v", stdin)
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin = strings.NewReader(stdin)
+	outb, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(outb)), err
+}
+
+// execSSHSudoCommandWithStdin executes a command with sudo, context support, and input to stdin via SSH
+// with context support.
+// The command is prefixed with "sudo" automatically.
+// The command will be cancelled if the context is cancelled or times out.
+func execSSHSudoCommandWithStdin(ctx context.Context, cfg *sshConfig, command []string, stdin string) (string, error) {
+	sudoCmd := append([]string{"sudo"}, command...)
+	return execSSHCommandWithStdin(ctx, cfg, sudoCmd, stdin)
+}
+
 // ============================================================================
 // HAProxy Package Management
 // ============================================================================
