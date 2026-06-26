@@ -845,9 +845,11 @@ type BastionConfig struct {
 	DomainName    string // DNS domain for bastion records (optional, requires IBMCLOUD_API_KEY)
 	EnableHAProxy bool   // Enable HAProxy load balancer (default: true)
 	ShouldDebug   bool   // Enable debug logging (default: false)
+	PasswdHash    string // The password hash used in the coreos ignition file
 
 	// Internal use
 	ResolvedImageName string // The OpenStack image name in case the user specified a UUID
+	BastionRsaPub     string // Contents of the RSA public key for local SSH setup (mutually exclusive with ServerIP)
 }
 
 // Validate checks if the configuration is valid and returns detailed errors.
@@ -900,6 +902,20 @@ func (c *BastionConfig) Validate() error {
 			} else {
 				validationErrors = append(validationErrors, 
 					fmt.Errorf("bastionRsa: cannot access file: %w", err))
+			}
+		}
+
+		bastionRsaPub := c.BastionRsa + ".pub"
+		bastionRsaPubValid := true
+
+		if _, err := os.Stat(bastionRsaPub); err != nil {
+			bastionRsaPubValid = false
+		}
+
+		if bastionRsaPubValid {
+			content, err := os.ReadFile(bastionRsaPub)
+			if err == nil {
+				c.BastionRsaPub = string(content)
 			}
 		}
 	}
@@ -1009,6 +1025,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	enableHAProxy := flags.String("enableHAProxy", "true", "Enable HA Proxy daemon")
 	serverIP := flags.String("serverIP", "", "The IP address of the server")
 	bastionIpFile := flags.String("bastionIpFile", "/tmp/bastionIp", "The filename containing the IP of the bastion server")
+	passwdHash := flags.String("passwdHash", "", "The password hash used in the coreos ignition file")
 	shouldDebug := flags.String("shouldDebug", "false", "Enable debug output")
 
 	// Parse flags
@@ -1028,6 +1045,7 @@ func parseBastionFlags(flags *flag.FlagSet, args []string) (*BastionConfig, erro
 	config.DomainName = *domainName
 	config.ServerIP = *serverIP
 	config.BastionIpFile = *bastionIpFile
+	config.PasswdHash = *passwdHash
 
 	// Parse boolean flags
 	var err error
@@ -1338,8 +1356,8 @@ func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, 
 		log.Debugf("createServer: userData = %v", string(userData))
 
 		userData, err = createBootstrapIgnition(
-			"", // passwdHash
-			"", // sshPublicKey
+			config.PasswdHash,
+			config.BastionRsaPub,
 			port,
 			subnet)
 		log.Debugf("createServer: err = %v", err)

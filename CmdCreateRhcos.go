@@ -1317,20 +1317,6 @@ func ensureSSHDirectory(sshDir string) error {
 func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
 
-	// Validate inputs
-	if passwdHash == "" {
-		return nil, &ValidationError{
-			Field:   "passwdHash",
-			Message: "cannot be empty",
-		}
-	}
-	if sshPublicKey == "" {
-		return nil, &ValidationError{
-			Field:   "sshKey",
-			Message: "cannot be empty",
-		}
-	}
-
 	// Build Ignition v3.2 configuration with user credentials
 	ignConfig := igntypes.Config{
 		Ignition: igntypes.Ignition{
@@ -1339,7 +1325,10 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports
 				HTTPResponseHeaders: ptr.To(ignitionHTTPTimeout),
 			},
 		},
-		Passwd: igntypes.Passwd{
+	}
+
+	if passwdHash != "" && sshPublicKey != "" {
+		ignConfig.Passwd = igntypes.Passwd{
 			Users: []igntypes.PasswdUser{
 				{
 					Name:         "core",
@@ -1349,54 +1338,94 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports
 					},
 				},
 			},
-		},
+		}
+	} else if sshPublicKey != "" {
+		ignConfig.Passwd = igntypes.Passwd{
+			Users: []igntypes.PasswdUser{
+				{
+					Name:         "core",
+					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
+						igntypes.SSHAuthorizedKey(sshPublicKey),
+					},
+				},
+			},
+		}
 	}
 
 	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
-		nmFormat := `[connection]
-id=env2
-type=ethernet
-interface-name=env2
-autoconnect=true
+		detectIfaceUnit := `[Unit]
+Description=Detect primary network interface
+Before=NetworkManager.service
+After=systemd-udev-settle.service
+DefaultDependencies=no
 
-[ipv4]
-address1=%s/%s
-gateway=%s
-dns=%s;
-dns-search=
-may-fail=false
-method=manual
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+  for i in $(seq 1 30); do \
+    iface=$(ls /sys/class/net/ | grep -v lo | head -1); \
+    if [ -n "$iface" ]; then \
+      echo "IFACE=$iface" > /etc/network-iface.env; \
+      exit 0; \
+    fi; \
+    sleep 1; \
+  done; \
+  echo "No network interface found" >&2; \
+  exit 1'
+
+[Install]
+WantedBy=multi-user.target
 `
 
-		nmConfig := fmt.Sprintf(nmFormat,
+		configureNetworkUnit := fmt.Sprintf(`[Unit]
+Description=Write NetworkManager static config using detected interface
+After=detect-iface.service
+Before=NetworkManager.service
+Requires=detect-iface.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/network-iface.env
+ExecStart=/bin/bash -c '\
+	 mkdir -p /etc/NetworkManager/system-connections && \
+	 printf "[connection]\nid=${IFACE}\ntype=ethernet\ninterface-name=${IFACE}\nautoconnect=true\n\n[ipv4]\naddress1=%s/%s\ngateway=%s\ndns=%s;\ndns-search=\nmay-fail=false\nmethod=manual\n" \
+	 > /etc/NetworkManager/system-connections/static.nmconnection && \
+	 chmod 600 /etc/NetworkManager/system-connections/static.nmconnection'
+
+[Install]
+WantedBy=multi-user.target
+`,
 			port.FixedIPs[0].IPAddress,
 			extractNetmask(subnet.CIDR),
 			subnet.GatewayIP,
 			strings.Join(subnet.DNSNameservers, ";"),
 		)
-		log.Debugf("createBootstrapIgnition: nmConfig = %s", nmConfig)
+		log.Debugf("createBootstrapIgnition: configureNetworkUnit = %s", configureNetworkUnit)
 
 		dnsFile := buildResolvConf(subnet.DNSNameservers)
 		log.Debugf("createBootstrapIgnition: dnsFile = %s", dnsFile)
 
+		ignConfig.Systemd = igntypes.Systemd{
+			Units: []igntypes.Unit{
+				{
+					Name:     "detect-iface.service",
+					Enabled:  ptr.To(true),
+					Contents: ptr.To(detectIfaceUnit),
+				},
+				{
+					Name:     "configure-network.service",
+					Enabled:  ptr.To(true),
+					Contents: ptr.To(configureNetworkUnit),
+				},
+			},
+		}
+
 		ignConfig.Storage = igntypes.Storage{
 			Files: []igntypes.File{
-				igntypes.File{
-					Node: igntypes.Node{
-						Path: "/etc/NetworkManager/system-connections/static.nmconnection",
-						User: igntypes.NodeUser{
-							Name: ptr.To("root"),
-						},
-						Overwrite: ptr.To(true),
-					},
-					FileEmbedded1: igntypes.FileEmbedded1{
-						Mode: ptr.To(0600), // NetworkManager requires 600 permissions
-						Contents: igntypes.Resource{
-							Source: ptr.To(dataurl.EncodeBytes([]byte(nmConfig))),
-						},
-					},
-				},
-				igntypes.File{
+				{
 					Node: igntypes.Node{
 						Path: "/etc/resolv.conf",
 						User: igntypes.NodeUser{
