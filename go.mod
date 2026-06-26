@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260605140443-e006e534aa6d
-	github.com/IBM/go-sdk-core/v5 v5.22.0
+	github.com/IBM/go-sdk-core/v5 v5.22.1
 	github.com/IBM/networking-go-sdk v0.53.5
 	github.com/IBM/platform-services-go-sdk v0.99.2
 	github.com/coreos/ignition/v2 v2.26.0
@@ -44,7 +44,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	go.mongodb.org/mongo-driver v1.17.7 // indirect
+	go.mongodb.org/mongo-driver v1.17.9 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
