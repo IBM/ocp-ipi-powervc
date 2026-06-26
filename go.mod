@@ -9,7 +9,7 @@ require (
 	github.com/IBM/platform-services-go-sdk v0.99.2
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/gophercloud/gophercloud/v2 v2.12.0
+	github.com/gophercloud/gophercloud/v2 v2.13.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260424064311-2eeed4ceb3e9
 	github.com/openshift/api v0.0.0-20260619095050-5346161d1bf2
 	github.com/sirupsen/logrus v1.9.4
