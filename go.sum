@@ -1,5 +1,7 @@
 github.com/IBM-Cloud/bluemix-go v0.0.0-20260605140443-e006e534aa6d h1:qjSeTpYq3CIDNnRI9CmQIQNwQX+xPFOgZSkzaMTduHw=
 github.com/IBM-Cloud/bluemix-go v0.0.0-20260605140443-e006e534aa6d/go.mod h1:OQPV4KfXzAXk3KFX4182CV5eSjpnvgRD0l1g1XDwAck=
+github.com/IBM-Cloud/bluemix-go v0.0.0-20260624064701-576d2f801297 h1:uYXaCOd4f1Q8klCo51UWXxKbOs+iwvwfVQQyd8p9QOg=
+github.com/IBM-Cloud/bluemix-go v0.0.0-20260624064701-576d2f801297/go.mod h1:iTSp5bL8TiPGRY+QtbxcU8/mcnXsk9HluLWzOsGBqSs=
 github.com/IBM/go-sdk-core/v5 v5.22.0 h1:ltv4MfXST/1kTtBTfioteRxedYZGcoNH/Zy3NF6jq1g=
 github.com/IBM/go-sdk-core/v5 v5.22.0/go.mod h1:cZJMMEImJkIXCd61kHeDFtjbdDpXq4ua4ITrwpBYdWs=
 github.com/IBM/networking-go-sdk v0.53.5 h1:zsIngzvWxE5HFhoDJ2Ngb2VOjrT4dW7liXh7X0MhcZU=
