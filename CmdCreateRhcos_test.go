@@ -529,8 +529,20 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 				PasswdHash:   "",
 				SshPublicKey: validSSHKey,
 			},
-			expectError: true,
-			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
+			expectError: false,
+			validate: func(t *testing.T, data []byte) {
+				var config igntypes.Config
+				if err := json.Unmarshal(data, &config); err != nil {
+					t.Errorf("Failed to unmarshal ignition config: %v", err)
+				}
+				// sshPublicKey is set, so one user (core) is added without a password hash
+				if len(config.Passwd.Users) != 1 {
+					t.Errorf("Expected 1 user when only sshPublicKey is set, got %d", len(config.Passwd.Users))
+				}
+				if config.Passwd.Users[0].PasswordHash != nil {
+					t.Errorf("Expected PasswordHash to be nil when passwdHash is empty")
+				}
+			},
 		},
 		{
 			name: "empty ssh key",
@@ -538,8 +550,16 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 				PasswdHash:   validPasswdHash,
 				SshPublicKey: "",
 			},
-			expectError: true,
-			errorMsg:    "validation error for field 'sshKey': cannot be empty",
+			expectError: false,
+			validate: func(t *testing.T, data []byte) {
+				var config igntypes.Config
+				if err := json.Unmarshal(data, &config); err != nil {
+					t.Errorf("Failed to unmarshal ignition config: %v", err)
+				}
+				if len(config.Passwd.Users) != 0 {
+					t.Errorf("Expected no users when sshPublicKey is empty, got %d", len(config.Passwd.Users))
+				}
+			},
 		},
 		{
 			name: "both empty",
@@ -547,8 +567,16 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 				PasswdHash:   "",
 				SshPublicKey: "",
 			},
-			expectError: true,
-			errorMsg:    "validation error for field 'passwdHash': cannot be empty",
+			expectError: false,
+			validate: func(t *testing.T, data []byte) {
+				var config igntypes.Config
+				if err := json.Unmarshal(data, &config); err != nil {
+					t.Errorf("Failed to unmarshal ignition config: %v", err)
+				}
+				if len(config.Passwd.Users) != 0 {
+					t.Errorf("Expected no users when both fields are empty, got %d", len(config.Passwd.Users))
+				}
+			},
 		},
 	}
 
