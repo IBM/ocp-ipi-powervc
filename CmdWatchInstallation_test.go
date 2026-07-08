@@ -88,31 +88,11 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 			errorMsg: "bastion metadata directory is required",
 		},
 		{
-			name: "missing bastionUsername",
-			args: []string{
-				"--cloud", "mycloud",
-				"--domainName", "example.com",
-				"--bastionMetadata", "/tmp/metadata",
-			},
-			errorMsg: "bastion username is required",
-		},
-		{
-			name: "empty bastionUsername",
-			args: []string{
-				"--cloud", "mycloud",
-				"--domainName", "example.com",
-				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "",
-			},
-			errorMsg: "bastion username is required",
-		},
-		{
 			name: "missing bastionRsa",
 			args: []string{
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 			},
 			errorMsg: "bastion RSA key path is required",
 		},
@@ -122,7 +102,6 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", "",
 			},
 			errorMsg: "bastion RSA key path is required",
@@ -164,7 +143,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 			},
@@ -176,7 +154,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
@@ -189,7 +166,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
@@ -203,7 +179,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
@@ -218,7 +193,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
@@ -234,7 +208,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
@@ -251,7 +224,6 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "invalid",
 			},
@@ -298,7 +270,6 @@ func TestWatchInstallationCommand_InvalidDebugFlag(t *testing.T) {
 				"--cloud", "mycloud",
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", "/tmp/key.rsa",
 				"--shouldDebug", tt.debugValue,
 			}
@@ -421,7 +392,7 @@ func TestGatherBastionInformations(t *testing.T) {
 	}
 
 	// Test gathering bastion information
-	bastionInfos, err := gatherBastionInformations(tempDir, "testuser", "/tmp/test.rsa")
+	bastionInfos, err := gatherBastionInformations(tempDir, "/tmp/test.rsa")
 	if err != nil {
 		t.Fatalf("gatherBastionInformations failed: %v", err)
 	}
@@ -432,9 +403,6 @@ func TestGatherBastionInformations(t *testing.T) {
 	}
 
 	for _, info := range bastionInfos {
-		if info.Username != "testuser" {
-			t.Errorf("Expected username 'testuser', got %q", info.Username)
-		}
 		if info.InstallerRsa != "/tmp/test.rsa" {
 			t.Errorf("Expected InstallerRsa '/tmp/test.rsa', got %q", info.InstallerRsa)
 		}
@@ -453,7 +421,7 @@ func TestGatherBastionInformations_EmptyDirectory(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	bastionInfos, err := gatherBastionInformations(tempDir, "testuser", "/tmp/test.rsa")
+	bastionInfos, err := gatherBastionInformations(tempDir, "/tmp/test.rsa")
 	if err != nil {
 		t.Fatalf("gatherBastionInformations failed: %v", err)
 	}
@@ -864,7 +832,6 @@ func TestHandleCreateMetadata(t *testing.T) {
 		Clouds:             []string{"testcloud"},
 		DomainName:         "example.com",
 		BastionMetadataDir: tempDir,
-		BastionUsername:    "core",
 		BastionRsa:         "/tmp/test.rsa",
 	}
 
@@ -1137,7 +1104,6 @@ func TestWatchInstallationCommand_InvalidCloudNames(t *testing.T) {
 				"--cloud", tt.cloudName,
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
-				"--bastionUsername", "core",
 				"--bastionRsa", "/tmp/key.rsa",
 			}
 
