@@ -27,7 +27,6 @@
 //   - cloud: The cloud to use in clouds.yaml (required)
 //   - domainName: The DNS domain to use (required)
 //   - bastionMetadata: Root directory where OpenShift cluster installs are located (required)
-//   - bastionUsername: The username of the bastion VM (required)
 //   - bastionRsa: The RSA filename for the bastion VM (required)
 //   - enableDhcpd: Enable the DHCP server (true/false, default: false)
 //   - dhcpInterface: The interface name for the DHCP server (required if enableDhcpd=true)
@@ -45,8 +44,7 @@
 //
 // Example usage:
 //   ./tool watch-installation --cloud mycloud --domainName example.com \
-//     --bastionMetadata /path/to/metadata --bastionUsername core \
-//     --bastionRsa /path/to/key.rsa --shouldDebug true
+//     --bastionMetadata /path/to/metadata --bastionRsa /path/to/key.rsa --shouldDebug true
 
 package main
 
@@ -87,7 +85,6 @@ const (
 	flagWatchInstallationCloud            = "cloud"
 	flagWatchInstallationDomainName       = "domainName"
 	flagWatchInstallationBastionMetadata  = "bastionMetadata"
-	flagWatchInstallationBastionUsername  = "bastionUsername"
 	flagWatchInstallationBastionRsa       = "bastionRsa"
 	flagWatchInstallationEnableDhcpd      = "enableDhcpd"
 	flagWatchInstallationDhcpInterface    = "dhcpInterface"
@@ -101,7 +98,6 @@ const (
 	// Flag default values
 	defaultWatchInstallationDomainName       = ""
 	defaultWatchInstallationBastionMetadata  = ""
-	defaultWatchInstallationBastionUsername  = ""
 	defaultWatchInstallationBastionRsa       = ""
 	defaultWatchInstallationEnableDhcpd      = "false"
 	defaultWatchInstallationDhcpInterface    = ""
@@ -116,7 +112,6 @@ const (
 	usageWatchInstallationCloud            = "The cloud name to use in clouds.yaml (can be specified multiple times)"
 	usageWatchInstallationDomainName       = "The DNS domain to use"
 	usageWatchInstallationBastionMetadata  = "A root directory where OpenShift clusters installs are located"
-	usageWatchInstallationBastionUsername  = "The username of the bastion VM to use"
 	usageWatchInstallationBastionRsa       = "The RSA filename for the bastion VM to use"
 	usageWatchInstallationEnableDhcpd      = "Should enable the dhcpd server"
 	usageWatchInstallationDhcpInterface    = "The interface name for the dhcpd server"
@@ -137,10 +132,6 @@ const (
 
 	// Network constants
 	listenPort = ":8080"
-)
-
-var (
-	bastionRsa string // @HACK - Global variable for bastion RSA key path
 )
 
 //      scanner := bufio.NewScanner(conn)
@@ -175,7 +166,8 @@ func (s *stringArray) Set(value string) error {
 type bastionInformation struct {
 	Valid        bool   // Whether the bastion information is valid
 	Metadata     string // Path to metadata file
-	Username     string // SSH username for bastion
+	Username     string // SSH username for bastion; determined at runtime by
+                            // sshDetermineUsername and written by updateBastionInformations
 	InstallerRsa string // Path to RSA key for installer
 
 	ClusterName string // Name of the OpenShift cluster
@@ -196,7 +188,6 @@ type WatchInstallationConfig struct {
 
 	// Bastion configuration
 	BastionMetadataDir string // Root directory where OpenShift cluster installs are located
-	BastionUsername    string // SSH username for bastion VM
 	BastionRsa         string // Path to RSA key file for bastion VM
 
 	// DHCP configuration
@@ -217,6 +208,10 @@ type WatchInstallationConfig struct {
 
 	// Runtime configuration (not from flags)
 	APIKey string // IBM Cloud API key from environment
+
+	// Internal use
+	ResolvedImageName string // The OpenStack image name in case the user specified a UUID
+	BastionRsaPub     string // Contents of the RSA public key for local SSH setup (mutually exclusive with ServerIP)
 }
 
 // Validate performs comprehensive validation of all configuration parameters.
@@ -245,11 +240,31 @@ func (c *WatchInstallationConfig) Validate() error {
 	if c.BastionMetadataDir == "" {
 		return fmt.Errorf("bastion metadata directory is required")
 	}
-	if c.BastionUsername == "" {
-		return fmt.Errorf("bastion username is required")
-	}
 	if c.BastionRsa == "" {
 		return fmt.Errorf("bastion RSA key path is required")
+	}
+
+	// File path validation
+	if _, err := os.Stat(c.BastionRsa); err != nil {
+		if os.IsNotExist(err) {
+			return 	fmt.Errorf("bastionRsa: file not found: %q", c.BastionRsa)
+		} else {
+			return fmt.Errorf("bastionRsa: cannot access file: %w", err)
+		}
+	}
+
+	bastionRsaPub := c.BastionRsa + ".pub"
+	bastionRsaPubValid := true
+
+	if _, err := os.Stat(bastionRsaPub); err != nil {
+		bastionRsaPubValid = false
+	}
+
+	if bastionRsaPubValid {
+		content, err := os.ReadFile(bastionRsaPub)
+		if err == nil {
+			c.BastionRsaPub = string(content)
+		}
 	}
 
 	// Validate domain name format
@@ -307,7 +322,7 @@ func (c *WatchInstallationConfig) Validate() error {
 	return nil
 }
 
-// validateIPAddress validates that a string is a valid IPv4 address.
+// validateIPAddress validates that a string is a valid IP address (IPv4 or IPv6).
 //
 // Parameters:
 //   - ip: The IP address string to validate
@@ -576,7 +591,6 @@ func validateInterfaceName(iface string) error {
 //       "--cloud", "mycloud",
 //       "--domainName", "example.com",
 //       "--bastionMetadata", "/path/to/metadata",
-//       "--bastionUsername", "core",
 //       "--bastionRsa", "/path/to/key.rsa",
 //   })
 func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
@@ -590,11 +604,7 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 	return err
 }
 
-// innerWatchInstallationCommand executes the watch-installation command with the given flags and arguments.
-//
-// This function continuously monitors OpenShift cluster installations and manages associated
-// infrastructure resources including DNS records, HAProxy configuration, and optionally DHCP
-// server configuration. It runs in an infinite loop, checking for changes every 30 seconds.
+// innerWatchInstallationCommand is the main implementation of the watch-installation command.
 //
 // Parameters:
 //   - watchInstallationFlags: The FlagSet containing command-line flags (must not be nil)
@@ -604,28 +614,26 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 //   - error: Any error encountered during flag parsing, validation, or operation execution
 //
 // The function executes the following steps:
-//  1. Validates input parameters
+//  1. Validates that the FlagSet is not nil
 //  2. Displays program version information
-//  3. Retrieves IBM Cloud API key from environment
+//  3. Retrieves the IBM Cloud API key from the IBMCLOUD_API_KEY environment variable
 //  4. Defines and parses command-line flags
-//  5. Validates all required flags
-//  6. Configures logging based on debug flag
-//  7. Spawns metadata listener goroutine
-//  8. Enters infinite monitoring loop:
-//     - Gathers bastion information from metadata directories
-//     - Retrieves all servers from OpenStack
-//     - Detects added/deleted servers
-//     - Updates bastion configurations
-//     - Updates DNS records
-//     - Updates HAProxy configuration
-//     - Updates DHCP configuration (if enabled)
-//     - Sleeps for 30 seconds before next iteration
+//  5. Parses boolean flags (enableDhcpd, shouldDebug)
+//  6. Initialises the logger, then flushes any pre-logger messages
+//  7. Validates the fully populated configuration
+//  8. Sets up OS signal handling (SIGINT, SIGTERM) for graceful shutdown
+//  9. Spawns the metadata listener goroutine on listenPort (:8080)
+// 10. Performs an initial monitoring iteration immediately
+// 11. Enters a ticker-based loop (every 30 s) that:
+//     - Runs performMonitoringIteration on each tick
+//     - Returns on shutdown signal or listener failure
 func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
-		preLog       strings.Builder
-		clouds       cloudFlags
-		knownServers = sets.Set[string]{}
-		err          error
+		preLog        strings.Builder
+		clouds        cloudFlags
+		knownServers  = sets.Set[string]{}
+		knownBastions []bastionInformation
+		err           error
 	)
 
 	// Validate input parameters
@@ -648,7 +656,6 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	watchInstallationFlags.Var(&clouds, flagWatchInstallationCloud, usageWatchInstallationCloud)
 	ptrDomainName := watchInstallationFlags.String(flagWatchInstallationDomainName, defaultWatchInstallationDomainName, usageWatchInstallationDomainName)
 	ptrBastionMetadata := watchInstallationFlags.String(flagWatchInstallationBastionMetadata, defaultWatchInstallationBastionMetadata, usageWatchInstallationBastionMetadata)
-	ptrBastionUsername := watchInstallationFlags.String(flagWatchInstallationBastionUsername, defaultWatchInstallationBastionUsername, usageWatchInstallationBastionUsername)
 	ptrBastionRsa := watchInstallationFlags.String(flagWatchInstallationBastionRsa, defaultWatchInstallationBastionRsa, usageWatchInstallationBastionRsa)
 	ptrEnableDhcpd := watchInstallationFlags.String(flagWatchInstallationEnableDhcpd, defaultWatchInstallationEnableDhcpd, usageWatchInstallationEnableDhcpd)
 	ptrDhcpInterface := watchInstallationFlags.String(flagWatchInstallationDhcpInterface, defaultWatchInstallationDhcpInterface, usageWatchInstallationDhcpInterface)
@@ -671,7 +678,6 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	config.Clouds = []string(clouds)
 	config.DomainName = *ptrDomainName
 	config.BastionMetadataDir = *ptrBastionMetadata
-	config.BastionUsername = *ptrBastionUsername
 	config.BastionRsa = *ptrBastionRsa
 	config.DhcpInterface = *ptrDhcpInterface
 	config.DhcpSubnet = *ptrDhcpSubnet
@@ -728,7 +734,6 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	}
 	log.Debugf("[INFO] Domain name: %s", config.DomainName)
 	log.Debugf("[INFO] Bastion metadata dir: %s", config.BastionMetadataDir)
-	log.Debugf("[INFO] Bastion username: %s", config.BastionUsername)
 	log.Debugf("[INFO] Bastion RSA: %s", config.BastionRsa)
 
 	if config.EnableDhcpd {
@@ -745,9 +750,6 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	} else {
 		log.Printf("[INFO] HAProxy stats disabled (no credentials provided)")
 	}
-
-	// Store bastion RSA key path in global variable
-	bastionRsa = config.BastionRsa
 
 	// Set up signal handling for graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -771,7 +773,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	defer ticker.Stop()
 
 	// Perform initial check immediately
-	if err := performMonitoringIteration(ctx, config, &knownServers); err != nil {
+	if knownBastions, err = performMonitoringIteration(ctx, config, &knownServers, knownBastions); err != nil {
 		log.Errorf("[ERROR] Initial monitoring iteration failed: %v", err)
 		// Continue to loop rather than failing immediately
 	}
@@ -789,7 +791,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 		case <-ticker.C:
 			log.Printf("[INFO] Waking up to check for changes")
 
-			if err := performMonitoringIteration(ctx, config, &knownServers); err != nil {
+			if knownBastions, err = performMonitoringIteration(ctx, config, &knownServers, knownBastions); err != nil {
 				log.Errorf("[ERROR] Monitoring iteration failed: %v", err)
 				// Continue monitoring despite errors
 			}
@@ -799,20 +801,32 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 
 // performMonitoringIteration executes a single monitoring iteration.
 //
-// This function performs all the monitoring tasks for one iteration:
-//   - Gathers bastion information
-//   - Retrieves all servers from OpenStack
-//   - Detects server changes
-//   - Updates configurations (bastion, DHCP, HAProxy, DNS)
+// The function wraps all work in a 5-minute child context (watchIterationTimeout)
+// so that a hung OpenStack call does not block indefinitely.
+//
+// Steps performed on every call:
+//  1. Gather bastion information from the metadata directory
+//  2. Retrieve all OpenStack servers across all configured clouds
+//  3. Build the current server set (bootstrap/master/worker nodes with IPs)
+//  4. Diff against knownServers to find added and deleted servers
+//  5. If no changes are detected, return early (knownServers and bastions unchanged)
+//  6. Update knownServers to the new set
+//  7. Update bastion configurations via updateBastionInformations
+//  8. If DHCP is enabled: regenerate /tmp/dhcpd.conf, copy to /etc/dhcp/dhcpd.conf,
+//     and restart dhcpd.service
+//  9. Update HAProxy configuration on each valid bastion via haproxyCfg
+// 10. If an IBM Cloud API key is available: manage DNS records via dnsRecords
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout
+//   - ctx: Parent context for cancellation and timeout
 //   - config: Configuration containing all parameters
-//   - knownServers: Pointer to set of known servers (updated by this function)
+//   - knownServers: Pointer to the set of known server names (mutated in place on changes)
+//   - knownBastions: Bastion information from the previous iteration (used for username caching)
 //
 // Returns:
-//   - error: Any error encountered during the iteration
-func performMonitoringIteration(ctx context.Context, config *WatchInstallationConfig, knownServers *sets.Set[string]) error {
+//   - []bastionInformation: Updated bastion information slice for the next iteration
+//   - error: Any error encountered during the iteration; nil on success or no-op early return
+func performMonitoringIteration(ctx context.Context, config *WatchInstallationConfig, knownServers *sets.Set[string], knownBastions []bastionInformation) ([]bastionInformation, error) {
 	// Create iteration context with timeout
 	iterCtx, iterCancel := context.WithTimeout(ctx, watchIterationTimeout)
 	defer iterCancel()
@@ -822,9 +836,9 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 
 	// Gather bastion information from metadata directories
 	log.Printf("[INFO] Gathering bastion information from: %s", config.BastionMetadataDir)
-	bastionInformations, err := gatherBastionInformations(config.BastionMetadataDir, config.BastionUsername, config.BastionRsa)
+	bastionInformations, err := gatherBastionInformations(config.BastionMetadataDir, config.BastionRsa)
 	if err != nil {
-		return fmt.Errorf("failed to gather bastion information: %w", err)
+		return nil, fmt.Errorf("failed to gather bastion information: %w", err)
 	}
 	log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
 	log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
@@ -833,7 +847,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	log.Printf("[INFO] Retrieving all servers from clouds: %+v", clouds)
 	allServers, err := getAllServers(iterCtx, clouds)
 	if err != nil {
-		return fmt.Errorf("failed to get all servers: %w", err)
+		return nil, fmt.Errorf("failed to get all servers: %w", err)
 	}
 	log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
 
@@ -849,7 +863,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	// If no changes detected, return early
 	if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
 		log.Printf("[INFO] No server changes detected")
-		return nil
+		return bastionInformations, nil
 	}
 
 	// Update known servers set
@@ -858,9 +872,9 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 
 	// Update bastion configurations
 	log.Printf("[INFO] Updating bastion configurations")
-	err = updateBastionInformations(iterCtx, clouds, bastionInformations)
+	err = updateBastionInformations(iterCtx, clouds, bastionInformations, knownBastions)
 	if err != nil {
-		return fmt.Errorf("failed to update bastion information: %w", err)
+		return nil, fmt.Errorf("failed to update bastion information: %w", err)
 	}
 	log.Printf("[INFO] Bastion configurations updated successfully")
 
@@ -881,7 +895,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 			config.DhcpServerId,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to generate DHCP configuration: %w", err)
+			return nil, fmt.Errorf("failed to generate DHCP configuration: %w", err)
 		}
 		log.Printf("[INFO] DHCP configuration generated: %s", filename)
 
@@ -893,7 +907,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 			"/etc/dhcp/dhcpd.conf",
 		})
 		if err != nil {
-			return fmt.Errorf("failed to copy DHCP configuration: %w", err)
+			return nil, fmt.Errorf("failed to copy DHCP configuration: %w", err)
 		}
 
 		log.Printf("[INFO] Restarting DHCP service")
@@ -904,7 +918,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 			"dhcpd.service",
 		})
 		if err != nil {
-			return fmt.Errorf("failed to restart DHCP service: %w", err)
+			return nil, fmt.Errorf("failed to restart DHCP service: %w", err)
 		}
 		log.Printf("[INFO] DHCP service restarted successfully")
 	}
@@ -913,7 +927,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	log.Printf("[INFO] Updating HAProxy configuration")
 	err = haproxyCfg(iterCtx, clouds, bastionInformations, config.StatsUser, config.StatsPassword)
 	if err != nil {
-		return fmt.Errorf("failed to update HAProxy configuration: %w", err)
+		return nil, fmt.Errorf("failed to update HAProxy configuration: %w", err)
 	}
 	log.Printf("[INFO] HAProxy configuration updated successfully")
 
@@ -930,7 +944,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 			deletedServerSet,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to update DNS records: %w", err)
+			return nil, fmt.Errorf("failed to update DNS records: %w", err)
 		}
 		log.Printf("[INFO] DNS records updated successfully")
 	} else {
@@ -938,7 +952,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	}
 
 	log.Printf("[INFO] Iteration complete")
-	return nil
+	return bastionInformations, nil
 }
 
 // performGracefulShutdown performs cleanup operations before exiting.
@@ -964,17 +978,17 @@ func performGracefulShutdown() error {
 //
 // Parameters:
 //   - rootPath: Root directory to search for cluster installations
-//   - username: SSH username for bastion servers
 //   - installerRsa: Path to RSA key for installer access
 //
 // Returns:
 //   - bastionInformations: Slice of bastion information for each found cluster
 //   - err: Any error encountered during directory walk
 //
-// The function searches for files matching the pattern "*/metadata.json" and creates
-// a bastionInformation entry for each one found. Errors accessing individual paths
-// are logged but do not stop the walk.
-func gatherBastionInformations(rootPath string, username string, installerRsa string) (bastionInformations []bastionInformation, err error) {
+// The function searches for files whose path ends with "/metadata.json" and creates
+// a bastionInformation entry for each one found, populating only Metadata and
+// InstallerRsa; Valid is false and Username is empty until updateBastionInformations
+// runs. Errors accessing individual paths are logged but do not stop the walk.
+func gatherBastionInformations(rootPath string, installerRsa string) (bastionInformations []bastionInformation, err error) {
 	bastionInformations = make([]bastionInformation, 0)
 
 	// Validate root path (allow absolute paths for root directory)
@@ -1006,7 +1020,6 @@ func gatherBastionInformations(rootPath string, username string, installerRsa st
 			bastionInformations = append(bastionInformations, bastionInformation{
 				Valid:        false,
 				Metadata:     path,
-				Username:     username,
 				InstallerRsa: installerRsa,
 			})
 		}
@@ -1074,23 +1087,31 @@ func getMetadataClusterName(filename string) (clusterName string, infraID string
 // Parameters:
 //   - ctx: Context for the operation
 //   - clouds: Cloud names to query for servers
-//   - bastionInformations: Slice of bastion information to update
+//   - bastionInformations: Slice of bastion information to update (modified in place)
+//   - previousBastions: Bastion information from the previous iteration, used to reuse
+//     the already-determined SSH username without probing again
 //
 // Returns:
 //   - error: Any error encountered during the update process
 //
-// The function performs the following for each bastion:
-//  1. Retrieves all servers from OpenStack
-//  2. Reads cluster metadata to get cluster name and infrastructure ID
-//  3. Finds the bastion server in the server list
-//  4. Extracts the bastion's IP address
-//  5. Adds the server to known_hosts
-//  6. Counts VMs belonging to the cluster
-//  7. Updates bastion information with current state
+// For each bastion entry the function performs the following steps:
+//  1. Marks the entry invalid at the start of each loop iteration
+//  2. Reads cluster metadata (clusterName, infraID) from the metadata.json file;
+//     if the file no longer exists the entry is skipped (cluster was deleted)
+//  3. Finds the bastion server in the OpenStack server list by cluster name;
+//     if not found the entry is skipped
+//  4. Extracts the bastion's IP address; skips if missing or blank
+//  5. Adds the bastion host key to ~/.ssh/known_hosts
+//  6. Determines the SSH username: reuses the username from previousBastions if the
+//     cluster name matches and the previous username is non-empty, otherwise probes
+//     with sshDetermineUsername
+//  7. Verifies SSH connectivity with sshAccessSuccess
+//  8. Counts all OpenStack VMs whose names start with infraID
+//  9. Updates the entry (Valid=true, ClusterName, Username, InfraID, IPAddress, NumVMs)
 //
-// Bastions that cannot be found or have errors are marked as invalid
-// and skipped without failing the entire operation.
-func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation) (err error) {
+// Bastions that cannot be found or have errors are left invalid and skipped
+// without failing the entire operation.
+func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation, previousBastions []bastionInformation) (err error) {
 	var (
 		allServers []servers.Server
 	)
@@ -1140,6 +1161,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		if err != nil {
 			// Failed to get IP address - network configuration issue
 			log.Warnf("[WARN] Failed to get IP address for bastion %s: %v", bastionServer.Name, err)
+			err = nil
 			continue
 		}
 		if bastionIpAddress == "" {
@@ -1152,12 +1174,32 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		if err != nil {
 			// Failed to add to known_hosts - SSH configuration issue, but not critical
 			log.Warnf("[WARN] Failed to add bastion %s (%s) to known_hosts: %v", bastionServer.Name, bastionIpAddress, err)
+			err = nil
 			continue
 		}
 
-		_, err = sshAccessSuccess(newSSHConfig(bastionIpAddress, bastionInformation.InstallerRsa))
+		cfg := newSSHConfig(bastionIpAddress, bastionInformation.InstallerRsa)
+
+		var updatedUsername = false
+		for _, pb := range previousBastions {
+			if clusterName == pb.ClusterName && pb.Username != "" {
+				cfg.User = pb.Username
+				updatedUsername = true
+				log.Debugf("updateBastionInformations: reusing old username for cluster %s", clusterName)
+				break
+			}
+		}
+		if !updatedUsername {
+			cfg.User, err = sshDetermineUsername(cfg)
+			if err != nil {
+				return fmt.Errorf("failed to determine username: %w", err)
+			}
+		}
+		log.Debugf("updateBastionInformations: cfg = %+v", cfg)
+
+		_, err = sshAccessSuccess(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to echo success to bastion at %s: %w", bastionInformation.IPAddress, err)
+			return fmt.Errorf("failed to echo success to bastion at %s: %w", bastionIpAddress, err)
 		}
 
 		currentVMs := 0
@@ -1174,6 +1216,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		// We need to modify the original array!
 		bastionInformations[i].Valid = true
 		bastionInformations[i].ClusterName = bastionServer.Name
+		bastionInformations[i].Username = cfg.User
 		bastionInformations[i].InfraID = infraID
 		bastionInformations[i].IPAddress = bastionIpAddress
 		bastionInformations[i].NumVMs = currentVMs
@@ -1300,7 +1343,7 @@ func findIpAddress(server servers.Server) (string, string, error) {
 	return "", "", fmt.Errorf("no IP address found for server %s", server.Name)
 }
 
-// dhcpdConf generates a DHCP server configuration file for cluster nodes.
+// dhcpdConf generates a DHCP server configuration file for all OpenStack servers.
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -1317,9 +1360,9 @@ func findIpAddress(server servers.Server) (string, string, error) {
 // Returns:
 //   - error: Any error encountered generating the configuration
 //
-// The function retrieves all servers from OpenStack, filters for cluster nodes
-// (bootstrap, master, worker), and generates a dhcpd.conf file with static
-// host entries mapping MAC addresses to IP addresses and hostnames.
+// The function retrieves all servers from OpenStack and generates a dhcpd.conf
+// file with static host entries for every server that has a resolvable MAC and IP
+// address. No filtering by node type is applied; all servers are included.
 func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainName string, dhcpInterface string, dhcpSubnet string, dhcpNetmask string, dhcpRouter string, dhcpDnsServers string, dhcpServerId string) error {
 	var (
 		allServers []servers.Server
@@ -1396,6 +1439,9 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 //   - ctx: Context for the operation
 //   - clouds: Cloud names to query for servers
 //   - bastionInformations: Slice of bastion information for clusters
+//   - statsUser: HAProxy statistics username; if both statsUser and statsPassword are
+//     non-empty and the bastion is not CoreOS, a stats listen block is written
+//   - statsPassword: HAProxy statistics password (see statsUser)
 //
 // Returns:
 //   - error: Any error encountered generating the configurations
@@ -1403,12 +1449,16 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 // The function creates HAProxy configuration files that set up load balancing for:
 //   - Ingress HTTP traffic (port 80) to worker nodes
 //   - Ingress HTTPS traffic (port 443) to worker nodes
-//   - API traffic (port 6443) to master nodes
-//   - Machine config server traffic (port 22623) to master and bootstrap nodes
+//   - API traffic (port 6443) to bootstrap and master nodes
+//   - Machine config server traffic (port 22623) to bootstrap and master nodes
 //
-// For each valid bastion with VMs, it generates /tmp/haproxy.cfg with backend
-// server entries for all cluster nodes, then copies it to the bastion server
-// and restarts the HAProxy service.
+// Global section differs by OS:
+//   - CoreOS bastion (Username == "core"): uses master-worker mode with a stats socket
+//   - Non-CoreOS bastion: uses daemon mode; includes a stats listen block on 127.0.0.1:9000
+//     when statsUser and statsPassword are both set
+//
+// For each valid bastion with NumVMs > 0, the function writes /tmp/haproxy.cfg,
+// scps it to /etc/haproxy/haproxy.cfg on the bastion, then restarts haproxy.service.
 func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation, statsUser string, statsPassword string) error {
 	var (
 		allServers []servers.Server
@@ -1457,11 +1507,16 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		if err != nil {
 			return err
 		}
-		defer file.Close() // Guaranteed cleanup
 
 		fmt.Fprintf(file, "#\n")
 		fmt.Fprintf(file, "global\n")
-		fmt.Fprintf(file, "daemon\n")
+		if bastionInformation.Username == "core" {
+			fmt.Fprintf(file, "  master-worker\n")
+			fmt.Fprintf(file, "  stats socket /var/lib/haproxy/run/haproxy.sock mode 600 level admin expose-fd listeners\n")
+			fmt.Fprintf(file, "  stats timeout 2m\n")
+		} else {
+			fmt.Fprintf(file, "daemon\n")
+		}
 		fmt.Fprintf(file, "\n")
 		fmt.Fprintf(file, "defaults\n")
 		fmt.Fprintf(file, "log global\n")
@@ -1469,16 +1524,19 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		fmt.Fprintf(file, "timeout client 50s\n")
 		fmt.Fprintf(file, "timeout server 50s\n")
 		fmt.Fprintf(file, "\n")
-		if statsUser != "" && statsPassword != "" {
-			fmt.Fprintf(file, "listen stats # Define a listen section called \"stats\"\n")
-			fmt.Fprintf(file, "  bind 127.0.0.1:9000 # Listen on localhost:9000\n")
-			fmt.Fprintf(file, "  mode http\n")
-			fmt.Fprintf(file, "  stats enable  # Enable stats page\n")
-			fmt.Fprintf(file, "  stats hide-version  # Hide HAProxy version\n")
-			fmt.Fprintf(file, "  stats realm Haproxy\\ Statistics  # Title text for popup window\n")
-			fmt.Fprintf(file, "  stats uri /haproxy_stats  # Stats URI\n")
-			fmt.Fprintf(file, "  stats auth %s:%s  # Authentication credentials\n", statsUser, statsPassword)
-			fmt.Fprintf(file, "\n")
+		if bastionInformation.Username == "core" {
+		} else {
+			if statsUser != "" && statsPassword != "" {
+				fmt.Fprintf(file, "listen stats # Define a listen section called \"stats\"\n")
+				fmt.Fprintf(file, "  bind 127.0.0.1:9000 # Listen on localhost:9000\n")
+				fmt.Fprintf(file, "  mode http\n")
+				fmt.Fprintf(file, "  stats enable  # Enable stats page\n")
+				fmt.Fprintf(file, "  stats hide-version  # Hide HAProxy version\n")
+				fmt.Fprintf(file, "  stats realm Haproxy\\ Statistics  # Title text for popup window\n")
+				fmt.Fprintf(file, "  stats uri /haproxy_stats  # Stats URI\n")
+				fmt.Fprintf(file, "  stats auth %s:%s  # Authentication credentials\n", statsUser, statsPassword)
+				fmt.Fprintf(file, "\n")
+			}
 		}
 
 		// listen ingress-http
@@ -1554,6 +1612,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 
 		// Sync file to disk before using in external commands
 		if err := file.Sync(); err != nil {
+			file.Close()
 			return fmt.Errorf("failed to sync haproxy config: %w", err)
 		}
 
@@ -1565,6 +1624,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			fmt.Sprintf("%s@%s:/etc/haproxy/haproxy.cfg", bastionInformation.Username, bastionInformation.IPAddress),
 		})
 		if err != nil {
+			file.Close()
 			return fmt.Errorf("failed to scp to bastion at %s: %w", bastionInformation.IPAddress, err)
 		}
 
@@ -1579,8 +1639,11 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 			"haproxy.service",
 		})
 		if err != nil {
+			file.Close()
 			return fmt.Errorf("failed to restart haproxy to bastion at %s: %w", bastionInformation.IPAddress, err)
 		}
+
+		file.Close()
 	}
 
 	return nil
@@ -1592,11 +1655,14 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 //   - allServers: List of all servers from OpenStack
 //
 // Returns:
-//   - clusterName: The extracted cluster name, or empty string if not found
+//   - clusterName: The extracted cluster name, or empty string if no matching server is found
 //
-// The function searches for servers with "-bootstrap" or "-master" in their names
-// and extracts the cluster name by removing the infrastructure ID suffix.
-// For example, from "mycluster-abc123-master-0", it extracts "mycluster".
+// The function searches for the first server whose name contains "-bootstrap" or
+// "-master". It then truncates at that marker to get the full infra prefix (e.g.
+// "mycluster-abc123"), then truncates again at the last "-" to strip the random
+// infra ID suffix, yielding the bare cluster name (e.g. "mycluster").
+// Returns an empty string if no bootstrap or master server exists, or if the
+// resulting prefix contains no "-" separator.
 func atLeastOneClusterName(allServers []servers.Server) (clusterName string) {
 	var (
 		server servers.Server
@@ -1637,27 +1703,26 @@ var (
 //   - apiKey: IBM Cloud API key for DNS service authentication
 //   - domainName: Base domain name for DNS records
 //   - bastionInformations: Slice of bastion information for clusters
-//   - knownServers: Set of previously known server names
-//   - addedServerSet: Set of newly added server names
-//   - deletedServerSet: Set of deleted server names
+//   - knownServers: Set of currently known server names (after this iteration's update)
+//   - addedServerSet: Set of newly added server names detected this iteration
+//   - deletedServerSet: Set of deleted server names detected this iteration
 //
 // Returns:
-//   - error: Any error encountered during DNS record management
+//   - error: Any error encountered during DNS record management; individual record
+//     errors are collected and returned together at the end
 //
 // The function performs the following operations:
 //  1. Retrieves IBM Cloud Internet Services (CIS) service ID
 //  2. Gets the DNS zone CRN and zone ID for the domain
-//  3. Initializes the DNS service API client
-//  4. Retrieves all servers from OpenStack
-//  5. On first run: Creates DNS records for bastion servers (api, api-int, *.apps)
-//  6. Creates DNS records for newly added servers
-//  7. Deletes DNS records for removed servers
-//
-// DNS records created include:
-//   - A records for api.<cluster>.<domain> pointing to bastion
-//   - A records for api-int.<cluster>.<domain> pointing to bastion
-//   - CNAME records for *.apps.<cluster>.<domain> pointing to bastion
-//   - A records for each cluster node (bootstrap, master, worker)
+//  3. Initialises the DNS service API client
+//  4. Retrieves all OpenStack servers to resolve IP addresses
+//  5. Derives the cluster name from the server list; returns nil immediately if empty
+//  6. On the first call (firstDnsRun==true): creates bastion DNS records for each
+//     valid bastion — A records for api.* and api-int.*, CNAME for *.apps.*
+//  7. Deletes A records for each server in deletedServerSet (bootstrap/master/worker only)
+//  8. Creates A records for each server in addedServerSet (bootstrap/master/worker only)
+//  9. When knownServers is empty after a non-first run (cluster fully deleted):
+//     deletes the bastion DNS records (api.*, api-int.*, *.apps.*) for each valid bastion
 func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainName string, bastionInformations []bastionInformation, knownServers sets.Set[string], addedServerSet sets.Set[string], deletedServerSet sets.Set[string]) error {
 	var (
 		dnsService   *dnsrecordsv1.DnsRecordsV1
@@ -2625,7 +2690,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 						errChan <- fmt.Errorf("handler panicked: %v", r)
 					}
 				}()
-				handleCreateBastion(data, cloudFlags(config.Clouds), errChan)
+				handleCreateBastion(data, config, errChan)
 			}()
 
 			// Wait for result with timeout (longer timeout for bastion creation)
@@ -2969,17 +3034,18 @@ func handleEraseMetadata(config *WatchInstallationConfig, data string, errChan c
 //
 // Parameters:
 //   - data: JSON-formatted command data containing bastion configuration
-//   - clouds: Cloud name for the operation
+//   - config: Watch-installation configuration used to supply Clouds, BastionRsa,
+//     ResolvedImageName, BastionRsaPub, and DomainName to the bastion setup
 //   - errChan: Channel to send the result error (or nil for success)
 //
 // The function performs the following steps:
-//  1. Unmarshals the command data to extract server name, domain name, and HAProxy configuration
-//  2. Creates a context with 10-minute timeout (using bastionContextTimeout constant)
-//  3. Calls setupBastionServer to configure the bastion with the specified HAProxy setting
-//  4. Sends the result to the error channel
-//
-// The HAProxy configuration is controlled by the EnableHAProxy field in the command structure.
-func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
+//  1. Unmarshals the command data to extract CloudName, ServerName, DomainName,
+//     and EnableHAProxy
+//  2. Creates a context with bastionContextTimeout (10-minute) timeout
+//  3. Constructs a BastionConfig from the command fields merged with config
+//  4. Calls setupBastionServer to configure the bastion
+//  5. Sends the result (nil or error) to errChan
+func handleCreateBastion(data string, config *WatchInstallationConfig, errChan chan error) {
 	var (
 		cmd    CommandCreateBastion
 		ctx    context.Context
@@ -2996,11 +3062,12 @@ func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 		errChan <- err
 		return
 	}
-	log.Debugf("handleCreateBastion: cmd.Command       = %s", cmd.Command)
-	log.Debugf("handleCreateBastion: cmd.CloudName     = %s", cmd.CloudName)
-	log.Debugf("handleCreateBastion: cmd.ServerName    = %s", cmd.ServerName)
-	log.Debugf("handleCreateBastion: cmd.DomainName    = %s", cmd.DomainName)
-	log.Debugf("handleCreateBastion: cmd.EnableHAProxy = %v", cmd.EnableHAProxy)
+	log.Debugf("handleCreateBastion: cmd.Command          = %s", cmd.Command)
+	log.Debugf("handleCreateBastion: cmd.CloudName        = %s", cmd.CloudName)
+	log.Debugf("handleCreateBastion: cmd.ServerName       = %s", cmd.ServerName)
+	log.Debugf("handleCreateBastion: cmd.DomainName       = %s", cmd.DomainName)
+	log.Debugf("handleCreateBastion: cmd.EnableHAProxy    = %v", cmd.EnableHAProxy)
+	log.Debugf("handleCreateBastion: config.BastionRsaPub = %v", config.BastionRsaPub)
 
 	ctx, cancel = context.WithTimeout(context.Background(), bastionContextTimeout)
 	defer cancel()
@@ -3008,10 +3075,12 @@ func handleCreateBastion(data string, clouds cloudFlags, errChan chan error) {
 	// Use the EnableHAProxy field from the command structure
 	bc := BastionConfig{
 		EnableHAProxy:     cmd.EnableHAProxy,
-		Clouds:            clouds,
-		BastionName:       cmd.DomainName,
-		BastionRsa:        bastionRsa,
-		ResolvedImageName: "@TODO",
+		Clouds:            config.Clouds,
+		BastionName:       cmd.ServerName,
+		BastionRsa:        config.BastionRsa,
+		ResolvedImageName: config.ResolvedImageName,
+		BastionRsaPub:     config.BastionRsaPub,
+		DomainName:        config.DomainName,
 	}
 	err = setupBastionServer(ctx, &bc)
 	log.Debugf("handleCreateBastion: setupBastionServer returns %v", err)

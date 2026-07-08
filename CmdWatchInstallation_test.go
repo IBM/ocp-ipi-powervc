@@ -147,6 +147,12 @@ func TestWatchInstallationCommand_MissingRequiredFlags(t *testing.T) {
 
 // TestWatchInstallationCommand_DHCPValidation tests DHCP configuration validation
 func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
+	tempKeyDir := t.TempDir()
+	validKeyPath := filepath.Join(tempKeyDir, "key.rsa")
+	if err := os.WriteFile(validKeyPath, []byte("test-private-key"), 0600); err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		args     []string
@@ -159,7 +165,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 			},
 			errorMsg: "DHCP interface is required when DHCP is enabled",
@@ -171,7 +177,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 			},
@@ -184,7 +190,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 				"--dhcpSubnet", "192.168.1.0",
@@ -198,7 +204,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 				"--dhcpSubnet", "192.168.1.0",
@@ -213,7 +219,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 				"--dhcpSubnet", "192.168.1.0",
@@ -229,7 +235,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "true",
 				"--dhcpInterface", "eth0",
 				"--dhcpSubnet", "192.168.1.0",
@@ -246,7 +252,7 @@ func TestWatchInstallationCommand_DHCPValidation(t *testing.T) {
 				"--domainName", "example.com",
 				"--bastionMetadata", "/tmp/metadata",
 				"--bastionUsername", "core",
-				"--bastionRsa", "/tmp/key.rsa",
+				"--bastionRsa", validKeyPath,
 				"--enableDhcpd", "invalid",
 			},
 			errorMsg: "must be 'true' or 'false'",

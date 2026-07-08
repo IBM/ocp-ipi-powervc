@@ -608,7 +608,6 @@ function build_powervc_command() {
 		  --cloud "${CLOUD}"
 		  --domainName "${BASEDOMAIN}"
 		  --bastionMetadata "${BASTION_METADATA}"
-		  --bastionUsername "${BASTION_USERNAME}"
 		  --bastionRsa "${BASTION_RSA}"
 		  --enableDhcpd true
 		  --dhcpInterface "${LINK}"

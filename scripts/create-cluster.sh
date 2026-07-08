@@ -35,7 +35,6 @@
 #   CLOUD               - OpenStack cloud name from clouds.yaml
 #   BASEDOMAIN          - Base DNS domain for the cluster (e.g., example.com)
 #   BASTION_IMAGE_NAME  - OpenStack image for bastion host
-#   BASTION_USERNAME    - SSH username for bastion (default: cloud-user)
 #   CLUSTER_DIR         - Installation directory (default: test)
 #   CLUSTER_NAME        - Name of the OpenShift cluster
 #   FLAVOR_NAME         - OpenStack flavor for cluster nodes
@@ -88,7 +87,6 @@
 #   export MACHINE_TYPE=zone1
 #   export NETWORK_NAME=private-net
 #   export BASTION_IMAGE_NAME=rhel-8
-#   export BASTION_USERNAME=cloud-user
 #   export SSHKEY_NAME=my-keypair
 #   export INSTALLER_SSHKEY=~/.ssh/id_rsa.pub
 #   export PULLSECRET_FILE=~/pull-secret.txt
@@ -670,11 +668,6 @@ function collect_environment_variables() {
 		prompt_input "What is the image name to use for the bastion" "BASTION_IMAGE_NAME"
 	fi
 
-	# Bastion SSH username
-	if [[ ! -v BASTION_USERNAME ]]; then
-		prompt_input "What is the username to use for the bastion" "BASTION_USERNAME" "cloud-user"
-	fi
-
 	# Cluster installation directory
 	if [[ ! -v CLUSTER_DIR ]]; then
 		prompt_input "What directory should be used for the installation" "CLUSTER_DIR" "test"
@@ -792,7 +785,6 @@ function validate_environment_variables() {
 	local -a required_vars=(
 		"BASEDOMAIN"
 		"BASTION_IMAGE_NAME"
-		"BASTION_USERNAME"
 		"CLOUD"
 		"CLUSTER_DIR"
 		"CLUSTER_NAME"
@@ -987,6 +979,7 @@ function create_bastion_host() {
 		--sshKeyName "${SSHKEY_NAME}" \
 		--domainName "${BASEDOMAIN}" \
 		--enableHAProxy true \
+		--bastionRsa "${BASTION_RSA}" \
 		--serverIP "${CONTROLLER_IP}" \
 		--bastionIpFile "${TEMP_BASTION_IP}" \
 		--shouldDebug true
@@ -1283,10 +1276,6 @@ function handle_cluster_creation_failure() {
 	log_warning "Handling cluster creation failure..."
 
 	# Get bastion credentials if not already set
-	if [[ ! -v BASTION_USERNAME ]]; then
-		prompt_input "What is the username for the bastion" "BASTION_USERNAME" "cloud-user"
-	fi
-
 	if [[ ! -v BASTION_RSA ]]; then
 		prompt_input "Where is the ssh private key for the bastion" "BASTION_RSA"
 
@@ -1304,7 +1293,6 @@ function handle_cluster_creation_failure() {
 			--cloud "${CLOUD}" \
 			--metadata "${CLUSTER_DIR}/metadata.json" \
 			--kubeconfig "${CLUSTER_DIR}/auth/kubeconfig" \
-			--bastionUsername "${BASTION_USERNAME}" \
 			--bastionRsa "${BASTION_RSA}" \
 			--baseDomain "${BASEDOMAIN}" \
 			--shouldDebug false
@@ -1313,7 +1301,6 @@ function handle_cluster_creation_failure() {
 			watch-create \
 			--cloud "${CLOUD}" \
 			--metadata "${CLUSTER_DIR}/metadata.json" \
-			--bastionUsername "${BASTION_USERNAME}" \
 			--bastionRsa "${BASTION_RSA}" \
 			--baseDomain "${BASEDOMAIN}" \
 			--shouldDebug false

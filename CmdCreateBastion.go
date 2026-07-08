@@ -76,8 +76,9 @@ func newSSHConfig(host, keyPath string) *sshConfig {
 
 // waitForSSHReady waits for SSH to become available on the server.
 // It retries up to MaxRetries times with RetryDelay between attempts.
-// Only "No route to host" and "Connection timed out" errors are retried;
-// any other error (including permission denied) causes an immediate return.
+// Only "No route to host", "Connection refused", and "Connection timed out"
+// errors are retried; any other error (including permission denied) causes
+// an immediate return.
 // Returns an error if the context is cancelled, if SSH doesn't become ready
 // after all attempts, or if a non-retryable error is encountered.
 func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
@@ -91,8 +92,8 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		}
 
 		outs, err := sshAccessSuccess(cfg)
-		log.Debugf("sshAccessSuccess: err = %v", err)
 		log.Debugf("waitForSSHReady: SSH check attempt %d/%d: %q", i+1, cfg.MaxRetries, outs)
+		log.Debugf("waitForSSHReady: err = %v", err)
 
 		if err == nil {
 			return err
@@ -101,6 +102,7 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		shouldContinue := false
 		if err != nil {
 			if strings.Contains(err.Error(), "No route to host") ||
+			   strings.Contains(err.Error(), "Connection refused") ||
 			   strings.Contains(err.Error(), "Connection timed out") {
 				shouldContinue = true
 			}
@@ -117,6 +119,52 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 	}
 
 	return fmt.Errorf("SSH not ready after %d attempts on %s", cfg.MaxRetries, cfg.Host)
+}
+
+// sshDetermineUsername probes a set of well-known SSH usernames to discover
+// which one is accepted by the remote host.
+//
+// It iterates over the candidate list ["cloud-user", "core"], attempting an
+// SSH connection for each by temporarily setting cfg.User.  On success it
+// returns the matching username.  "Permission denied" responses are treated as
+// a wrong-username signal and cause the loop to advance to the next candidate.
+// Any other SSH error (e.g. network failure, timeout) is returned immediately
+// without trying further candidates.
+//
+// Parameters:
+//   - cfg: SSH configuration whose User field is mutated during probing;
+//     the caller should set cfg.User from the returned username after the call.
+//
+// Returns:
+//   - string: the first username that successfully authenticated
+//   - error: nil on success; "No known user allowed into bastion" if every
+//     candidate is rejected; the underlying SSH error for any non-auth failure
+func sshDetermineUsername(cfg *sshConfig) (string, error) {
+	var (
+		usernames = []string{
+			"cloud-user",
+			"core",
+		}
+		err       error
+	)
+
+	for _, username := range usernames {
+		cfg.User = username
+		_, err = sshAccessSuccess(cfg)
+		if err == nil {
+			return username, nil
+		} else {
+			// If you ever wrap or unwrap this error elsewhere, use errors.Is/As.
+			// Since it's a plain fmt.Errorf (no %w), use strings.Contains:
+			if strings.Contains(err.Error(), "SSH publickey permission denied") {
+				continue
+			}
+
+			return "", err
+		}
+	}
+
+	return "", fmt.Errorf("No known user allowed into bastion")
 }
 
 // sshAccessSuccess tests SSH connectivity to a remote host.
@@ -303,12 +351,12 @@ func getOSRelease(ctx context.Context, cfg *sshConfig) (osRelease, error) {
 		return osReleaseUNKNOWN, fmt.Errorf("failed to grep ID in bastion: %v", err)
 	}
 
-	outputVARIANT_ID, err := execSSHCommand(ctx, cfg, []string{"grep", "^VARIANT_ID=", "/etc/os-release"})
-	if err != nil {
-		return osReleaseUNKNOWN, fmt.Errorf("failed to grep VARIANT_ID in bastion: %v", err)
-	}
-
 	if outputID == `ID="rhel"` {
+		outputVARIANT_ID, err := execSSHCommand(ctx, cfg, []string{"grep", "^VARIANT_ID=", "/etc/os-release"})
+		if err != nil {
+			return osReleaseUNKNOWN, fmt.Errorf("failed to grep VARIANT_ID in bastion: %v", err)
+		}
+
 		if outputVARIANT_ID == "VARIANT_ID=coreos" {
 			return osReleaseCOREOS, nil
 		}
@@ -324,9 +372,10 @@ func getOSRelease(ctx context.Context, cfg *sshConfig) (osRelease, error) {
 }
 
 // ensureHAProxyInstalled ensures HAProxy is installed on the bastion server.
-// It executes the following steps in order:
-//  1. Delegate HAProxy installation and configuration to the dnf-based or
-//     coreos-based helper.
+// It detects the remote OS release and delegates to the appropriate helper:
+//   - RHEL or CentOS: ensureDnfHAProxyInstalled
+//   - CoreOS:         ensureCoreosHAProxyInstalled
+//   - Unknown:        returns an error
 // The operation respects context cancellation and timeout.
 func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 
@@ -402,14 +451,17 @@ func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 // container as a systemd service. It creates all necessary files, builds the container image,
 // and enables the service to start automatically.
 //
-// The installation process consists of 7 steps:
+// The installation process consists of 10 steps:
 //  1. Create Containerfile for HAProxy container image
 //  2. Build the HAProxy container image using Podman
-//  3. Create the HAProxy configuration directory
-//  4. Create an empty HAProxy configuration file
-//  5. Create a systemd service unit file for HAProxy
-//  6. Reload systemd to recognize the new service
-//  7. Enable and start the HAProxy service
+//  3. Create the HAProxy configuration directory (/etc/haproxy)
+//  4. Create an initial HAProxy configuration file (/etc/haproxy/haproxy.cfg)
+//  5. Make sure core owns /etc/haproxy/haproxy.cfg
+//  6. Make sure /var/lib/haproxy/run exists
+//  7. Create a systemd service unit file (/etc/systemd/system/haproxy.service)
+//  8. Reload systemd to recognize the new service
+//  9. Enable and start the HAProxy service
+// 10. Make sure keep-alive.sh exists
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control. Each step checks for context cancellation
@@ -466,18 +518,30 @@ func ensureCoreosHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before cat > /tmp/Containerfile.haproxy: %w", err)
 	}
-	output, err := execSSHCommandWithStdin(ctx,
+	output, err := execSSHCommand(ctx,
 		cfg,
 		[]string{
-			"cat", ">", "/tmp/Containerfile.haproxy",
+			"test -f /tmp/Containerfile.haproxy && echo skip || true",
 		},
-		`FROM registry.access.redhat.com/ubi9/ubi
-RUN dnf install -y haproxy && dnf clean all
+	)
+	log.Debugf("test -f /tmp/Containerfile.haproxy && echo skip || true\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed test -f /tmp/Containerfile.haproxy && echo skip || true: %w", err)
+	}
+	if output != "skip" {
+		output, err = execSSHCommandWithStdin(ctx,
+			cfg,
+			[]string{
+				"cat", ">", "/tmp/Containerfile.haproxy",
+			},
+			`FROM registry.access.redhat.com/ubi9/ubi
+RUN dnf install -y haproxy socat && dnf clean all
 CMD ["haproxy", "-f", "/etc/haproxy/haproxy.cfg"]
 `)
-	log.Debugf("cat > /tmp/Containerfile.haproxy\nReturns\n%s", output)
-	if err != nil {
-		return fmt.Errorf("failed cat > /tmp/Containerfile.haproxy: %w", err)
+		log.Debugf("cat > /tmp/Containerfile.haproxy\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed cat > /tmp/Containerfile.haproxy: %w", err)
+		}
 	}
 
 	// Step 2: Build the Containerfile
@@ -487,11 +551,22 @@ CMD ["haproxy", "-f", "/etc/haproxy/haproxy.cfg"]
 	output, err = execSSHSudoCommand(ctx,
 		cfg,
 		[]string{
-			"podman", "build", "-t", "localhost/haproxy:latest", "-f", "/tmp/Containerfile.haproxy",
+			"podman image exists localhost/haproxy && echo skip || true",
 		})
-	log.Debugf("sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy\nReturns\n%s", output)
+	log.Debugf("sudo podman image exists localhost/haproxy && echo skip || true\nReturns\n%s", output)
 	if err != nil {
-		return fmt.Errorf("failed sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy: %w", err)
+		return fmt.Errorf("failed podman image exists localhost/haproxy && echo skip || true: %w", err)
+	}
+	if output != "skip" {
+		output, err = execSSHSudoCommand(ctx,
+			cfg,
+			[]string{
+				"podman", "build", "-t", "localhost/haproxy:latest", "-f", "/tmp/Containerfile.haproxy",
+			})
+		log.Debugf("sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed sudo podman build -t localhost/haproxy:latest -f /tmp/Containerfile.haproxy: %w", err)
+		}
 	}
 
 	// Step 3: Make sure /etc/haproxy exists
@@ -501,38 +576,123 @@ CMD ["haproxy", "-f", "/etc/haproxy/haproxy.cfg"]
 	output, err = execSSHSudoCommand(ctx,
 		cfg,
 		[]string{
-			"mkdir", "-p", "/etc/haproxy",
+			"test -d /etc/haproxy && echo skip || true",
 		})
-	log.Debugf("sudo mkdir -p /etc/haproxy\nReturns\n%s", output)
 	if err != nil {
-		return fmt.Errorf("failed sudo mkdir -p /etc/haproxy: %w", err)
+		return fmt.Errorf("failed sudo test -d /etc/haproxy && echo skip || true: %w", err)
+	}
+	log.Debugf("test -d /etc/haproxy  && echo skip || true\nReturns\n%s", output)
+	if output != "skip" {
+		output, err = execSSHSudoCommand(ctx,
+			cfg,
+			[]string{
+				"mkdir", "-p", "/etc/haproxy",
+			})
+		log.Debugf("sudo mkdir -p /etc/haproxy\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed sudo mkdir -p /etc/haproxy: %w", err)
+		}
 	}
 
 	// Step 4: Make sure /etc/haproxy/haproxy.cfg exists
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before sudo tee /etc/haproxy/haproxy.cfg: %w", err)
 	}
-	output, err = execSSHSudoCommandWithStdin(ctx,
+	output, err = execSSHSudoCommand(ctx,
 		cfg,
 		[]string{
-			"sudo", "tee", "/etc/haproxy/haproxy.cfg",
-		},
-		``)
-	log.Debugf("sudo tee /etc/haproxy/haproxy.cfg\nReturns\n%s", output)
+			"test -f /etc/haproxy/haproxy.cfg && echo skip || true",
+		})
 	if err != nil {
-		return fmt.Errorf("failed sudo tee /etc/haproxy/haproxy.cfg: %w", err)
+		return fmt.Errorf("failed sudo test -f /etc/haproxy/haproxy.cfg && echo skip || true: %w", err)
+	}
+	log.Debugf("test -f /etc/haproxy/haproxy.cfg && echo skip || true\nReturns\n%s", output)
+	if output != "skip" {
+		output, err = execSSHSudoCommandWithStdin(ctx,
+			cfg,
+			[]string{
+				"sudo", "tee", "/etc/haproxy/haproxy.cfg",
+			},
+			`global
+  master-worker
+  stats socket /var/lib/haproxy/run/haproxy.sock mode 600 level admin expose-fd listeners
+  stats timeout 2m
+
+defaults
+log global
+timeout connect 5s
+timeout client 50s
+timeout server 50s
+
+listen ingress-http
+bind *:80
+mode tcp
+`)
+		log.Debugf("sudo tee /etc/haproxy/haproxy.cfg\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed sudo tee /etc/haproxy/haproxy.cfg: %w", err)
+		}
 	}
 
-	// Step 5: Make sure /etc/systemd/system/haproxy.service exists
+	// Step 5: Make sure core owns /etc/haproxy/haproxy.cfg
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo chown core:core /etc/haproxy/haproxy.cfg: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"sudo chown core:core /etc/haproxy/haproxy.cfg",
+		})
+	log.Debugf("sudo chown core:core /etc/haproxy/haproxy.cfg\nReturns\n%s", output)
+	if err != nil {
+		return fmt.Errorf("failed sudo chown core:core /etc/haproxy/haproxy.cfg: %w", err)
+	}
+
+	// Step 6: Make sure /var/lib/haproxy/run exists
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before sudo mkdir -p /var/lib/haproxy/run: %w", err)
+	}
+	output, err = execSSHSudoCommand(ctx,
+		cfg,
+		[]string{
+			"test -d /var/lib/haproxy/run && echo skip || true",
+		})
+	if err != nil {
+		return fmt.Errorf("failed sudo test -d /var/lib/haproxy/run && echo skip || true: %w", err)
+	}
+	log.Debugf("test -d /var/lib/haproxy/run  && echo skip || true\nReturns\n%s", output)
+	if output != "skip" {
+		output, err = execSSHSudoCommand(ctx,
+			cfg,
+			[]string{
+				"mkdir", "-p", "/var/lib/haproxy/run",
+			})
+		log.Debugf("sudo mkdir -p /var/lib/haproxy/run\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed sudo mkdir -p /var/lib/haproxy/run: %w", err)
+		}
+	}
+
+	// Step 7: Make sure /etc/systemd/system/haproxy.service exists
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before sudo tee /etc/systemd/system/haproxy.service: %w", err)
 	}
-	output, err = execSSHSudoCommandWithStdin(ctx,
+	output, err = execSSHSudoCommand(ctx,
 		cfg,
 		[]string{
-			"sudo", "tee", "/etc/systemd/system/haproxy.service",
-		},
-		`[Unit]
+			"test -f /etc/systemd/system/haproxy.service && echo skip || true",
+		})
+	if err != nil {
+		return fmt.Errorf("failed sudo test -f /etc/systemd/system/haproxy.service && echo skip || true: %w", err)
+	}
+	log.Debugf("test -f /etc/systemd/system/haproxy.service && echo skip || true\nReturns\n%s", output)
+	if output != "skip" {
+		output, err = execSSHSudoCommandWithStdin(ctx,
+			cfg,
+			[]string{
+				"sudo", "tee", "/etc/systemd/system/haproxy.service",
+			},
+			`[Unit]
 Description=HAProxy Load Balancer
 After=network-online.target
 Wants=network-online.target
@@ -541,9 +701,10 @@ Wants=network-online.target
 TimeoutStartSec=0
 ExecStartPre=-/bin/podman kill haproxy
 ExecStartPre=-/bin/podman rm haproxy
-ExecStart=/bin/podman run --name haproxy \
+ExecStart=/bin/podman run -d --name haproxy \
     --net=host \
     --volume /etc/haproxy/haproxy.cfg:/etc/haproxy/haproxy.cfg:Z \
+    --volume /var/lib/haproxy/run:/var/lib/haproxy/run:Z \
     localhost/haproxy:latest
 Restart=always
 RestartSec=5
@@ -551,12 +712,13 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 `)
-	log.Debugf("sudo tee /etc/systemd/system/haproxy.service\nReturns\n%s", output)
-	if err != nil {
-		return fmt.Errorf("failed sudo tee /etc/systemd/system/haproxy.service: %w", err)
+		log.Debugf("sudo tee /etc/systemd/system/haproxy.service\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed sudo tee /etc/systemd/system/haproxy.service: %w", err)
+		}
 	}
 
-	// Step 6: Make sure systemctl gets reloaded
+	// Step 8: Make sure systemctl gets reloaded
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before sudo systemctl daemon-reload: %w", err)
 	}
@@ -570,7 +732,7 @@ WantedBy=multi-user.target
 		return fmt.Errorf("failed sudo systemctl daemon-reload: %w", err)
 	}
 
-	// Step 7: Make sure haproxy.service is enabled
+	// Step 9: Make sure haproxy.service is enabled
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled before sudo systemctl enable --now haproxy.service: %w", err)
 	}
@@ -582,6 +744,46 @@ WantedBy=multi-user.target
 	log.Debugf("sudo systemctl enable --now haproxy.service\nReturns\n%s", output)
 	if err != nil {
 		return fmt.Errorf("failed sudo systemctl enable --now haproxy.service: %w", err)
+	}
+
+	// Step 10: Make sure keep-alive.sh exists
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before tee keep-alive.sh: %w", err)
+	}
+	output, err = execSSHCommand(ctx,
+		cfg,
+		[]string{
+			"test -f keep-alive.sh && echo skip || true",
+		})
+	if err != nil {
+		return fmt.Errorf("failed test -f keep-alive.sh && echo skip || true: %w", err)
+	}
+	log.Debugf("test -f keep-alive.sh && echo skip || true\nReturns\n%s", output)
+	if output != "skip" {
+		output, err = execSSHCommandWithStdin(ctx,
+			cfg,
+			[]string{
+				"tee", "keep-alive.sh",
+			},
+			`#!/usr/bin/env bash
+sudo systemctl stop haproxy.service
+while true
+do
+        if sudo podman exec --no-session haproxy echo 2>&1 | grep 'OCI runtime error'
+        then
+                echo "Restarting"
+                sudo podman kill haproxy
+                sudo podman rm -f haproxy
+                sudo podman run -d --name haproxy --net=host --volume /etc/haproxy/haproxy.cfg:/etc/haproxy/haproxy.cfg:Z --volume /var/lib/haproxy/run:/var/lib/haproxy/run:Z localhost/haproxy:latest
+        fi
+
+        sleep 30s
+done
+`)
+		log.Debugf("tee keep-alive.sh\nReturns\n%s", output)
+		if err != nil {
+			return fmt.Errorf("failed tee keep-alive.sh: %w", err)
+		}
 	}
 
 	return nil
@@ -765,8 +967,8 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 // The function returns a wrapped error for the first failed step.
 // The operation respects context cancellation and timeout, checking before each
 // step before invoking the corresponding SSH operation.
-func setupHAProxyOnServer(ctx context.Context, config *BastionConfig, ipAddress, bastionRsa string) error {
-	cfg := newSSHConfig(ipAddress, bastionRsa)
+func setupHAProxyOnServer(ctx context.Context, config *BastionConfig, ipAddress string) error {
+	cfg := newSSHConfig(ipAddress, config.BastionRsa)
 
 	cfg.MaxRetries = 20
 	cfg.RetryDelay = 20 * time.Second
@@ -881,16 +1083,6 @@ func (c *BastionConfig) Validate() error {
 	// Optional parameters
 	if c.AvailabilityZone == "" {
 		c.AvailabilityZone = defaultAvailZone
-	}
-
-	// Setup mode validation (mutually exclusive)
-	if c.BastionRsa == "" && c.ServerIP == "" {
-		validationErrors = append(validationErrors, 
-			fmt.Errorf("setup mode: either bastionRsa (local) or serverIP (remote) must be specified"))
-	}
-	if c.BastionRsa != "" && c.ServerIP != "" {
-		validationErrors = append(validationErrors, 
-			fmt.Errorf("setup mode: bastionRsa and serverIP are mutually exclusive"))
 	}
 
 	// File path validation
@@ -1337,6 +1529,29 @@ func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, 
 		log.Debugf("createServer: sshKeyPair = %+v", sshKeyPair)
 	}
 
+	if strings.Contains(image.Name, "rhcos") {
+		log.Debugf("createServer: found rhcos in %s", image.Name)
+
+		if config.BastionRsaPub == "" {
+			return fmt.Errorf("bastion image is rhcos but no bastion RSA found")
+		}
+
+		log.Debugf("createServer: userData = %v", string(userData))
+		log.Debugf("createServer: config.PasswdHash = %v", config.PasswdHash)
+		log.Debugf("createServer: config.BastionRsaPub = %v", config.BastionRsaPub)
+
+		userData, err = createBootstrapIgnition(
+			config.PasswdHash,
+			config.BastionRsaPub,
+			port,
+			subnet)
+		log.Debugf("createServer: err = %v", err)
+		if err != nil {
+			return err
+		}
+		log.Debugf("createServer: userData = %v", string(userData))
+	}
+
 	// Step 2: Define cleanup functions for error recovery
 	// These use independent contexts to ensure cleanup completes even if the original context is cancelled
 
@@ -1349,21 +1564,6 @@ func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, 
 		if deleteErr := deleteNetworkPort(cleanupCtx, config.Clouds[0], createdPort); deleteErr != nil {
 			log.Debugf("Warning: failed to cleanup port %s: %v", port.ID, deleteErr)
 		}
-	}
-
-	if strings.Contains(image.Name, "rhcos") {
-		log.Debugf("createServer: found rhcos in %s", image.Name)
-		log.Debugf("createServer: userData = %v", string(userData))
-
-		userData, err = createBootstrapIgnition(
-			config.PasswdHash,
-			config.BastionRsaPub,
-			port,
-			subnet)
-		log.Debugf("createServer: err = %v", err)
-		if err != nil {
-		}
-		log.Debugf("createServer: userData = %v", string(userData))
 	}
 
 	// cleanupServerAndPort removes both the server and its network port
@@ -1567,8 +1767,9 @@ func removeHostKey(knownHostsPath, ipAddress string) error {
 	return nil
 }
 
-// appendToFile appends data to a file.
-// It returns an error if the file cannot be opened, written to, or if the write is incomplete.
+// appendToFile appends data to a file, creating it if it does not exist.
+// It returns an error if the file cannot be opened or created, if the write
+// fails, or if fewer bytes than expected are written.
 func appendToFile(filePath string, data []byte) error {
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_RDWR|os.O_CREATE, filePermReadWrite)
 	if err != nil {
@@ -1596,18 +1797,33 @@ func appendToFile(filePath string, data []byte) error {
 // setupBastionServer orchestrates bastion server configuration.
 // It performs the following steps:
 //  1. Find the server in OpenStack
-//  2. Extract and validate the server's IP address
-//  3. Setup HAProxy if enabled
-//  4. Configure DNS records if IBM Cloud API key is available
+//  2. Get the server image
+//  3. Extract and validate the server's IP address
+//  4. Setup HAProxy if enabled
+//  5. Configure DNS records if IBM Cloud API key is available
 func setupBastionServer(ctx context.Context, config *BastionConfig) error {
 	// Step 1: Find the server
 	server, err := findServer(ctx, config.Clouds, config.BastionName)
 	if err != nil {
 		return fmt.Errorf("failed to find server: %w", err)
 	}
-	log.Debugf("Found server: %+v", server)
+	log.Debugf("setupBastionServer: Found server: %+v", server)
 
-	// Step 2: Get server IP address
+	// Step 2: Get the server image
+	imageName, ok := server.Image["id"].(string)
+	log.Debugf("setupBastionServer: imageName = %v, ok = %v", imageName, ok)
+	if !ok {
+		return fmt.Errorf("failed to get image id: %+v", server.Image)
+	}
+	image, err := findImage(ctx, config.Clouds[0], imageName)
+	if err != nil {
+		return fmt.Errorf("failed to find image for server: %w", err)
+	}
+	log.Debugf("setupBastionServer: image = %+v", image)
+
+	config.ResolvedImageName = image.Name
+
+	// Step 3: Get server IP address
 	ipAddress, err := getServerIPAddress(server)
 	if err != nil {
 		return err
@@ -1617,14 +1833,14 @@ func setupBastionServer(ctx context.Context, config *BastionConfig) error {
 
 	fmt.Printf("Setting up server %s...\n", server.Name)
 
-	// Step 3: Setup HAProxy if enabled
+	// Step 4: Setup HAProxy if enabled
 	if config.EnableHAProxy {
-		if err := setupHAProxyOnServer(ctx, config, ipAddress, config.BastionRsa); err != nil {
+		if err := setupHAProxyOnServer(ctx, config, ipAddress); err != nil {
 			return fmt.Errorf("failed to setup HAProxy: %w", err)
 		}
 	}
 
-	// Step 4: Setup DNS if API key is available
+	// Step 5: Setup DNS if API key is available
 	apiKey := os.Getenv("IBMCLOUD_API_KEY")
 	if apiKey != "" {
 		if err := dnsForServer(ctx, config.Clouds, apiKey, config.BastionName, config.DomainName); err != nil {

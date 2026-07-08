@@ -132,8 +132,7 @@ func TestBastionConfigValidate(t *testing.T) {
 				NetworkName: "private",
 				SshKeyName:  "mykey",
 			},
-			expectError: true,
-			errorMsg:    "either bastionRsa (local) or serverIP (remote) must be specified",
+			expectError: false,
 		},
 		{
 			name: "both setup modes specified",
@@ -147,8 +146,7 @@ func TestBastionConfigValidate(t *testing.T) {
 				NetworkName: "private",
 				SshKeyName:  "mykey",
 			},
-			expectError: true,
-			errorMsg:    "bastionRsa and serverIP are mutually exclusive",
+			expectError: false,
 		},
 		{
 			name: "missing bastion rsa file",
@@ -681,9 +679,6 @@ func TestBastionConfig_MultipleValidationErrors(t *testing.T) {
 	}
 	if !strings.Contains(errMsg, "bastionName: field is required") {
 		t.Error("expected bastionName error in validation message")
-	}
-	if !strings.Contains(errMsg, "setup mode") {
-		t.Error("expected setup mode error in validation message")
 	}
 }
 
