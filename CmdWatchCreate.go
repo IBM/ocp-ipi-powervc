@@ -27,7 +27,6 @@
 //   - cloud: The cloud to use in clouds.yaml (required)
 //   - metadata: The location of the metadata.json file (required)
 //   - kubeconfig: The KUBECONFIG file (optional)
-//   - bastionUsername: The username of the bastion VM (required)
 //   - bastionRsa: The RSA filename for the bastion VM (required)
 //   - baseDomain: The DNS base name to use (optional)
 //   - shouldDebug: Enable debug output (true/false, default: false)
@@ -52,7 +51,6 @@ const (
 	flagWatchCreateCloud           = "cloud"
 	flagWatchCreateMetadata        = "metadata"
 	flagWatchCreateKubeConfig      = "kubeconfig"
-	flagWatchCreateBastionUsername = "bastionUsername"
 	flagWatchCreateBastionRsa      = "bastionRsa"
 	flagWatchCreateBaseDomain      = "baseDomain"
 	flagWatchCreateShouldDebug     = "shouldDebug"
@@ -61,7 +59,6 @@ const (
 	defaultWatchCreateCloud           = ""
 	defaultWatchCreateMetadata        = ""
 	defaultWatchCreateKubeConfig      = ""
-	defaultWatchCreateBastionUsername = ""
 	defaultWatchCreateBastionRsa      = ""
 	defaultWatchCreateBaseDomain      = ""
 	defaultWatchCreateShouldDebug     = "false"
@@ -73,7 +70,6 @@ const (
 	usageWatchCreateCloud           = "The cloud to use in clouds.yaml"
 	usageWatchCreateMetadata        = "The location of the metadata.json file"
 	usageWatchCreateKubeConfig      = "The KUBECONFIG file"
-	usageWatchCreateBastionUsername = "The username of the bastion VM to use"
 	usageWatchCreateBastionRsa      = "The RSA filename for the bastion VM to use"
 	usageWatchCreateBaseDomain      = "The DNS base name to use"
 	usageWatchCreateShouldDebug     = "Should output debug output"
@@ -105,7 +101,6 @@ const (
 //   err := watchCreateClusterCommand(flagSet, []string{
 //       "-cloud", "mycloud",
 //       "-metadata", "/path/to/metadata.json",
-//       "-bastionUsername", "core",
 //       "-bastionRsa", "/path/to/key.rsa",
 //       "-shouldDebug", "true",
 //   })
@@ -138,7 +133,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 //  2. Parses command-line flags
 //  3. Configures logging based on debug flag
 //  4. Validates IBM Cloud API key (if provided)
-//  5. Validates required flags (cloud, metadata, bastionUsername, bastionRsa)
+//  5. Validates required flags (cloud, metadata, bastionRsa)
 //  6. Validates metadata file accessibility
 //  7. Initializes runnable objects based on provided flags
 //  8. Loads metadata from file
@@ -240,7 +235,6 @@ type watchCreateConfig struct {
 	cloud           string
 	metadata        string
 	kubeConfig      string
-	bastionUsername string
 	bastionRsa      string
 	baseDomain      string
 	apiKey          string
@@ -265,7 +259,6 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 	ptrCloud := flagSet.String(flagWatchCreateCloud, defaultWatchCreateCloud, usageWatchCreateCloud)
 	ptrMetadata := flagSet.String(flagWatchCreateMetadata, defaultWatchCreateMetadata, usageWatchCreateMetadata)
 	ptrKubeConfig := flagSet.String(flagWatchCreateKubeConfig, defaultWatchCreateKubeConfig, usageWatchCreateKubeConfig)
-	ptrBastionUsername := flagSet.String(flagWatchCreateBastionUsername, defaultWatchCreateBastionUsername, usageWatchCreateBastionUsername)
 	ptrBastionRsa := flagSet.String(flagWatchCreateBastionRsa, defaultWatchCreateBastionRsa, usageWatchCreateBastionRsa)
 	ptrBaseDomain := flagSet.String(flagWatchCreateBaseDomain, defaultWatchCreateBaseDomain, usageWatchCreateBaseDomain)
 	ptrShouldDebug := flagSet.String(flagWatchCreateShouldDebug, defaultWatchCreateShouldDebug, usageWatchCreateShouldDebug)
@@ -285,7 +278,7 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 	cloud := strings.TrimSpace(*ptrCloud)
 
 	// Validate required flags
-	if err := validateRequiredFlags(preLog, cloud, *ptrMetadata, *ptrBastionUsername, *ptrBastionRsa); err != nil {
+	if err := validateRequiredFlags(preLog, cloud, *ptrMetadata, *ptrBastionRsa); err != nil {
 		return nil, fmt.Errorf("%w", err)
 	}
 
@@ -296,7 +289,6 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 		cloud:           cloud,
 		metadata:        *ptrMetadata,
 		kubeConfig:      *ptrKubeConfig,
-		bastionUsername: *ptrBastionUsername,
 		bastionRsa:      *ptrBastionRsa,
 		baseDomain:      *ptrBaseDomain,
 		apiKey:          apiKey,
@@ -311,12 +303,11 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 //   - preLog: Buffer for pre-logger messages
 //   - cloud: OpenStack cloud name
 //   - metadata: Path to the metadata.json file
-//   - bastionUsername: SSH username for the bastion VM
 //   - bastionRsa: Path to the RSA private key for the bastion VM
 //
 // Returns:
 //   - error: An error naming the first missing required flag, or nil if all are present
-func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionUsername, bastionRsa string) error {
+func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionRsa string) error {
 	if cloud == "" {
 		return fmt.Errorf("%scloud name is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateCloud)
 	}
@@ -325,12 +316,6 @@ func validateRequiredFlags(preLog *strings.Builder, cloud, metadata, bastionUser
 	if metadata == "" {
 		return fmt.Errorf("%smetadata file location is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateMetadata)
 	}
-	fmt.Fprintf(preLog, "[INFO] Using metadata file: %s\n", metadata)
-
-	if bastionUsername == "" {
-		return fmt.Errorf("%sbastion username is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionUsername)
-	}
-	fmt.Fprintf(preLog, "[INFO] Using bastion username: %s\n", bastionUsername)
 
 	if bastionRsa == "" {
 		return fmt.Errorf("%sbastion RSA key is required, use -%s flag", errPrefixWatchCreate, flagWatchCreateBastionRsa)
@@ -455,6 +440,7 @@ func validateKubeConfigFile(kubeConfigPath string) error {
 func buildComponentList(config *watchCreateConfig) []NewRunnableObjectsEntry {
 	robjsFuncs := make([]NewRunnableObjectsEntry, 0, 4)
 
+if false {
 	if config.kubeConfig != "" {
 		log.Printf("[INFO] KubeConfig provided, adding %s component", componentOpenShift)
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewOc, componentOpenShift})
@@ -465,7 +451,7 @@ func buildComponentList(config *watchCreateConfig) []NewRunnableObjectsEntry {
 
 	log.Printf("[INFO] Adding %s component", componentLB)
 	robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewLoadBalancer, componentLB})
-
+}
 	if config.baseDomain != "" {
 		log.Printf("[INFO] Base domain provided, adding %s component", componentDNS)
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewIBMDNS, componentDNS})
@@ -497,7 +483,6 @@ func initializeServices(config *watchCreateConfig) (*Services, error) {
 		config.apiKey,
 		config.kubeConfig,
 		config.cloud,
-		config.bastionUsername,
 		config.bastionRsa,
 		config.baseDomain,
 	)

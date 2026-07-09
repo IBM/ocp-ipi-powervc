@@ -308,9 +308,11 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	if installerRsa == "" {
 		return fmt.Errorf("%s: Error: installer RSA key path is empty\n", LoadBalancerName)
 	}
-	bastionUsername := lbs.services.GetBastionUsername()
-	if bastionUsername == "" {
-		return fmt.Errorf("%s: Error: bastion username is empty\n", LoadBalancerName)
+
+	cfg := newSSHConfig(ipAddress, installerRsa)
+	cfg.User, err = sshDetermineUsername(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to determine username: %w", err)
 	}
 
 	err = retrySshWithBackoff(func() error {
@@ -318,8 +320,8 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 		outb, configErr = runSplitCommand2([]string{
 			sshCmd,
 			sshIdentityFlag,
-			installerRsa,
-			fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
+			cfg.KeyPath,
+			fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
 			sudoCmd,
 			catCmd,
 			haproxyConfigPath,
@@ -347,8 +349,8 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 		outb, statusErr = runSplitCommand2([]string{
 			sshCmd,
 			sshIdentityFlag,
-			installerRsa,
-			fmt.Sprintf("%s@%s", bastionUsername, ipAddress),
+			cfg.KeyPath,
+			fmt.Sprintf("%s@%s", cfg.User, cfg.Host),
 			sudoCmd,
 			systemctlCmd,
 			systemctlStatusCmd,

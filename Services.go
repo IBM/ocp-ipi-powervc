@@ -52,9 +52,6 @@ type Services struct {
 	cloud string
 
 	//
-	bastionUsername string
-
-	//
 	installerRsa string
 
 	//
@@ -88,7 +85,7 @@ type User struct {
 	generation int
 }
 
-func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud string, bastionUsername string, installerRsa string, baseDomain string) (*Services, error) {
+func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud string, installerRsa string, baseDomain string) (*Services, error) {
 	var (
 		ctx             context.Context
 		controllerSvc   *resourcecontrollerv2.ResourceControllerV2
@@ -130,7 +127,6 @@ func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud str
 		apiKey:          apiKey,
 		kubeConfig:      kubeConfig,
 		cloud:           cloud,
-		bastionUsername: bastionUsername,
 		controllerSvc:   controllerSvc,
 		installerRsa:    installerRsa,
 		metadata:        metadata,
@@ -154,10 +150,6 @@ func (svc *Services) GetKubeConfig() string {
 
 func (svc *Services) GetCloud() string {
 	return svc.cloud
-}
-
-func (svc *Services) GetBastionUsername() string {
-	return svc.bastionUsername
 }
 
 func (svc *Services) GetInstallerRsa() string {
