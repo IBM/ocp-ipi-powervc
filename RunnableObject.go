@@ -243,7 +243,8 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 		}
 
 		if hasErrors {
-			log.Debugf("initializeRunnableObjects: %s had creation errors, but continuing with valid objects", nroe.Name)
+			log.Debugf("initializeRunnableObjects: %s had creation errors", nroe.Name)
+			continue
 		}
 
 		// Process successfully created objects
