@@ -1691,10 +1691,6 @@ func atLeastOneClusterName(allServers []servers.Server) (clusterName string) {
 	return
 }
 
-var (
-	firstDnsRun = true
-)
-
 // dnsRecords manages DNS records for cluster nodes in IBM Cloud Internet Services.
 //
 // Parameters:
@@ -1717,8 +1713,7 @@ var (
 //  3. Initialises the DNS service API client
 //  4. Retrieves all OpenStack servers to resolve IP addresses
 //  5. Derives the cluster name from the server list; returns nil immediately if empty
-//  6. On the first call (firstDnsRun==true): creates bastion DNS records for each
-//     valid bastion — A records for api.* and api-int.*, CNAME for *.apps.*
+//  6. Creates bastion DNS records for each valid bastion — A records for api.* and api-int.*, CNAME for *.apps.*
 //  7. Deletes A records for each server in deletedServerSet (bootstrap/master/worker only)
 //  8. Creates A records for each server in addedServerSet (bootstrap/master/worker only)
 //  9. When knownServers is empty after a non-first run (cluster fully deleted):
@@ -1768,46 +1763,40 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 		return nil
 	}
 
-	if firstDnsRun {
-		log.Debugf("dnsRecords: FIRST DNS RUN!")
+	for _, bastionInformation := range bastionInformations {
+		if !bastionInformation.Valid {
+			continue
+		}
 
-		firstDnsRun = false
-
-		for _, bastionInformation := range bastionInformations {
-			if !bastionInformation.Valid {
-				continue
-			}
-
-			err = createOrDeletePublicDNSRecord(ctx,
-				dnsrecordsv1.CreateDnsRecordOptions_Type_A,
-				fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
-				bastionInformation.IPAddress,
-				true,
-				dnsService)
-			if err != nil {
-				log.Errorf("Failed to create DNS record for api.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
-				errs = append(errs, err)
-			}
-			err = createOrDeletePublicDNSRecord(ctx,
-				dnsrecordsv1.CreateDnsRecordOptions_Type_A,
-				fmt.Sprintf("api-int.%s.%s", bastionInformation.ClusterName, domainName),
-				bastionInformation.IPAddress,
-				true,
-				dnsService)
-			if err != nil {
-				log.Errorf("Failed to create DNS record for api-int.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
-				errs = append(errs, err)
-			}
-			err = createOrDeletePublicDNSRecord(ctx,
-				dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
-				fmt.Sprintf("*.apps.%s.%s", bastionInformation.ClusterName, domainName),
-				fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
-				true,
-				dnsService)
-			if err != nil {
-				log.Errorf("Failed to create DNS record for *.apps.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
-				errs = append(errs, err)
-			}
+		err = createOrDeletePublicDNSRecord(ctx,
+			dnsrecordsv1.CreateDnsRecordOptions_Type_A,
+			fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
+			bastionInformation.IPAddress,
+			true,
+			dnsService)
+		if err != nil {
+			log.Errorf("Failed to create DNS record for api.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+			errs = append(errs, err)
+		}
+		err = createOrDeletePublicDNSRecord(ctx,
+			dnsrecordsv1.CreateDnsRecordOptions_Type_A,
+			fmt.Sprintf("api-int.%s.%s", bastionInformation.ClusterName, domainName),
+			bastionInformation.IPAddress,
+			true,
+			dnsService)
+		if err != nil {
+			log.Errorf("Failed to create DNS record for api-int.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+			errs = append(errs, err)
+		}
+		err = createOrDeletePublicDNSRecord(ctx,
+			dnsrecordsv1.CreateDnsRecordOptions_Type_Cname,
+			fmt.Sprintf("*.apps.%s.%s", bastionInformation.ClusterName, domainName),
+			fmt.Sprintf("api.%s.%s", bastionInformation.ClusterName, domainName),
+			true,
+			dnsService)
+		if err != nil {
+			log.Errorf("Failed to create DNS record for *.apps.%s.%s: %v", bastionInformation.ClusterName, domainName, err)
+			errs = append(errs, err)
 		}
 	}
 
@@ -1866,7 +1855,7 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 		}
 	}
 
-	if len(knownServers) == 0 && !firstDnsRun {
+	if len(knownServers) == 0 {
 		for _, bastionInformation := range bastionInformations {
 			if !bastionInformation.Valid {
 				continue
