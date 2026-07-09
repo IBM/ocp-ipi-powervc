@@ -440,7 +440,6 @@ func validateKubeConfigFile(kubeConfigPath string) error {
 func buildComponentList(config *watchCreateConfig) []NewRunnableObjectsEntry {
 	robjsFuncs := make([]NewRunnableObjectsEntry, 0, 4)
 
-if false {
 	if config.kubeConfig != "" {
 		log.Printf("[INFO] KubeConfig provided, adding %s component", componentOpenShift)
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewOc, componentOpenShift})
@@ -451,7 +450,7 @@ if false {
 
 	log.Printf("[INFO] Adding %s component", componentLB)
 	robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewLoadBalancer, componentLB})
-}
+
 	if config.baseDomain != "" {
 		log.Printf("[INFO] Base domain provided, adding %s component", componentDNS)
 		robjsFuncs = append(robjsFuncs, NewRunnableObjectsEntry{NewIBMDNS, componentDNS})
