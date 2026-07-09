@@ -68,28 +68,10 @@ func TestWatchCreateClusterCommand_MissingRequiredFlags(t *testing.T) {
 			errorMsg: "metadata file location is required",
 		},
 		{
-			name: "missing bastionUsername",
-			args: []string{
-				"--cloud", "mycloud",
-				"--metadata", "/tmp/metadata.json",
-			},
-			errorMsg: "bastion username is required",
-		},
-		{
-			name: "empty bastionUsername",
-			args: []string{
-				"--cloud", "mycloud",
-				"--metadata", "/tmp/metadata.json",
-				"--bastionUsername", "",
-			},
-			errorMsg: "bastion username is required",
-		},
-		{
 			name: "missing bastionRsa",
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", "/tmp/metadata.json",
-				"--bastionUsername", "core",
 			},
 			errorMsg: "bastion RSA key is required",
 		},
@@ -98,7 +80,6 @@ func TestWatchCreateClusterCommand_MissingRequiredFlags(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", "/tmp/metadata.json",
-				"--bastionUsername", "core",
 				"--bastionRsa", "",
 			},
 			errorMsg: "bastion RSA key is required",
@@ -159,7 +140,6 @@ func TestWatchCreateClusterCommand_InvalidDebugFlag(t *testing.T) {
 			args := []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--shouldDebug", tt.debugValue,
 			}
@@ -211,7 +191,6 @@ func TestWatchCreateClusterCommand_ValidDebugFlags(t *testing.T) {
 			args := []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--shouldDebug", tt.debugValue,
 			}
@@ -261,7 +240,6 @@ func TestWatchCreateClusterCommand_MetadataFileValidation(t *testing.T) {
 			args := []string{
 				"--cloud", "mycloud",
 				"--metadata", tt.metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			}
 			err := watchCreateClusterCommand(flagSet, args)
@@ -304,7 +282,6 @@ func TestWatchCreateClusterCommand_OptionalFlags(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--kubeconfig", kubeconfigPath,
 			},
@@ -314,7 +291,6 @@ func TestWatchCreateClusterCommand_OptionalFlags(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--baseDomain", "example.com",
 			},
@@ -324,7 +300,6 @@ func TestWatchCreateClusterCommand_OptionalFlags(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--kubeconfig", kubeconfigPath,
 				"--baseDomain", "example.com",
@@ -373,7 +348,6 @@ func TestWatchCreateClusterCommand_FlagParsing(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
 			expectError: true, // Now properly returns errors when components fail
@@ -384,7 +358,6 @@ func TestWatchCreateClusterCommand_FlagParsing(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 				"--unknownFlag", "value",
 			},
@@ -397,7 +370,6 @@ func TestWatchCreateClusterCommand_FlagParsing(t *testing.T) {
 				"--cloud", "mycloud",
 				"--cloud", "anothercloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
 			expectError: true, // Last value wins, but components fail
@@ -471,9 +443,6 @@ func TestWatchCreateClusterCommand_Constants(t *testing.T) {
 	if flagWatchCreateKubeConfig == "" {
 		t.Error("flagWatchCreateKubeConfig constant should not be empty")
 	}
-	if flagWatchCreateBastionUsername == "" {
-		t.Error("flagWatchCreateBastionUsername constant should not be empty")
-	}
 	if flagWatchCreateBastionRsa == "" {
 		t.Error("flagWatchCreateBastionRsa constant should not be empty")
 	}
@@ -493,9 +462,6 @@ func TestWatchCreateClusterCommand_Constants(t *testing.T) {
 	}
 	if defaultWatchCreateKubeConfig != "" {
 		t.Error("defaultWatchCreateKubeConfig should be empty string")
-	}
-	if defaultWatchCreateBastionUsername != "" {
-		t.Error("defaultWatchCreateBastionUsername should be empty string")
 	}
 	if defaultWatchCreateBastionRsa != "" {
 		t.Error("defaultWatchCreateBastionRsa should be empty string")
@@ -540,7 +506,6 @@ func TestWatchCreateClusterCommand_FlagDefaults(t *testing.T) {
 	cloud := flagSet.String(flagWatchCreateCloud, defaultWatchCreateCloud, usageWatchCreateCloud)
 	metadata := flagSet.String(flagWatchCreateMetadata, defaultWatchCreateMetadata, usageWatchCreateMetadata)
 	kubeconfig := flagSet.String(flagWatchCreateKubeConfig, defaultWatchCreateKubeConfig, usageWatchCreateKubeConfig)
-	bastionUsername := flagSet.String(flagWatchCreateBastionUsername, defaultWatchCreateBastionUsername, usageWatchCreateBastionUsername)
 	bastionRsa := flagSet.String(flagWatchCreateBastionRsa, defaultWatchCreateBastionRsa, usageWatchCreateBastionRsa)
 	baseDomain := flagSet.String(flagWatchCreateBaseDomain, defaultWatchCreateBaseDomain, usageWatchCreateBaseDomain)
 	shouldDebug := flagSet.String(flagWatchCreateShouldDebug, defaultWatchCreateShouldDebug, usageWatchCreateShouldDebug)
@@ -554,9 +519,6 @@ func TestWatchCreateClusterCommand_FlagDefaults(t *testing.T) {
 	}
 	if *kubeconfig != "" {
 		t.Errorf("Default kubeconfig should be empty, got: %q", *kubeconfig)
-	}
-	if *bastionUsername != "" {
-		t.Errorf("Default bastionUsername should be empty, got: %q", *bastionUsername)
 	}
 	if *bastionRsa != "" {
 		t.Errorf("Default bastionRsa should be empty, got: %q", *bastionRsa)
@@ -628,7 +590,6 @@ func TestWatchCreateClusterCommand_EdgeCases(t *testing.T) {
 			args: []string{
 				"--cloud", "  mycloud  ",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
 			expectError: true, // Spaces are trimmed, but cloud doesn't exist so components fail
@@ -639,7 +600,6 @@ func TestWatchCreateClusterCommand_EdgeCases(t *testing.T) {
 			args: []string{
 				"--cloud", "   ",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			},
 			expectError: true,
@@ -718,7 +678,6 @@ func TestWatchCreateClusterCommand_IBMCloudAPIKey(t *testing.T) {
 			args := []string{
 				"--cloud", "mycloud",
 				"--metadata", metadataPath,
-				"--bastionUsername", "core",
 				"--bastionRsa", rsaPath,
 			}
 
@@ -744,7 +703,7 @@ func TestParseWatchCreateFlags(t *testing.T) {
 	}{
 		{
 			name:        "valid minimal flags",
-			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key"},
+			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionRsa", "/tmp/key"},
 			expectError: false,
 			validate: func(t *testing.T, cfg *watchCreateConfig) {
 				if cfg.cloud != "mycloud" {
@@ -752,9 +711,6 @@ func TestParseWatchCreateFlags(t *testing.T) {
 				}
 				if cfg.metadata != "/tmp/meta.json" {
 					t.Errorf("Expected metadata '/tmp/meta.json', got %q", cfg.metadata)
-				}
-				if cfg.bastionUsername != "core" {
-					t.Errorf("Expected bastionUsername 'core', got %q", cfg.bastionUsername)
 				}
 				if cfg.bastionRsa != "/tmp/key" {
 					t.Errorf("Expected bastionRsa '/tmp/key', got %q", cfg.bastionRsa)
@@ -769,7 +725,6 @@ func TestParseWatchCreateFlags(t *testing.T) {
 			args: []string{
 				"--cloud", "mycloud",
 				"--metadata", "/tmp/meta.json",
-				"--bastionUsername", "core",
 				"--bastionRsa", "/tmp/key",
 				"--kubeconfig", "/tmp/kubeconfig",
 				"--baseDomain", "example.com",
@@ -790,13 +745,13 @@ func TestParseWatchCreateFlags(t *testing.T) {
 		},
 		{
 			name:        "missing cloud",
-			args:        []string{"--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key"},
+			args:        []string{"--metadata", "/tmp/meta.json", "--bastionRsa", "/tmp/key"},
 			expectError: true,
 			errorMsg:    "cloud name is required",
 		},
 		{
 			name:        "invalid debug flag",
-			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionUsername", "core", "--bastionRsa", "/tmp/key", "--shouldDebug", "invalid"},
+			args:        []string{"--cloud", "mycloud", "--metadata", "/tmp/meta.json", "--bastionRsa", "/tmp/key", "--shouldDebug", "invalid"},
 			expectError: true,
 			errorMsg:    "shouldDebug",
 		},
@@ -833,64 +788,50 @@ func TestParseWatchCreateFlags(t *testing.T) {
 // TestValidateRequiredFlags tests the validateRequiredFlags helper function
 func TestValidateRequiredFlags(t *testing.T) {
 	tests := []struct {
-		name             string
-		cloud            string
-		metadata         string
-		bastionUsername  string
-		bastionRsa       string
-		expectError      bool
-		errorMsg         string
+		name        string
+		cloud       string
+		metadata    string
+		bastionRsa  string
+		expectError bool
+		errorMsg    string
 	}{
 		{
-			name:            "all flags valid",
-			cloud:           "mycloud",
-			metadata:        "/tmp/metadata.json",
-			bastionUsername: "core",
-			bastionRsa:      "/tmp/key.rsa",
-			expectError:     false,
+			name:        "all flags valid",
+			cloud:       "mycloud",
+			metadata:    "/tmp/metadata.json",
+			bastionRsa:  "/tmp/key.rsa",
+			expectError: false,
 		},
 		{
-			name:            "empty cloud",
-			cloud:           "",
-			metadata:        "/tmp/metadata.json",
-			bastionUsername: "core",
-			bastionRsa:      "/tmp/key.rsa",
-			expectError:     true,
-			errorMsg:        "cloud name is required",
+			name:        "empty cloud",
+			cloud:       "",
+			metadata:    "/tmp/metadata.json",
+			bastionRsa:  "/tmp/key.rsa",
+			expectError: true,
+			errorMsg:    "cloud name is required",
 		},
 		{
-			name:            "empty metadata",
-			cloud:           "mycloud",
-			metadata:        "",
-			bastionUsername: "core",
-			bastionRsa:      "/tmp/key.rsa",
-			expectError:     true,
-			errorMsg:        "metadata file location is required",
+			name:        "empty metadata",
+			cloud:       "mycloud",
+			metadata:    "",
+			bastionRsa:  "/tmp/key.rsa",
+			expectError: true,
+			errorMsg:    "metadata file location is required",
 		},
 		{
-			name:            "empty bastionUsername",
-			cloud:           "mycloud",
-			metadata:        "/tmp/metadata.json",
-			bastionUsername: "",
-			bastionRsa:      "/tmp/key.rsa",
-			expectError:     true,
-			errorMsg:        "bastion username is required",
-		},
-		{
-			name:            "empty bastionRsa",
-			cloud:           "mycloud",
-			metadata:        "/tmp/metadata.json",
-			bastionUsername: "core",
-			bastionRsa:      "",
-			expectError:     true,
-			errorMsg:        "bastion RSA key is required",
+			name:        "empty bastionRsa",
+			cloud:       "mycloud",
+			metadata:    "/tmp/metadata.json",
+			bastionRsa:  "",
+			expectError: true,
+			errorMsg:    "bastion RSA key is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var preLog strings.Builder
-			err := validateRequiredFlags(&preLog, tt.cloud, tt.metadata, tt.bastionUsername, tt.bastionRsa)
+			err := validateRequiredFlags(&preLog, tt.cloud, tt.metadata, tt.bastionRsa)
 
 			if tt.expectError {
 				if err == nil {
@@ -997,10 +938,9 @@ func TestBuildComponentList(t *testing.T) {
 		{
 			name: "minimal components (VMs and LB only)",
 			config: &watchCreateConfig{
-				cloud:           "mycloud",
-				metadata:        "/tmp/meta.json",
-				bastionUsername: "core",
-				bastionRsa:      "/tmp/key",
+				cloud:    "mycloud",
+				metadata: "/tmp/meta.json",
+				bastionRsa: "/tmp/key",
 			},
 			expectedCount: 2,
 			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
@@ -1019,11 +959,10 @@ func TestBuildComponentList(t *testing.T) {
 		{
 			name: "with kubeconfig",
 			config: &watchCreateConfig{
-				cloud:           "mycloud",
-				metadata:        "/tmp/meta.json",
-				bastionUsername: "core",
-				bastionRsa:      "/tmp/key",
-				kubeConfig:      "/tmp/kubeconfig",
+				cloud:      "mycloud",
+				metadata:   "/tmp/meta.json",
+				bastionRsa: "/tmp/key",
+				kubeConfig: "/tmp/kubeconfig",
 			},
 			expectedCount: 3,
 			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
@@ -1039,11 +978,10 @@ func TestBuildComponentList(t *testing.T) {
 		{
 			name: "with baseDomain",
 			config: &watchCreateConfig{
-				cloud:           "mycloud",
-				metadata:        "/tmp/meta.json",
-				bastionUsername: "core",
-				bastionRsa:      "/tmp/key",
-				baseDomain:      "example.com",
+				cloud:      "mycloud",
+				metadata:   "/tmp/meta.json",
+				bastionRsa: "/tmp/key",
+				baseDomain: "example.com",
 			},
 			expectedCount: 3,
 			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
@@ -1059,12 +997,11 @@ func TestBuildComponentList(t *testing.T) {
 		{
 			name: "all components",
 			config: &watchCreateConfig{
-				cloud:           "mycloud",
-				metadata:        "/tmp/meta.json",
-				bastionUsername: "core",
-				bastionRsa:      "/tmp/key",
-				kubeConfig:      "/tmp/kubeconfig",
-				baseDomain:      "example.com",
+				cloud:      "mycloud",
+				metadata:   "/tmp/meta.json",
+				bastionRsa: "/tmp/key",
+				kubeConfig: "/tmp/kubeconfig",
+				baseDomain: "example.com",
 			},
 			expectedCount: 4,
 			checkComponents: func(t *testing.T, components []NewRunnableObjectsEntry) {
@@ -1158,14 +1095,13 @@ func TestQueryComponentStatus(t *testing.T) {
 // TestWatchCreateConfig tests the watchCreateConfig structure
 func TestWatchCreateConfig(t *testing.T) {
 	config := &watchCreateConfig{
-		cloud:           "testcloud",
-		metadata:        "/path/to/metadata.json",
-		kubeConfig:      "/path/to/kubeconfig",
-		bastionUsername: "testuser",
-		bastionRsa:      "/path/to/key.rsa",
-		baseDomain:      "test.example.com",
-		apiKey:          "test-api-key",
-		shouldDebug:     true,
+		cloud:       "testcloud",
+		metadata:    "/path/to/metadata.json",
+		kubeConfig:  "/path/to/kubeconfig",
+		bastionRsa:  "/path/to/key.rsa",
+		baseDomain:  "test.example.com",
+		apiKey:      "test-api-key",
+		shouldDebug: true,
 	}
 
 	// Verify all fields are accessible
@@ -1177,9 +1113,6 @@ func TestWatchCreateConfig(t *testing.T) {
 	}
 	if config.kubeConfig != "/path/to/kubeconfig" {
 		t.Errorf("Expected kubeConfig '/path/to/kubeconfig', got %q", config.kubeConfig)
-	}
-	if config.bastionUsername != "testuser" {
-		t.Errorf("Expected bastionUsername 'testuser', got %q", config.bastionUsername)
 	}
 	if config.bastionRsa != "/path/to/key.rsa" {
 		t.Errorf("Expected bastionRsa '/path/to/key.rsa', got %q", config.bastionRsa)
