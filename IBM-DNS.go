@@ -60,6 +60,10 @@ var requiredDNSPatterns = []dnsRecordPattern{
 	{"api", "External API endpoint"},
 	{"*.apps", "Application routes wildcard"},
 }
+var requiredWildcards = []dnsRecordPattern{
+	{"console-openshift-console.apps", "Console application routes wildcard"},
+	{"oauth-openshift.apps", "Oauth application routes wildcard"},
+}
 
 // IBMDNS manages IBM Cloud DNS services for OpenShift cluster deployment.
 // It handles both DNS Services (dnssvcsv1) and DNS Records (dnsrecordsv1) operations.
@@ -797,22 +801,41 @@ func (dns *IBMDNS) ClusterStatus() error {
 			return fmt.Errorf("ClusterStatus: Missing required record: %s (%s)", recordName, req.description)
 		}
 
-		// Validate that the DNS record actually resolves
-		log.Debugf("ClusterStatus: Validating DNS resolution for: %s", recordName)
-		addrs, err := net.LookupHost(recordName)
-		if err != nil {
-			fmt.Printf("%s is NOTOK. DNS record %s exists but does not resolve: %v\n",
-				IBMDNSName, recordName, err)
-			return fmt.Errorf("ClusterStatus: Record %s does not resolve: %w", recordName, err)
-		}
+		if req.pattern == "*.apps" {
+			for _, wc := range requiredWildcards {
+				// Validate that the DNS record actually resolves
+				wcRecordName := fmt.Sprintf("%s.%s.%s", wc.pattern, clusterName, baseDomain)
+				log.Debugf("ClusterStatus: Validating DNS resolution for: %s", wcRecordName)
+				addrs, err := net.LookupHost(wcRecordName)
+				if err != nil {
+					fmt.Printf("%s is NOTOK. DNS record %s exists but does not resolve: %v\n",
+						IBMDNSName, wcRecordName, err)
+					return fmt.Errorf("ClusterStatus: Record %s does not resolve: %w", wcRecordName, err)
+				}
+				if len(addrs) == 0 {
+					fmt.Printf("%s is NOTOK. DNS record %s resolves to no addresses\n",
+						IBMDNSName, wcRecordName)
+					return fmt.Errorf("ClusterStatus: Record %s has no addresses", wcRecordName)
+				}
+			}
+		} else {
+			// Validate that the DNS record actually resolves
+			log.Debugf("ClusterStatus: Validating DNS resolution for: %s", recordName)
+			addrs, err := net.LookupHost(recordName)
+			if err != nil {
+				fmt.Printf("%s is NOTOK. DNS record %s exists but does not resolve: %v\n",
+					IBMDNSName, recordName, err)
+				return fmt.Errorf("ClusterStatus: Record %s does not resolve: %w", recordName, err)
+			}
+	
+			if len(addrs) == 0 {
+				fmt.Printf("%s is NOTOK. DNS record %s resolves to no addresses\n",
+					IBMDNSName, recordName)
+				return fmt.Errorf("ClusterStatus: Record %s has no addresses", recordName)
+			}
 
-		if len(addrs) == 0 {
-			fmt.Printf("%s is NOTOK. DNS record %s resolves to no addresses\n",
-				IBMDNSName, recordName)
-			return fmt.Errorf("ClusterStatus: Record %s has no addresses", recordName)
+			log.Debugf("ClusterStatus: Record %s resolves to %d address(es): %v", recordName, len(addrs), addrs)
 		}
-
-		log.Debugf("ClusterStatus: Record %s resolves to %d address(es): %v", recordName, len(addrs), addrs)
 	}
 
 	fmt.Printf("%s is OK.\n", IBMDNSName)
