@@ -266,5 +266,5 @@ func (oc *Oc) ClusterStatus() error {
 //   - int: Priority value (-1 for no specific priority)
 //   - error: Always nil for this implementation
 func (oc *Oc) Priority() (int, error) {
-	return -1, nil
+	return 1, nil
 }

@@ -440,5 +440,5 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 //   - int: Priority value (-1 for no specific priority)
 //   - error: Always nil (no errors possible)
 func (lbs *LoadBalancer) Priority() (int, error) {
-	return -1, nil
+	return 9, nil
 }

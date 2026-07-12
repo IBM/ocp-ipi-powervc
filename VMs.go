@@ -342,5 +342,5 @@ func (vms *VMs) ClusterStatus() error {
 //   - int: Priority value (-1 for no specific priority)
 //   - error: Always nil for this implementation
 func (vms *VMs) Priority() (int, error) {
-	return -1, nil
+	return 10, nil
 }

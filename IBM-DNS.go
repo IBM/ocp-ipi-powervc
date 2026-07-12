@@ -874,5 +874,5 @@ func (dns *IBMDNS) ClusterStatus() error {
 //   - int: Priority value (-1 for no specific priority)
 //   - error: Always nil for this implementation
 func (dns *IBMDNS) Priority() (int, error) {
-	return -1, nil
+	return 8, nil
 }
