@@ -16,8 +16,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
@@ -46,6 +52,15 @@ const (
 	// Hypervisor status constants
 	hypervisorStatusNA = statusNotAvailable
 )
+
+// kubeletClient is a package-level HTTP client reused across all checkKubelet
+// calls to allow connection reuse and avoid re-allocating TLS state each time.
+var kubeletClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // no kubelet client certs available
+	},
+}
 
 // VMs manages virtual machine status checking for OpenShift cluster nodes.
 // It implements the RunnableObject interface for cluster lifecycle management.
@@ -182,6 +197,7 @@ func (vms *VMs) ClusterStatus() error {
 		allServers     []servers.Server
 		server         servers.Server
 		allHypervisors []hypervisors.Hypervisor
+		hasError       = false
 		err            error
 	)
 
@@ -262,7 +278,9 @@ func (vms *VMs) ClusterStatus() error {
 
 		macAddress, ipAddress, err = findIpAddress(server)
 		if err != nil {
-			log.Debugf("ClusterStatus: findIpAddress for server %s returned error: %v", server.Name, err)
+			hasError = true
+			fmt.Printf("%s is NOTOK. Could not find IP address for %s\n", VMsName, server.Name)
+
 			// Continue to show server info even without IP address
 			macAddress = networkStatusNA
 			ipAddress = networkStatusNA
@@ -286,7 +304,8 @@ func (vms *VMs) ClusterStatus() error {
 				sshAlive = sshStatusAlive
 				log.Debugf("ClusterStatus: SSH is alive for server %s at %s", server.Name, ipAddress)
 			} else {
-				log.Debugf("ClusterStatus: SSH check failed for server %s at %s: %v", server.Name, ipAddress, err)
+				hasError = true
+				fmt.Printf("%s is NOTOK. SSH check failed for server %s at %s\n", VMsName, server.Name, ipAddress)
 			}
 		}
 
@@ -312,7 +331,14 @@ func (vms *VMs) ClusterStatus() error {
 			log.Debugf("ClusterStatus: server %s has no hypervisor hostname", server.Name)
 		}
 
-		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), and ssh status (%s), and hypervisor (%s)\n",
+		kubeletOk, kubeletStatus := checkKubelet(ctx, ipAddress, 10250)
+
+		kubeletStr := kubeletStatus
+		if !kubeletOk {
+			kubeletStr = "DEAD (" + kubeletStatus + ")"
+		}
+
+		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), ssh status (%s), hypervisor (%s), kubelet (%s)\n",
 			VMsName,
 			server.Name,
 			server.Status,
@@ -321,6 +347,7 @@ func (vms *VMs) ClusterStatus() error {
 			ipAddress,
 			sshAlive,
 			hypervisorName,
+			kubeletStr,
 		)
 		fmt.Println()
 	}
@@ -329,6 +356,12 @@ func (vms *VMs) ClusterStatus() error {
 
 	if clusterServerCount == 0 {
 		fmt.Printf("%s: Warning: No servers found for cluster with infraID %s\n", VMsName, infraID)
+	}
+
+	if hasError {
+		fmt.Printf("%s is NOTOK.\n", VMsName)
+	} else {
+		fmt.Printf("%s is OK.\n", VMsName)
 	}
 
 	return nil
@@ -343,4 +376,39 @@ func (vms *VMs) ClusterStatus() error {
 //   - error: Always nil for this implementation
 func (vms *VMs) Priority() (int, error) {
 	return 10, nil
+}
+
+// checkKubelet probes the kubelet on the given node IP and port to determine
+// whether it is reachable and healthy. It issues an HTTPS GET to /healthz.
+// TLS verification is skipped because no kubelet client certificates are
+// available. HTTP 200 is treated as healthy; 401/403 indicate the kubelet is
+// running but requires authentication, which is also considered healthy.
+// The provided context controls the lifetime of the request.
+//
+// Returns (true, reason) when the kubelet is considered up, or (false, reason)
+// when it is unreachable or returns an unexpected status code.
+func checkKubelet(ctx context.Context, nodeIP string, port int) (bool, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+net.JoinHostPort(nodeIP, strconv.Itoa(port))+"/healthz", nil)
+	if err != nil {
+		return false, fmt.Sprintf("kubelet: failed to build request: %v", err)
+	}
+	resp, err := kubeletClient.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("kubelet not reachable: %v", err)
+	}
+	// Drain before Close so the connection can be reused by kubeletClient.
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	resp.Body.Close()
+
+	// 401/403 = kubelet is running (auth required)
+	// 200 = kubelet is running (unlikely without certs, but possible)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, "kubelet is healthy"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// return true, "kubelet is running (auth required)"
+		return true, "kubelet is running"
+	default:
+		return false, fmt.Sprintf("unexpected status: %d", resp.StatusCode)
+	}
 }
