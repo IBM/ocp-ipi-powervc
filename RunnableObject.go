@@ -226,7 +226,7 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 			nroe.Name = "Unknown"
 		}
 
-		fmt.Fprintf(os.Stderr, "Querying the %s...\n", nroe.Name)
+		fmt.Fprintf(os.Stderr, "[INFO] Querying the %s...\n", nroe.Name)
 		log.Debugf("initializeRunnableObjects: Creating %s objects", nroe.Name)
 
 		// Call the New function.
@@ -299,7 +299,7 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 			log.Debugf("initializeRunnableObjects: Could not get name for object %d: %v", i, err)
 		}
 
-		fmt.Fprintf(os.Stderr, "Running the %s...\n", robjObjectName)
+		fmt.Fprintf(os.Stderr, "[INFO] Running the %s...\n", robjObjectName)
 		log.Debugf("initializeRunnableObjects: Running %s (object %d of %d)", robjObjectName, i+1, len(robjsCluster))
 
 		if err := robj.Run(); err != nil {
