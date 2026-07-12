@@ -766,6 +766,20 @@ func (dns *IBMDNS) ClusterStatus() error {
 		return fmt.Errorf("ClusterStatus: Base domain is empty")
 	}
 
+	ctx, cancel := dns.services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", IBMDNSName)
+		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
+	}
+	defer cancel()
+
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	records, err := dns.listIBMDNSRecords()
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Could not list DNS records: %v\n", IBMDNSName, err)
@@ -783,6 +797,13 @@ func (dns *IBMDNS) ClusterStatus() error {
 
 	// Validate each required DNS record pattern
 	for _, req := range requiredDNSPatterns {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		recordName := fmt.Sprintf("%s.%s.%s", req.pattern, clusterName, baseDomain)
 		log.Debugf("ClusterStatus: Checking for %s record: %s", req.description, recordName)
 

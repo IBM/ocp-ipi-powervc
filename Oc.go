@@ -188,11 +188,25 @@ func (oc *Oc) ClusterStatus() error {
 		},
 	}
 
+	ctx, cancel := oc.services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", OcName)
+		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
+	}
+	defer cancel()
+
 	log.Debugf("ClusterStatus: Running %d single commands", len(cmds))
 	successCount := 0
 	failCount := 0
 
 	for i, cmd := range cmds {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		log.Debugf("ClusterStatus: Running command %d/%d: %s", i+1, len(cmds), cmd)
 		if err := runCommand(kubeConfig, cmd); err != nil {
 			fmt.Printf("Error: could not run command: %v\n", err)
@@ -210,6 +224,13 @@ func (oc *Oc) ClusterStatus() error {
 	pipeFailCount := 0
 
 	for i, twoCmds := range pipeCmds {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if len(twoCmds) != 2 {
 			fmt.Printf("Error: invalid pipeline command at index %d (expected 2 commands, got %d)\n", i, len(twoCmds))
 			log.Debugf("ClusterStatus: Invalid pipeline command at index %d", i)

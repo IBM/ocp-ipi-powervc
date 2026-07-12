@@ -221,6 +221,13 @@ func (vms *VMs) ClusterStatus() error {
 	}
 	log.Debugf("ClusterStatus: Retrieved %d servers", len(allServers))
 
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	allHypervisors, err = getAllHypervisors(ctx, connCompute)
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to get hypervisors: %v\n", VMsName, err)
@@ -239,6 +246,13 @@ func (vms *VMs) ClusterStatus() error {
 			hypervisor hypervisors.Hypervisor
 		)
 
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if !strings.HasPrefix(strings.ToLower(server.Name), strings.ToLower(infraID)) {
 			log.Debugf("ClusterStatus: SKIPPING server = %s (not part of cluster)", server.Name)
 			continue
@@ -256,6 +270,13 @@ func (vms *VMs) ClusterStatus() error {
 			log.Debugf("ClusterStatus: findIpAddress for server %s returned %s and %s", server.Name, macAddress, ipAddress)
 		}
 
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if ipAddress != networkStatusNA {
 			sshAlive = sshStatusDead
 
@@ -270,6 +291,13 @@ func (vms *VMs) ClusterStatus() error {
 		}
 
 		hypervisorName := hypervisorStatusNA
+
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
 		if server.HypervisorHostname != "" {
 			log.Debugf("ClusterStatus: server.HypervisorHostname = %s", server.HypervisorHostname)

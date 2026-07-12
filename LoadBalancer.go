@@ -238,7 +238,18 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	}
 
 	ctx, cancel = lbs.services.GetContextWithTimeout()
+	if ctx == nil || cancel == nil {
+		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", LoadBalancerName)
+		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
+	}
 	defer cancel()
+
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
 	clusterName = lbs.services.GetMetadata().GetClusterName()
 	log.Debugf("ClusterStatus: clusterName = %s", clusterName)
@@ -259,6 +270,13 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	}
 	log.Debugf("ClusterStatus: FOUND server = %s", server.Name)
 
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	_, ipAddress, err = findIpAddress(server)
 	if err != nil {
 		return fmt.Errorf("%s: Error: failed to find IP address: %v\n", LoadBalancerName, err)
@@ -268,9 +286,23 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	}
 	log.Debugf("ClusterStatus: ipAddress = %s", ipAddress)
 
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Check SSH connectivity using ssh-keyscan with retry logic
 	log.Printf("[INFO] Checking SSH connectivity to bastion at %s", ipAddress)
 	err = retrySshWithBackoff(func() error {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var sshErr error
 		outb, sshErr = runSplitCommand2([]string{
 			sshKeyscanCmd,
@@ -302,6 +334,13 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 		return fmt.Errorf("%s: Error: failed to add server to known hosts: %v\n", LoadBalancerName, err)
 	}
 
+	// Have we run out of time?
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Retrieve HAProxy configuration with retry logic
 	log.Printf("[INFO] Retrieving HAProxy configuration from bastion")
 	installerRsa := lbs.services.GetInstallerRsa()
@@ -316,6 +355,13 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	}
 
 	err = retrySshWithBackoff(func() error {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var configErr error
 		outb, configErr = runSplitCommand2([]string{
 			sshCmd,
@@ -345,6 +391,13 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 	// Retrieve HAProxy service status with retry logic
 	log.Printf("[INFO] Retrieving HAProxy service status from bastion")
 	err = retrySshWithBackoff(func() error {
+		// Have we run out of time?
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var statusErr error
 		outb, statusErr = runSplitCommand2([]string{
 			sshCmd,
