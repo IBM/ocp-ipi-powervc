@@ -542,7 +542,8 @@ func queryComponentStatus(ctx context.Context, robjsCluster []RunnableObject) er
 		if err != nil {
 			robjObjectName = fmt.Sprintf("unknown-component-%d", i)
 		}
-		log.Printf("[INFO] Querying status of component %d/%d: %s", i+1, len(robjsCluster), robjObjectName)
+
+		fmt.Fprintf(os.Stderr, "[INFO] Querying status of component %d/%d: %s\n", i+1, len(robjsCluster), robjObjectName)
 
 		err = robj.ClusterStatus()
 		if err != nil {
