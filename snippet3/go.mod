@@ -6,7 +6,7 @@ require (
 	github.com/gophercloud/gophercloud/v2 v2.13.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
 	github.com/sirupsen/logrus v1.9.4
-	k8s.io/apimachinery v0.36.2
+	k8s.io/apimachinery v0.36.3
 )
 
 require (
