@@ -455,11 +455,11 @@ fi
 #==============================================================================
 
 # Server names follow the pattern: p-<hash>-<cluster_name>-(master|worker|bootstrap)[N]
-declare -A seen             # cluster_name -> 1
-declare -a clusters         # ordered list of unique cluster names
-declare -A master_count     # cluster_name -> integer
-declare -A worker_count     # cluster_name -> integer
-declare -A bootstrap_count  # cluster_name -> integer
+declare -A seen=()          # cluster_name -> 1
+declare -a clusters=()      # ordered list of unique cluster names
+declare -A master_count=()  # cluster_name -> integer
+declare -A worker_count=()  # cluster_name -> integer
+declare -A bootstrap_count=() # cluster_name -> integer
 
 # Iterate from index 1 to skip the CSV header — no subshell or tail fork needed.
 for (( _i=1; _i<${#_csv_lines[@]}; _i++ )); do
