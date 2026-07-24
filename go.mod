@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.13.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
-	github.com/openshift/api v0.0.0-20260713141437-2dd36ba36332
+	github.com/openshift/api v0.0.0-20260724095150-18550f1a6d13
 	github.com/sirupsen/logrus v1.9.4
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
@@ -52,7 +52,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.35.1 // indirect
+	k8s.io/api v0.36.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260519202549-bbf5c5577288 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
