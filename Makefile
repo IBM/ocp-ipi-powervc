@@ -104,6 +104,14 @@ install: build ## Install the binary to GOPATH/bin
 	@cp $(OUTPUT_BINARY) $(GOPATH)/bin/$(BINARY_NAME)
 	@echo "Installation complete"
 
+.PHONY: init-snippets
+init-snippets: ## Initialize Go modules for all snippet directories
+	@for dir in snippet*/; do \
+		echo "Initializing $$dir module..."; \
+		(cd $$dir && rm -f go.mod go.sum && $(GO) mod init example/user/$$(basename $$dir) && $(GO) mod tidy); \
+		echo "$$dir module initialized"; \
+	done
+
 .PHONY: init-jobhistory
 init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 	@echo "Initializing JobHistory module..."
