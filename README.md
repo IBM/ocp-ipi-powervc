@@ -3,11 +3,13 @@ A useful tool to create and check OpenShift clusters on IBM Cloud PowerVC.
 
 To install an OpenShift cluster, please head to the main documentation root [here](https://github.com/IBM/ocp-ipi-powervc/tree/main/docs).
 
-CLI options:
+CLI commands:
 - [check-alive](https://github.com/IBM/ocp-ipi-powervc/tree/main#check-alive)
 - [create-bastion](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-bastion)
-- [create-cluster](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-cluster)
 - [create-rhcos](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-rhcos)
+- [delete-bastion](https://github.com/IBM/ocp-ipi-powervc/tree/main#delete-bastion)
+- [erase-metadata](https://github.com/IBM/ocp-ipi-powervc/tree/main#erase-metadata)
+- [rhcos-exists](https://github.com/IBM/ocp-ipi-powervc/tree/main#rhcos-exists)
 - [send-metadata](https://github.com/IBM/ocp-ipi-powervc/tree/main#send-metadata)
 - [watch-create](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-create)
 - [watch-installation](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-installation)
@@ -18,13 +20,13 @@ This will check if the [controller](https://github.com/IBM/ocp-ipi-powervc/blob/
 
 Example usage:
 ```
-$ ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip} -shouldDebug false
+$ ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip} --shouldDebug false
 ```
 
 args:
-- `serverIP` The IP address of the controller.
+- `serverIP` The IP address or hostname of the controller.
 
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 ## create-bastion
 
@@ -44,6 +46,10 @@ args:
 
 - `bastionName` The name of the VM to use which should match the OpenShift cluster name.
 
+- `bastionRsa` The SSH private key file for the bastion VM.
+
+- `availabilityZone` The name of the OpenStack availability zone (defaults to `s1022`).
+
 - `flavorName` The OpenStack flavor to create the VM with.
 
 - `imageName` The OpenStack image to create the VM with.
@@ -58,24 +64,11 @@ args:
 
 - `serverIP` The IP address of the controller.
 
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `bastionIpFile` The filename to write the bastion IP address to (defaults to `/tmp/bastionIp`).
 
-## create-cluster
+- `passwdHash` The password hash used in the CoreOS ignition file. (optional)
 
-NOTE: DEPRECATED
-
-This was a development tool used during the initial investigation.  It takes a powervc `install-config.yaml`, converts it to a openstack configuration, calls the IPI installer, and then converts the generated files to work on a PowerVC setup.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 create-cluster --directory ${directory} --shouldDebug true
-```
-
-args:
-- `directory` location to use the IPI installer
-
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 ## create-rhcos
 
@@ -95,6 +88,8 @@ args:
 
 - `rhcosName` The name of the VM to use which should match the OpenShift cluster name.
 
+- `availabilityZone` The name of the OpenStack availability zone (defaults to `s1022`).
+
 - `flavorName` The OpenStack flavor to create the VM with.
 
 - `imageName` The OpenStack image to create the VM with.
@@ -103,11 +98,66 @@ args:
 
 - `passwdHash` The password hash of the core user.
 
-- `sshPublicKey` The OpenStack ssh keyname to create the VM with.
+- `sshPublicKey` The SSH public key contents to inject into the VM.
 
-- `domainName` The DNS domain name for the bastion. (optional)
+- `domainName` The DNS domain name for the VM. (optional)
 
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `timeout` Maximum duration for the operation (defaults to `15m`).
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
+
+## delete-bastion
+
+This will delete an existing bastion HAProxy VM.
+
+Example usage:
+
+```
+$ ocp-ipi-powervc-linux-amd64 delete-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --shouldDebug true
+```
+
+args:
+- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
+
+- `bastionName` The name of the bastion VM to delete.
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
+
+## erase-metadata
+
+This will erase cluster metadata entries matching a pattern from a remote server.
+
+Example usage:
+
+```
+$ ocp-ipi-powervc-linux-amd64 erase-metadata --pattern "test-*" --serverIP ${controller_ip} --timeout 5m --shouldDebug true
+```
+
+args:
+- `pattern` Pattern to match metadata entries for deletion (e.g., `test-*`, `staging-*`).
+
+- `serverIP` The IP address of the controller.
+
+- `timeout` Timeout for the erase operation (defaults to `1m`, e.g., `5m`, `10m`, `30s`).
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
+
+## rhcos-exists
+
+This will verify that a named RHCOS image exists in the OpenStack cloud.  If the image is not found, all available images are listed to help diagnose naming issues.
+
+Example usage:
+
+```
+$ ocp-ipi-powervc-linux-amd64 rhcos-exists --cloud ${cloud_name} --imageName ${image_name} --shouldDebug false
+```
+
+args:
+- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
+
+- `imageName` The name of the RHCOS image to search for (case-sensitive, exact match).
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 ## send-metadata
 
@@ -121,15 +171,19 @@ $ ocp-ipi-powervc-linux-amd64 send-metadata --createMetadata ${directory}/metada
 
 args:
 
-- `createMetadata` Tells the server to create a local copy of this metadata.json file.
+- `createMetadata` Tells the server to create a local copy of this metadata.json file (mutually exclusive with `deleteMetadata`).
 
-- `deleteMetadata` Tells the server to delete a local copy of this metadata.json file.
+- `deleteMetadata` Tells the server to delete a local copy of this metadata.json file (mutually exclusive with `createMetadata`).
 
 - `serverIP` The IP address of the controller.
 
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `timeout` Timeout for the send operation (defaults to `1m`, e.g., `5m`, `10m`, `30s`).
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 ## watch-create
+
+This monitors and displays the status of cluster resources during and after cluster creation.  It queries the state of VMs, the load balancer, and optionally the OpenShift cluster and IBM DNS.
 
 NOTE:
 The environment variable `IBMCLOUD_API_KEY` needs to be set.
@@ -137,7 +191,7 @@ The environment variable `IBMCLOUD_API_KEY` needs to be set.
 Example usage:
 
 ```
-$ ocp-ipi-powervc-linux-amd64 watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false
+$ ocp-ipi-powervc-linux-amd64 watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false
 ```
 
 args:
@@ -145,15 +199,13 @@ args:
 
 - `metadata` the location of the `metadata.json` file created by the IPI OpenShift installer.
 
-- `kubeconfig` the location of the `kubeconfig` file created by the IPI OpenShift installer.
+- `kubeconfig` the location of the `kubeconfig` file created by the IPI OpenShift installer. (optional)
 
-- `bastionUsername` the default username for the HAProxy VM.
+- `bastionRsa` the SSH private key file for the bastion VM.
 
-- `bastionRsa` the SSH private key file for the default username for the HAProxy VM.
+- `baseDomain` the domain name of the OpenShift cluster. (optional)
 
-- `baseDomain` the domain name of the OpenShift cluster.
-
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 ## watch-installation
 
@@ -165,7 +217,7 @@ The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure 
 Example usage:
 
 ```
-$ ocp-ipi-powervc-linux-amd64 watch-installation --cloud ${cloud_name} --domainName ${domain_name} --bastionMetadata ${directory}/metadata.json --bastionUsername ${bastion_username} --bastionRsa ${HOME}/.ssh/id_installer_rsa --dhcpSubnet ${dhcp_subnet} --dhcpNetmask ${dhcp_netmask} --dhcpRouter ${dhcp_router} --dhcpDnsServers "${dhcp_servers}" --shouldDebug true
+$ ocp-ipi-powervc-linux-amd64 watch-installation --cloud ${cloud_name} --domainName ${domain_name} --bastionMetadata ${directory}/metadata.json --bastionRsa ${HOME}/.ssh/id_installer_rsa --dhcpSubnet ${dhcp_subnet} --dhcpNetmask ${dhcp_netmask} --dhcpRouter ${dhcp_router} --dhcpDnsServers "${dhcp_servers}" --shouldDebug true
 ```
 
 args:
@@ -173,13 +225,11 @@ args:
 
 - `domainName` the domain name to use for the OpenShift cluster.
 
-- `bastionMetadata` the location of the `metadata.json` file created by the IPI OpenShift installer.  This parameter can have more than one occurance.
-
-- `bastionUsername` the default username for the HAProxy VM.
+- `bastionMetadata` the location of the `metadata.json` file created by the IPI OpenShift installer.  This parameter can have more than one occurrence.
 
 - `bastionRsa` the SSH private key file for the default username for the HAProxy VM.
 
-- `enableDhcpd` defaults to `false.  Enables updating the locally installed dhcp server.
+- `enableDhcpd` defaults to `false`.  Enables updating the locally installed DHCP server.
 
 - `dhcpInterface` The network interface to listen for DHCPd requests.
 
@@ -193,77 +243,17 @@ args:
 
 - `dhcpServerId` The DNS server identifier for a DHCP request.
 
-- `shouldDebug` defauts to `false`.  This will cause the program to output verbose debugging information.
+- `statsUser` HAProxy stats username (leave empty to disable stats). (optional)
+
+- `statsPassword` HAProxy stats password. (optional)
+
+- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
 
 # Useful scripts
 
-## scripts/create-cluster.sh
+## scripts/build-nightly.sh
 
-This script will create an OpenShift cluster using the IPI installer.
-
-Required environment variables before running this script:
-
-- `BASEDOMAIN` the domain name to use for the OpenShift cluster.
-
-- `BASTION_IMAGE_NAME` the OpenStack image name for the HAProxy VM.
-
-- `BASTION_USERNAME` the default username for the HAProxy VM.
-
-- `BASTION_RSA` the ssh private key for the bastion node.
-
-- `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
-
-- `CLUSTER_NAME` the name prefix to use for the OpenShift cluster which you are installing.
-
-- `CONTROLLER_IP` the IP address of the controller.
-
-- `FLAVOR_NAME` the OpenStack flavor name to use for OpenShift VMs.
-
-- `INSTALLER_SSHKEY` the ssh public key for access to the bootstrap and master nodes.  Usually named `~/.ssh/id_installer_rsa.pub`.
-
-- `MACHINE_TYPE` the PowerPC machine type to use for OpenShift VMs.
-
-- `NETWORK_NAME` the OpenStack network name to use for OpenShift VMs.
-
-- `PULLSECRET_FILE` the filename containing the pull secrets for the OpenShift containers. Usually named `~/.pullSecretCompact`.
-
-- `SSHKEY_NAME` the OpenStack ssh keyname to use for the HAProxy VM.
-
-Required existing files before running this script:
-
-- `~/.pullSecretCompact`
-
-- `~/.ssh/id_installer_rsa.pub`
-
-Required existing binaries before running this script:
-
-- `openshift-install` The OpenShift IPI installer.
-
-- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
-
-- `openstack` The OpenStack CLI tool existing on Fedora/RHEL/CentOS repositories.
-
-- `jq` The JSON query CLI tool found at https://jqlang.org/download/ and existing on Fedora/RHEL/CentOS repositories.
-
-## scripts/delete-cluster.sh
-
-This script will delete an OpenShift cluster using the IPI installer.
-
-Required environment variables before running this script:
-
-- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
-
-- `CONTROLLER_IP` the IP address of the controller.
-
-Required existing binaries before running this script:
-
-- `openshift-install` The OpenShift IPI installer.
-
-- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
-
-- `ping` a Linux admin tool.
+This script downloads a nightly OCP build and sets up the environment for testing.
 
 ## scripts/check-alive.sh
 
@@ -305,10 +295,214 @@ Required existing binaries before running this script:
 
 - `tr` a Linux admin tool.
 
+## scripts/cleanup-containers.sh
+
+This script removes all containers and their objects from an OpenStack cloud.  It processes containers one at a time, deleting all objects before removing the container itself.  Optionally filters by infrastructure ID.
+
+Required environment variables before running this script:
+
+- `CLOUD` the OpenStack cloud name from `clouds.yaml`.
+
+Optional arguments:
+
+- `INFRA_ID` filter containers by infrastructure ID (e.g., `cluster-abc123`).
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
 ## scripts/console.sh
 
 This script will output the ssh command needed to access the console for a VM or OpenShift node name.
 
+## scripts/create-cluster.sh
+
+This script will create an OpenShift cluster using the IPI installer.
+
+Required environment variables before running this script:
+
+- `BASEDOMAIN` the domain name to use for the OpenShift cluster.
+
+- `BASTION_IMAGE_NAME` the OpenStack image name for the HAProxy VM.
+
+- `BASTION_RSA` the ssh private key for the bastion node. (used for failure diagnostics)
+
+- `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
+
+- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files. (defaults to `test`)
+
+- `CLUSTER_NAME` the name prefix to use for the OpenShift cluster which you are installing.
+
+- `CONTROLLER_IP` the IP address of the controller.
+
+- `FLAVOR_NAME` the OpenStack flavor name to use for OpenShift VMs.
+
+- `INSTALLER_SSHKEY` the path to the ssh public key for access to the bootstrap and master nodes.  Usually named `~/.ssh/id_installer_rsa.pub`.
+
+- `MACHINE_TYPE` the PowerPC machine type / availability zone to use for OpenShift VMs.
+
+- `NETWORK_NAME` the OpenStack network name to use for OpenShift VMs.
+
+- `PROJECT` an optional prefix to prepend to the RHCOS image name. (optional)
+
+- `PULL_SECRET` the pull secret content (used inline in install-config). (optional alternative to `PULLSECRET_FILE`)
+
+- `PULLSECRET_FILE` the filename containing the pull secrets for the OpenShift containers. Usually named `~/.pullSecretCompact`.
+
+- `SSHKEY_NAME` the OpenStack ssh keyname to use for the HAProxy VM.
+
+Required existing files before running this script:
+
+- `~/.pullSecretCompact`
+
+- `~/.ssh/id_installer_rsa.pub`
+
+Required existing binaries before running this script:
+
+- `openshift-install` The OpenShift IPI installer.
+
+- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
+
+- `openstack` The OpenStack CLI tool existing on Fedora/RHEL/CentOS repositories.
+
+- `jq` The JSON query CLI tool found at https://jqlang.org/download/ and existing on Fedora/RHEL/CentOS repositories.
+
+- `getent` DNS resolution utility.
+
+- `podman` Container tool used for pull secret validation.
+
+- `ssh-keygen` Used for optional SSH public key validation and controller connectivity check.
+
+- `ping` Used to verify controller connectivity.
+
+## scripts/list-bastions.sh
+
+This script lists bastion (standalone) VMs on PowerVC/OpenStack.  Any server whose name does not match the cluster-node pattern is treated as a bastion VM.
+
+Optional arguments:
+
+- `--cloud <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
+
+- `--bastionRSA <path>` Path to SSH private key for bastion access.  When provided, each listed bastion is probed over SSH and only reachable ones are shown (with the matching username).
+
+Optional environment variables:
+
+- `CLOUD` the OpenStack cloud name from `clouds.yaml` (skips interactive prompt if set).
+
+- `BASTION_RSA` path to SSH private key for bastion access (skips prompt if set).
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
+- `ssh` Required only when `--bastionRSA` is provided.
+
+## scripts/current-servers.sh
+
+This script lists OpenStack servers grouped by cluster and standalone VMs.
+
+Optional arguments:
+
+- `-c <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
+## scripts/delete-cluster.sh
+
+This script will delete an OpenShift cluster using the IPI installer.
+
+Required environment variables before running this script:
+
+- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
+
+- `CONTROLLER_IP` the IP address of the controller.
+
+Required existing binaries before running this script:
+
+- `openshift-install` The OpenShift IPI installer.
+
+- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
+
+- `ping` a Linux admin tool.
+
+## scripts/list-clusters-and-delete.sh
+
+This script lists running OpenShift clusters on PowerVC/OpenStack, prompts the user to select one, and deletes it.
+
+Optional arguments:
+
+- `-c <cloud>` OpenStack cloud name (skips interactive prompt).
+
+- `-l` List clusters only; do not prompt for deletion.
+
+Optional environment variables:
+
+- `CLOUD` the OpenStack cloud name from `clouds.yaml` (skips interactive prompt if set).
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
+- `openshift-install` The OpenShift IPI installer.
+
+## scripts/print-stream-json.sh
+
+This script downloads CoreOS JSON metadata and verifies that RHCOS images exist in OpenStack.  It supports multiple release versions, multiple output formats (text, JSON, CSV), dry-run mode, and RHEL version preference (RHEL 9 or RHEL 10).
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
+- `jq` The JSON query CLI tool.
+
+- `curl` For downloading CoreOS metadata.
+
+## scripts/rename-images.sh
+
+This script bulk-renames RHCOS images in OpenStack by adding a project prefix to their names.
+
+Required existing binaries before running this script:
+
+- `openstack` The OpenStack CLI tool.
+
 ## scripts/ssh.sh
 
 This script will output the ssh command needed to access a specific OpenShift node.
+
+## scripts/upload-rhcos.sh
+
+This script downloads and uploads RHCOS images to PowerVC/OpenStack.  It handles multiple release versions, supports both RHEL 9 and RHEL 10 based images, converts images with `pvsadm`, and imports them via `pvcctl` or `powervc-image`.
+
+Required existing binaries before running this script:
+
+- `curl` For downloading files and checking URLs.
+
+- `jq` The JSON query CLI tool.
+
+- `openstack` The OpenStack CLI tool.
+
+- `pvsadm` For converting qcow2 images to OVA format.
+
+- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+
+## scripts/wait-for-dns.sh
+
+This script polls DNS servers to verify that all required DNS entries for an OpenShift cluster are resolvable before proceeding with installation.  It checks wildcard DNS entries (`*.apps`), the API endpoint, and the internal API endpoint.
+
+Required environment variables before running this script:
+
+- `CLUSTER_DIR` directory containing cluster metadata (prompts if not set).
+
+- `BASEDOMAIN` base domain for the cluster (prompts if not set).
+
+Required existing files before running this script:
+
+- `${CLUSTER_DIR}/metadata.json` Cluster metadata containing the cluster name.
+
+Required existing binaries before running this script:
+
+- `jq` The JSON query CLI tool.
+
+- `getent` DNS resolution utility.
