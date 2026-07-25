@@ -167,8 +167,9 @@ const (
 	// Command name constants
 	cmdCheckAlive        = "check-alive"
 	cmdCreateBastion     = "create-bastion"
+//	cmdCreateCluster     = "broken-create-cluster"
 	cmdCreateRhcos       = "create-rhcos"
-	cmdCreateCluster     = "broken-create-cluster"
+	cmdDeleteBastion     = "delete-bastion"
 	cmdEraseMetadata     = "erase-metadata"
 	cmdRhcosExists       = "rhcos-exists"
 	cmdSendMetadata      = "send-metadata"
@@ -236,8 +237,9 @@ var (
 	commands = []Command{
 		{cmdCheckAlive,        "Check if cluster nodes are alive"},
 		{cmdCreateBastion,     "Create bastion host"},
+//		{cmdCreateCluster,     "Create OpenShift cluster"},
 		{cmdCreateRhcos,       "Create RHCOS image"},
-		{cmdCreateCluster,     "Create OpenShift cluster"},
+		{cmdDeleteBastion,     "Delete bastion host"},
 		{cmdEraseMetadata,     "Erase metadata matching pattern from server"},
 		{cmdRhcosExists,       "Verifies RHCOS image exists"},
 		{cmdSendMetadata,      "Send metadata to cluster"},
@@ -251,7 +253,8 @@ var (
 	commandHandlers = map[string]CommandHandler{
 		cmdCheckAlive:        checkAliveCommand,
 		cmdCreateBastion:     createBastionCommand,
-		cmdCreateCluster:     createClusterCommand,
+//		cmdCreateCluster:     createClusterCommand,
+		cmdDeleteBastion:     deleteBastionCommand,
 		cmdCreateRhcos:       createRhcosCommand,
 		cmdEraseMetadata:     eraseMetadataCommand,
 		cmdRhcosExists:       rhcosExistsCommand,
