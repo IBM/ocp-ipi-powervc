@@ -1104,7 +1104,7 @@ function main() {
 	local url
 	local build_date
 	local sha1_hash
-	local filename
+	local qcow_filename
 	local imagename
 
 	start_time=$(date +%s)
@@ -1139,13 +1139,17 @@ function main() {
 	# Step 4: Derive the bare filename from the URL, then strip the .qcow2
 	# extension to produce the image name used in OpenStack/PowerVC.
 	# e.g. https://.../CentOS-Stream-GenericCloud-9-20260720.0.ppc64le.qcow2
-	#   -> filename  = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le.qcow2
-	#   -> imagename = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le
-	filename=$(basename "${url}")
-	echo "filename=${filename}"
+	#   -> qcow_filename  = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le.qcow2
+	#   -> imagename      = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le
+	#   -> ovagz_filename = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le.ova.gz
+	qcow_filename=$(basename "${url}")
+	echo "qcow_filename=${qcow_filename}"
 
-	imagename="${filename%.qcow2}"
+	imagename="${qcow_filename%.qcow2}"
 	echo "imagename=${imagename}"
+
+	ovagz_filename="${imagename}.ova.gz"
+	echo "ovagz_filename=${ovagz_filename}"
 
 	# Step 5: Check whether the image already exists in OpenStack/PowerVC.
 	# If it does not exist, it needs to be converted and uploaded.
@@ -1158,12 +1162,12 @@ function main() {
 		fi
 
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
-			if ! call_pvcctl ${filename}; then
+			if ! call_pvcctl ${imagename}; then
 				log_error "pvcctl failed!"
 				return 1
 			fi
 		else
-			if ! call_powervc_image ${filename}; then
+			if ! call_powervc_image ${imagename}; then
 				log_error "call_powervc_image failed!"
 				return 1
 			fi
@@ -1180,17 +1184,6 @@ function main() {
 if [[ ! -v DEBUG ]]; then
 	DEBUG=false
 fi
-
-# Create temporary files for JSON processing
-# FILE1: Stores the downloaded CoreOS JSON metadata
-# FILE2: Stores extracted OpenStack-specific artifacts from FILE1
-FILE1=$(mktemp)
-FILE2=$(mktemp)
-
-# Register cleanup handler to remove temporary files on script exit
-# This ensures cleanup happens even if script exits due to error
-# EXIT trap is triggered on normal exit, error exit, or signal termination
-trap "/bin/rm -rf ${FILE1} ${FILE2}" EXIT
 
 #==============================================================================
 # Script Entry Point
