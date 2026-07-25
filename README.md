@@ -471,6 +471,43 @@ Required existing binaries before running this script:
 
 This script will output the ssh command needed to access a specific OpenShift node.
 
+## scripts/upload-centos.sh
+
+This script downloads and uploads CentOS Stream GenericCloud images to PowerVC/OpenStack.  It resolves the latest dated `.qcow2` image for either CentOS Stream 9 or CentOS Stream 10 (ppc64le) from the official CentOS cloud mirror, verifies its SHA1 checksum, derives the image name, checks whether the image already exists in OpenStack, and if not converts it with `pvsadm` and imports it via `pvcctl` or `powervc-image`.
+
+Required environment variables before running this script:
+
+- `CLOUD` OpenStack cloud name from `~/.config/openstack/clouds.yaml` (or `--cloud`).
+
+- `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (or `--project-upload`).
+
+- `CENTOS_VERSION` CentOS stream version: `CentOS9` or `CentOS10` (or `--centOS`).
+
+- `SVC_HOST` PowerVC service host used by `pvcctl` (or `--svc-host`).
+
+- `TEMPLATE` PowerVC template UUID used during image import (or `--template`).
+
+Required existing binaries before running this script:
+
+- `curl` For downloading files and checking URLs.
+
+- `jq` The JSON query CLI tool.
+
+- `openstack` The OpenStack CLI tool.
+
+- `pvsadm` For converting qcow2 images to OVA format.
+
+- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+
+Example usage:
+
+```bash
+source environmentCI
+./scripts/upload-centos.sh --centOS CentOS9
+./scripts/upload-centos.sh --centOS CentOS10 --dry-run
+./scripts/upload-centos.sh --centOS CentOS9 --verbose
+```
+
 ## scripts/upload-rhcos.sh
 
 This script downloads and uploads RHCOS images to PowerVC/OpenStack.  It handles multiple release versions, supports both RHEL 9 and RHEL 10 based images, converts images with `pvsadm`, and imports them via `pvcctl` or `powervc-image`.
