@@ -36,7 +36,6 @@ func TestConstants(t *testing.T) {
 		{"check-alive command", cmdCheckAlive, "check-alive"},
 		{"create-bastion command", cmdCreateBastion, "create-bastion"},
 		{"create-rhcos command", cmdCreateRhcos, "create-rhcos"},
-		{"create-cluster command", cmdCreateCluster, "broken-create-cluster"},
 		{"erase-metadata command", cmdEraseMetadata, "erase-metadata"},
 		{"send-metadata command", cmdSendMetadata, "send-metadata"},
 		{"watch-installation command", cmdWatchInstallation, "watch-installation"},
@@ -118,7 +117,6 @@ func TestPrintUsage(t *testing.T) {
 		cmdCheckAlive,
 		cmdCreateBastion,
 		cmdCreateRhcos,
-		cmdCreateCluster,
 		cmdEraseMetadata,
 		cmdSendMetadata,
 		cmdWatchInstallation,
@@ -126,7 +124,6 @@ func TestPrintUsage(t *testing.T) {
 		"Check if cluster nodes are alive",
 		"Create bastion host",
 		"Create RHCOS image",
-		"Create OpenShift cluster",
 		"Erase metadata matching pattern from server",
 		"Send metadata to cluster",
 		"Watch cluster installation progress",
@@ -238,7 +235,6 @@ func TestPrintUsage_CommandFormatting(t *testing.T) {
 		cmdCheckAlive:        "Check if cluster nodes are alive",
 		cmdCreateBastion:     "Create bastion host",
 		cmdCreateRhcos:       "Create RHCOS image",
-		cmdCreateCluster:     "Create OpenShift cluster",
 		cmdEraseMetadata:     "Erase metadata matching pattern from server",
 		cmdSendMetadata:      "Send metadata to cluster",
 		cmdWatchInstallation: "Watch cluster installation progress",
@@ -476,7 +472,6 @@ func TestRun_CaseInsensitiveCommands(t *testing.T) {
 		{"check-alive mixed case", "Check-Alive", true},
 		{"create-bastion lowercase", "create-bastion", true},
 		{"create-rhcos lowercase", "create-rhcos", true},
-		{"create-cluster lowercase", "broken-create-cluster", true},
 		{"erase-metadata lowercase", "erase-metadata", true},
 		{"send-metadata lowercase", "send-metadata", true},
 		{"watch-installation lowercase", "watch-installation", true},
@@ -503,7 +498,6 @@ func TestMain_FlagSetCreation(t *testing.T) {
 	commands := []string{
 		cmdCheckAlive,
 		cmdCreateBastion,
-		cmdCreateCluster,
 		cmdCreateRhcos,
 		cmdEraseMetadata,
 		cmdSendMetadata,
@@ -580,7 +574,7 @@ func TestMain_UnknownCommand(t *testing.T) {
 			isKnown := false
 
 			switch command {
-			case cmdCheckAlive, cmdCreateBastion, cmdCreateCluster,
+			case cmdCheckAlive, cmdCreateBastion,
 				cmdCreateRhcos, cmdEraseMetadata, cmdSendMetadata, cmdWatchInstallation, cmdWatchCreate:
 				isKnown = true
 			}
