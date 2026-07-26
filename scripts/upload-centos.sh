@@ -63,6 +63,7 @@ DRY_RUN=false
 QUIET=false
 OUTPUT_FORMAT="text"  # text, json, or csv
 CENTOS_VERSION=""     # CentOS9, CentOS10, or empty (auto-detect)
+CENTOS_DATE=""        # YYYYMMDD date filter, or empty (use latest)
 USE_PVCCTL=false      # true if pvcctl is available, false if using powervc-image
 
 # ANSI color codes for enhanced terminal output
@@ -412,6 +413,16 @@ function parse_arguments() {
 				esac
 				shift 2
 				;;
+			--date)
+				if [[ -z "${2:-}" ]]; then
+					die "Error: --date requires a value (YYYYMMDD)"
+				fi
+				if [[ ! "$2" =~ ^[0-9]{8}$ ]]; then
+					die "Error: --date value '$2' is not a valid date (expected YYYYMMDD)"
+				fi
+				CENTOS_DATE="$2"
+				shift 2
+				;;
 			--release)
 				if [[ -z "${2:-}" ]]; then
 					die "Error: --release requires a value"
@@ -476,6 +487,8 @@ OPTIONS:
 	                             Can also be set via CLOUD environment variable
 	   --centOS <version>        CentOS Stream version: CentOS9 or CentOS10
 	                             Can also be set via CENTOS_VERSION environment variable
+	   --date <YYYYMMDD>         Pin to a specific image build date (e.g. 20260721)
+	                             If omitted, the latest available build is used
 	   --project <name>          Optional project prefix (sets PROJECT variable)
 	   --project-upload <name>   PowerVC project name for image upload access control
 	                             Can also be set via PROJECT_UPLOAD environment variable
@@ -944,6 +957,7 @@ function call_powervc_image() {
 #   $2 - Name of variable to receive the full URL (required)
 #   $3 - (optional) Name of variable to receive the build date (YYYYMMDD)
 #   $4 - (optional) Name of variable to receive the SHA1 checksum
+#   $5 - (optional) Exact build date to pin (YYYYMMDD); empty means "latest"
 # Returns:
 #   0 - Caller-named variables populated
 #   1 - Invalid version, or could not retrieve/parse the listing/checksum
@@ -954,12 +968,14 @@ function call_powervc_image() {
 #   All results are returned via named output variables (printf -v) so the
 #   function must NOT be called inside $() — doing so runs it in a subshell
 #   where printf -v writes are invisible to the caller.
-#   "Latest" is determined by lexicographic sort of the dated filenames.
-#   The YYYYMMDD.N scheme sorts correctly without any date arithmetic.
+#   When $5 is empty, "latest" is determined by lexicographic sort of the
+#   dated filenames. The YYYYMMDD.N scheme sorts correctly without any date
+#   arithmetic. When $5 is provided, only filenames containing that date are
+#   considered; the script dies if no matching file is found.
 # Example:
 #   local url build_date sha1_hash
-#   find_latest_centos_qcow2_url CentOS9  url build_date sha1_hash
-#   find_latest_centos_qcow2_url CentOS10 url build_date sha1_hash
+#   find_latest_centos_qcow2_url CentOS9  url build_date sha1_hash ""
+#   find_latest_centos_qcow2_url CentOS10 url build_date sha1_hash "20260721"
 #   echo "URL:  ${url}"
 #   echo "Date: ${build_date}"
 #   echo "SHA1: ${sha1_hash}"
@@ -969,6 +985,7 @@ function find_latest_centos_qcow2_url() {
 	local _out_url="${2:-}"
 	local _out_date="${3:-}"
 	local _out_sha1="${4:-}"
+	local _pin_date="${5:-}"
 	local stream_num
 	local base_url
 	local listing
@@ -1003,13 +1020,26 @@ function find_latest_centos_qcow2_url() {
 
 	# Extract only date-stamped filenames (YYYYMMDD.N scheme); exclude -latest
 	# symlinks so the result is always a concrete, reproducible build.
+	# When a pin date is provided, restrict the pattern to that exact date.
+	local date_pattern
+	if [[ -n "${_pin_date}" ]]; then
+		date_pattern="${_pin_date}"
+		log_debug "Pinning to build date: ${_pin_date}"
+	else
+		date_pattern="\\d{8}"
+	fi
+
 	latest_filename=$(echo "${listing}" \
-		| grep -oP "href=\"\\KCentOS-Stream-GenericCloud-${stream_num}-\\d{8}\\.\\d+\\.ppc64le\\.qcow2(?=\")" \
+		| grep -oP "href=\"\\KCentOS-Stream-GenericCloud-${stream_num}-${date_pattern}\\.\\d+\\.ppc64le\\.qcow2(?=\")" \
 		| sort \
 		| tail -n 1)
 
 	if [[ -z "${latest_filename}" ]]; then
-		die "No dated CentOS-Stream-GenericCloud-${stream_num} .qcow2 files found at ${base_url}"
+		if [[ -n "${_pin_date}" ]]; then
+			die "No CentOS-Stream-GenericCloud-${stream_num} .qcow2 file found for date ${_pin_date} at ${base_url}"
+		else
+			die "No dated CentOS-Stream-GenericCloud-${stream_num} .qcow2 files found at ${base_url}"
+		fi
 	fi
 
 	log_debug "Latest CentOS ${stream_num} Stream qcow2 filename: ${latest_filename}"
@@ -1127,7 +1157,7 @@ function main() {
 	# Step 3: Resolve the latest dated .qcow2 image URL, build date, and SHA1
 	# from the official CentOS cloud mirror for the requested stream version.
 	# Results are written into local variables via printf -v (no subshell).
-	find_latest_centos_qcow2_url "${CENTOS_VERSION}" url build_date sha1_hash
+	find_latest_centos_qcow2_url "${CENTOS_VERSION}" url build_date sha1_hash "${CENTOS_DATE}"
 	echo "url=${url}"
 	echo "build_date=${build_date}"
 	echo "sha1_hash=${sha1_hash}"
