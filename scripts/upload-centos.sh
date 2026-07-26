@@ -462,40 +462,41 @@ function show_usage() {
 	cat <<EOF
 Usage: ${SCRIPT_NAME} [OPTIONS]
 
-Download RHCOS images and upload them to PowerVC/OpenStack for OpenShift deployments.
+Download CentOS Stream images and upload them to PowerVC/OpenStack.
 
 This script automates the process of:
-	 1. Downloading CoreOS metadata from GitHub
-	 2. Extracting image information (URL, filename, SHA256)
-	 3. Converting qcow2 images to OVA format using pvsadm
-	 4. Importing OVA images into PowerVC using pvcctl or powervc-image
+	 1. Fetching the latest CentOS Stream GenericCloud qcow2 image URL from
+	    the official CentOS cloud mirror
+	 2. Deriving the image name and expected OVA filename
+	 3. Converting the qcow2 image to OVA format using pvsadm
+	 4. Importing the OVA image into PowerVC using pvcctl or powervc-image
 
 OPTIONS:
-	   --cloud <name>         OpenStack cloud name from clouds.yaml
-	                         Can also be set via CLOUD environment variable
-	   --project <name>       PowerVC project name for image access control
-	                         Required for pvcctl image import
-	   --release <version>    Specify a release version (can be used multiple times)
-	                         Example: --release release-4.21 --release release-4.22
-	                         Default: release-4.21 if not specified
-	   --rhel <version>       Prefer specific RHEL version: rhel9 or rhel10
-	                         If not specified, tries all available versions in order
-	   --svc-host <host>      PowerVC service host for image import
-	                         Required for pvcctl operations
-	   --template <uuid>      PowerVC template UUID for image creation
-	                         Required for pvcctl operations
-	   -v, --verbose          Enable verbose output with debug information
-	   --dry-run              Simulate operations without making actual changes
-	                         Skips OpenStack connectivity check and image verification
-	   -h, --help             Show this help message and exit
+	   --cloud <name>            OpenStack cloud name from clouds.yaml
+	                             Can also be set via CLOUD environment variable
+	   --centOS <version>        CentOS Stream version: CentOS9 or CentOS10
+	                             Can also be set via CENTOS_VERSION environment variable
+	   --project <name>          Optional project prefix (sets PROJECT variable)
+	   --project-upload <name>   PowerVC project name for image upload access control
+	                             Can also be set via PROJECT_UPLOAD environment variable
+	   --release <version>       Specify a release version (can be used multiple times)
+	                             Default: release-4.21 if not specified
+	   --svc-host <host>         PowerVC service host for image import
+	                             Can also be set via SVC_HOST environment variable
+	   --template <uuid>         PowerVC template UUID for image creation
+	                             Can also be set via TEMPLATE environment variable
+	   -v, --verbose             Enable verbose output with debug information
+	   --dry-run                 Simulate operations without making actual changes
+	                             Skips OpenStack connectivity check and image upload
+	   -h, --help                Show this help message and exit
 
 ENVIRONMENT VARIABLES:
 	   CLOUD                  OpenStack cloud name from clouds.yaml
 	                         Can be set via --cloud option or interactively
-	   PROJECT                PowerVC project name
-	                         Can be set via --project option or interactively
-	   CENTOS_VERSION         CentOS version preference (CentOS9 or CentOS10)
-	                         Can be set via --rhel option or interactively
+	   CENTOS_VERSION         CentOS Stream version preference (CentOS9 or CentOS10)
+	                         Can be set via --centOS option or interactively
+	   PROJECT_UPLOAD         PowerVC project name for image upload
+	                         Can be set via --project-upload option or interactively
 	   SVC_HOST               PowerVC service host
 	                         Can be set via --svc-host option or interactively
 	   TEMPLATE               PowerVC template UUID
@@ -514,43 +515,38 @@ EXAMPLES:
 	   ${SCRIPT_NAME}
 
 	   # Specify all options on command line
-	   ${SCRIPT_NAME} --cloud mycloud --project myproject --release release-4.21 \\
-	                  --rhel rhel9 --svc-host powervc.example.com --template <uuid>
-
-	   # Multiple releases with RHEL 9 preference
-	   ${SCRIPT_NAME} --release release-4.21 --release release-4.22 --rhel rhel9
+	   ${SCRIPT_NAME} --cloud mycloud --project-upload myproject \\
+	                  --centOS CentOS9 --svc-host powervc.example.com --template <uuid>
 
 	   # Dry run to test without actual operations
-	   ${SCRIPT_NAME} --release release-4.21 --dry-run
+	   ${SCRIPT_NAME} --centOS CentOS9 --dry-run
 
 	   # Verbose output for debugging
-	   ${SCRIPT_NAME} --release release-4.21 --verbose
+	   ${SCRIPT_NAME} --centOS CentOS9 --verbose
 
 	   # Use environment variables
 	   export CLOUD=mycloud
-	   export PROJECT=myproject
+	   export PROJECT_UPLOAD=myproject
 	   export CENTOS_VERSION=CentOS9
 	   export SVC_HOST=powervc.example.com
 	   export TEMPLATE=<uuid>
-	   ${SCRIPT_NAME} --release release-4.21
+	   ${SCRIPT_NAME}
 
 WORKFLOW:
 	   1. Parse command-line arguments and collect missing variables interactively
 	   2. Validate all required environment variables are set
 	   3. Check for required programs (curl, jq, openstack, pvsadm)
 	   4. Detect available PowerVC import tool (pvcctl or powervc-image)
-	   5. Verify OpenStack connectivity (unless --dry-run)
-	   6. For each release:
-	      a. Download CoreOS JSON metadata from GitHub
-	      b. Extract image URL, filename, and SHA256 checksum
-	      c. Check if image already exists in OpenStack
-	      d. If not exists:
-	         - Call pvsadm to convert qcow2 to OVA format
-	         - Call pvcctl (via powervc-go) or powervc-image to import OVA into PowerVC
-	   7. Report success or failure for each release
+	   5. Check OpenStack CLI availability
+	   6. Fetch the latest dated CentOS Stream GenericCloud qcow2 image URL,
+	      build date, and SHA1 checksum from the official mirror
+	   7. Derive the bare image name and OVA filename from the URL
+	   8. Check if the image already exists in OpenStack
+	   9. If not exists:
+	      - Call pvsadm to convert qcow2 to OVA format
+	      - Call pvcctl or powervc-image to import OVA into PowerVC
 
 NOTES:
-	   - If no --release is specified, defaults to release-4.21
 	   - The script will prompt for any missing required variables
 	   - Use --dry-run to test the workflow without making changes
 
