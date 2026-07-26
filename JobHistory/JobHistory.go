@@ -966,16 +966,18 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 
 // Args holds all command-line arguments and configuration options.
 type Args struct {
-	AfterStr         string   // Start date for filtering jobs (ISO 8601 format)
-	BeforeStr        string   // End date for filtering jobs (ISO 8601 format)
-	CSV              bool     // Enable CSV output format
-	DeployStatusOnly bool     // Only report deployment status (skip test results)
-	LastNDays        int      // Filter to last N days (alternative to AfterStr/BeforeStr)
-	Output           string   // Output file path (empty = stdout)
-	TestStatusOnly   bool     // Only report test status (skip deployment details)
-	Today            bool     // Filter to today's jobs only
-	URLs             []string // List of Prow job history URLs to process
-	Yesterday        bool     // Filter to yesterday's jobs only
+	AfterStr         string    // Start date for filtering jobs (ISO 8601 format)
+	BeforeStr        string    // End date for filtering jobs (ISO 8601 format)
+	AfterDt          time.Time // Parsed start date (set by parseAndValidateArgs)
+	BeforeDt         time.Time // Parsed end date (set by parseAndValidateArgs)
+	CSV              bool      // Enable CSV output format
+	DeployStatusOnly bool      // Only report deployment status (skip test results)
+	LastNDays        int       // Filter to last N days (alternative to AfterStr/BeforeStr)
+	Output           string    // Output file path (empty = stdout)
+	TestStatusOnly   bool      // Only report test status (skip deployment details)
+	Today            bool      // Filter to today's jobs only
+	URLs             []string  // List of Prow job history URLs to process
+	Yesterday        bool      // Filter to yesterday's jobs only
 }
 
 // main is the entry point for the JobHistory tool.
@@ -1070,61 +1072,57 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	}
 
 	// Date range validation and calculation
-	var afterDt, beforeDt time.Time
+	// Capture a single consistent "now" to avoid clock drift across multiple time.Now() calls.
+	now := time.Now().UTC()
 	var err error
 
 	if args.Today {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Yesterday || args.LastNDays > 0 {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --today with other date options")
 		}
-		now := time.Now().UTC()
-		afterDt = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		beforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
+		args.AfterDt = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		args.BeforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.Yesterday {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Today || args.LastNDays > 0 {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --yesterday with other date options")
 		}
-		yesterday := time.Now().UTC().AddDate(0, 0, -1)
-		afterDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
-		beforeDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, time.UTC)
+		yesterday := now.AddDate(0, 0, -1)
+		args.AfterDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
+		args.BeforeDt = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else if args.LastNDays > 0 {
 		if args.Today || args.Yesterday {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --last-n-days with other date options")
 		}
-		if args.LastNDays < 1 {
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("--last-n-days must be at least 1")
-		}
-		lastDate := time.Now().UTC().AddDate(0, 0, -(args.LastNDays - 1))
-		afterDt = time.Date(lastDate.Year(), lastDate.Month(), lastDate.Day(), 0, 0, 0, 0, time.UTC)
-		now := time.Now().UTC()
-		beforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
+		lastDate := now.AddDate(0, 0, -(args.LastNDays - 1))
+		args.AfterDt = time.Date(lastDate.Year(), lastDate.Month(), lastDate.Day(), 0, 0, 0, 0, time.UTC)
+		args.BeforeDt = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, time.UTC)
 	} else {
 		// Default: no start date, end date is now
-		afterDt = time.Time{}
-		beforeDt = time.Now().UTC()
+		args.AfterDt = time.Time{}
+		args.BeforeDt = now
 	}
 
 	// Override with explicit dates if provided
 	if args.AfterStr != "" {
-		afterDt, err = fromISOFormat(args.AfterStr)
+		args.AfterDt, err = fromISOFormat(args.AfterStr)
 		if err != nil {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid after-date format: %w", err)
 		}
 	}
 
 	if args.BeforeStr != "" {
-		beforeDt, err = fromISOFormat(args.BeforeStr)
+		args.BeforeDt, err = fromISOFormat(args.BeforeStr)
 		if err != nil {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid before-date format: %w", err)
 		}
 	}
 
 	// Validate date range
-	if !afterDt.IsZero() && !beforeDt.IsZero() && afterDt.After(beforeDt) {
+	if !args.AfterDt.IsZero() && !args.BeforeDt.IsZero() && args.AfterDt.After(args.BeforeDt) {
 		return nil, time.Time{}, time.Time{}, fmt.Errorf("after-date must be before before-date")
 	}
 
-	return args, afterDt, beforeDt, nil
+	return args, args.AfterDt, args.BeforeDt, nil
 }
 
 // main is the entry point for the JobHistory program.
