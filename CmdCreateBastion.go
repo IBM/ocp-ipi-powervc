@@ -283,24 +283,39 @@ func execSSHSudoCommandWithStdin(ctx context.Context, cfg *sshConfig, command []
 // It uses rpm -q to query the package database.
 // The operation respects context cancellation and timeout.
 func isHAProxyInstalled(ctx context.Context, cfg *sshConfig) (bool, error) {
-	log.Debugf("Checking if HAProxy is installed on %s", cfg.Host)
+	return isRPMInstalled(ctx, cfg, haproxyPackageName)
+}
 
-	output, err := execSSHCommand(ctx, cfg, []string{"rpm", "-q", haproxyPackageName})
+// isRPMInstalled reports whether the named RPM package is installed on the
+// bastion host reached via cfg.
+//
+// It runs:
+//
+//	rpm -q <rpm>
+//
+// on the remote host. `rpm -q` exits with RC 1 and prints
+// "package <name> is not installed" when the package is absent, which is
+// treated as a clean (false, nil) result. Any other non-zero exit or
+// unexpected output is returned as an error.
+func isRPMInstalled(ctx context.Context, cfg *sshConfig, rpm string) (bool, error) {
+	log.Debugf("Checking if %s is installed on %s", rpm, cfg.Host)
+
+	output, err := execSSHCommand(ctx, cfg, []string{"rpm", "-q", rpm})
 
 	// rpm -q returns exit code 1 if package is not installed
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
 		if output == fmt.Sprintf("package %s is not installed", haproxyPackageName) {
-			log.Debugf("HAProxy is not installed")
+			log.Debugf("%s is not installed", rpm)
 			return false, nil
 		}
 	}
 
 	if err != nil {
-		return false, fmt.Errorf("failed to check HAProxy installation: %w", err)
+		return false, fmt.Errorf("failed to check %s installation: %w", rpm, err)
 	}
 
-	log.Debugf("HAProxy is installed: %s", output)
+	log.Debugf("%s is installed: %s", rpm, output)
 	return true, nil
 }
 
@@ -328,8 +343,8 @@ const (
 	// osReleaseUNKNOWN indicates an unknown OS
 	osReleaseUNKNOWN osRelease = iota
 
-        // osReleaseRHEL indicates a RHEL OS
-        osReleaseRHEL
+	// osReleaseRHEL indicates a RHEL OS
+	osReleaseRHEL
 
 	// osReleaseCENTOS indicates a CentOS OS
 	osReleaseCENTOS
@@ -963,11 +978,22 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 }
 
 // ensureFirewalldOpenPorts opens the set of TCP ports required by the bastion
-// host in the firewalld public zone. It iterates over the well-known ports
-// needed for OCP traffic (HTTP/HTTPS ingress, the Kubernetes API server, and
-// the Machine Config Server) and delegates each one to ensureFirewalldOpenPort.
-// The loop stops and returns the first error encountered.
+// host in the firewalld public zone. It is a no-op when the firewalld RPM is
+// not installed. Otherwise it iterates over the well-known ports needed for
+// OCP traffic (HTTP/HTTPS ingress, the Kubernetes API server, and the Machine
+// Config Server) and delegates each one to ensureFirewalldOpenPort.
+// The loop stops and returns the first error encountered, and respects context
+// cancellation between iterations.
 func ensureFirewalldOpenPorts(ctx context.Context, cfg *sshConfig) error {
+	installed, err := isRPMInstalled(ctx, cfg, "firewalld")
+	if err != nil {
+		return err
+	}
+
+	if !installed {
+		return nil
+	}
+
 	var ports = []int{80, 443, 6443, 22623}
 
 	for _, port := range ports {
@@ -987,18 +1013,24 @@ func ensureFirewalldOpenPorts(ctx context.Context, cfg *sshConfig) error {
 // ensureFirewalldOpenPort ensures a single TCP port is permanently open in the
 // firewalld public zone on the bastion host reached via cfg.
 //
-// It first queries the current state with:
+// The function follows a three-step process when the port is not yet open:
 //
-//	firewall-cmd --query-port=<port>/tcp
+//  1. Query current state:
+//     firewall-cmd --query-port=<port>/tcp
+//     `firewall-cmd` exits with RC 1 and prints "no" when the port is closed,
+//     so an error is only treated as fatal when the output is not "no".
+//     If the output is "yes" the port is already open and the function returns
+//     immediately.
 //
-// The command exits with RC 1 when the port is not yet open and prints "no",
-// so the error is only treated as fatal when the output is not "no".
-// If the port is already open ("yes") the function returns immediately.
-// If the port is closed ("no") it adds the rule permanently with:
+//  2. Add the rule permanently:
+//     firewall-cmd --zone=public --add-port=<port>/tcp --permanent
+//     A response other than "success" is returned as an error.
 //
-//	firewall-cmd --zone=public --add-port=<port>/tcp --permanent
+//  3. Reload firewalld to activate the new rule:
+//     firewall-cmd --reload
+//     A response other than "success" is returned as an error.
 //
-// Any output other than "yes", "no", or "success" is returned as an error.
+// Any unexpected output from the query step is also returned as an error.
 func ensureFirewalldOpenPort(ctx context.Context, cfg *sshConfig, port int) error {
 	log.Debugf("ensureFirewalldOpenPort: Checking firewalld open port (%d) on %s", port, cfg.Host)
 
@@ -1031,6 +1063,19 @@ func ensureFirewalldOpenPort(ctx context.Context, cfg *sshConfig, port int) erro
 		if output != "success" {
 			return fmt.Errorf("Unknown response from firewall-cmd add-port: %v", err)
 		}
+
+		output, err = execSSHSudoCommand(ctx, cfg, []string{
+			"firewall-cmd", "--reload",
+		})
+		log.Debugf("ensureFirewalldOpenPort: firewall-cmd --reload")
+		log.Debugf("ensureFirewalldOpenPort: %s", output)
+		if err != nil {
+			return err
+		}
+		if output != "success" {
+			return fmt.Errorf("Unknown response from firewall-cmd --reload: %v", err)
+		}
+
 		return nil
 	} else {
 		return fmt.Errorf("Unknown response from firewall-cmd query-port: %v", err)
@@ -1162,7 +1207,7 @@ func (c *BastionConfig) Validate() error {
 	if c.BastionName == "" {
 		validationErrors = append(validationErrors, fmt.Errorf("bastionName: field is required"))
 	} else if !isValidResourceName(c.BastionName) {
-		validationErrors = append(validationErrors, 
+		validationErrors = append(validationErrors,
 			fmt.Errorf("bastionName: contains invalid characters (use alphanumeric, hyphens, underscores): %q", c.BastionName))
 	}
 
@@ -1175,10 +1220,10 @@ func (c *BastionConfig) Validate() error {
 	if c.BastionRsa != "" {
 		if _, err := os.Stat(c.BastionRsa); err != nil {
 			if os.IsNotExist(err) {
-				validationErrors = append(validationErrors, 
+				validationErrors = append(validationErrors,
 					fmt.Errorf("bastionRsa: file not found: %q", c.BastionRsa))
 			} else {
-				validationErrors = append(validationErrors, 
+				validationErrors = append(validationErrors,
 					fmt.Errorf("bastionRsa: cannot access file: %w", err))
 			}
 		}
@@ -1201,7 +1246,7 @@ func (c *BastionConfig) Validate() error {
 	// IP address format validation
 	if c.ServerIP != "" {
 		if net.ParseIP(c.ServerIP) == nil {
-			validationErrors = append(validationErrors, 
+			validationErrors = append(validationErrors,
 				fmt.Errorf("serverIP: invalid IP address format: %q", c.ServerIP))
 		}
 	}
@@ -1216,7 +1261,7 @@ func (c *BastionConfig) Validate() error {
 
 	for fieldName, value := range requiredFields {
 		if value == "" {
-			validationErrors = append(validationErrors, 
+			validationErrors = append(validationErrors,
 				fmt.Errorf("%s: field is required", fieldName))
 		}
 	}
