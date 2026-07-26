@@ -400,6 +400,7 @@ func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 //  2. Configure HAProxy file permissions.
 //  3. Configure SELinux for HAProxy.
 //  4. Enable and start the HAProxy service.
+//  5. Ensure firewalld ports are open.
 // The operation respects context cancellation and timeout.
 func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	// Step 1: Is it installed?
@@ -440,6 +441,14 @@ func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	}
 	if err := enableAndStartHAProxy(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to start HAProxy service: %w", err)
+	}
+
+	// Step 5: Ensure open firewalld ports
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context cancelled before firewalld open ports: %w", err)
+	}
+	if err := ensureFirewalldOpenPorts(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to open firewalld ports: %w", err)
 	}
 
 	return nil
@@ -951,6 +960,83 @@ func enableAndStartHAProxy(ctx context.Context, cfg *sshConfig) error {
 	}
 
 	return startService(ctx, cfg, haproxyServiceName)
+}
+
+// ensureFirewalldOpenPorts opens the set of TCP ports required by the bastion
+// host in the firewalld public zone. It iterates over the well-known ports
+// needed for OCP traffic (HTTP/HTTPS ingress, the Kubernetes API server, and
+// the Machine Config Server) and delegates each one to ensureFirewalldOpenPort.
+// The loop stops and returns the first error encountered.
+func ensureFirewalldOpenPorts(ctx context.Context, cfg *sshConfig) error {
+	var ports = []int{80, 443, 6443, 22623}
+
+	for _, port := range ports {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context cancelled before ensureFirewalldOpenPorts: %w", err)
+		}
+
+		err := ensureFirewalldOpenPort(ctx, cfg, port)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ensureFirewalldOpenPort ensures a single TCP port is permanently open in the
+// firewalld public zone on the bastion host reached via cfg.
+//
+// It first queries the current state with:
+//
+//	firewall-cmd --query-port=<port>/tcp
+//
+// The command exits with RC 1 when the port is not yet open and prints "no",
+// so the error is only treated as fatal when the output is not "no".
+// If the port is already open ("yes") the function returns immediately.
+// If the port is closed ("no") it adds the rule permanently with:
+//
+//	firewall-cmd --zone=public --add-port=<port>/tcp --permanent
+//
+// Any output other than "yes", "no", or "success" is returned as an error.
+func ensureFirewalldOpenPort(ctx context.Context, cfg *sshConfig, port int) error {
+	log.Debugf("ensureFirewalldOpenPort: Checking firewalld open port (%d) on %s", port, cfg.Host)
+
+	output, err := execSSHSudoCommand(ctx, cfg, []string{
+		"firewall-cmd", fmt.Sprintf("--query-port=%d/tcp", port),
+	})
+	// NOTE: The RC for the command can be 1 for the no case!
+	// $ sudo firewall-cmd --query-port=443/tcp; echo $?
+	// no
+	// 1
+	if err != nil && output != "no" {
+		return err
+	}
+	log.Debugf("ensureFirewalldOpenPort: firewall-cmd --query-port=%d/tcp", port)
+	log.Debugf("ensureFirewalldOpenPort: %s", output)
+
+	if output == "yes" {
+		// Already open!
+		return nil
+	} else if output == "no" {
+		// Need to open it...
+		output, err = execSSHSudoCommand(ctx, cfg, []string{
+			"firewall-cmd", "--zone=public", fmt.Sprintf("--add-port=%d/tcp", port), "--permanent",
+		})
+		log.Debugf("ensureFirewalldOpenPort: firewall-cmd --zone=public --add-port=%d/tcp --permanent", port)
+		log.Debugf("ensureFirewalldOpenPort: %s", output)
+		if err != nil {
+			return err
+		}
+		if output != "success" {
+			return fmt.Errorf("Unknown response from firewall-cmd add-port: %v", err)
+		}
+		return nil
+	} else {
+		return fmt.Errorf("Unknown response from firewall-cmd query-port: %v", err)
+	}
+
+	return nil
 }
 
 // ============================================================================
