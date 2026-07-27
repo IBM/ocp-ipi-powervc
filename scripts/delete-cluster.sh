@@ -403,6 +403,15 @@ function verify_controller() {
 	fi
 
 	log_success "Controller is reachable"
+
+	if ! "${POWERVC_TOOL}" \
+		check-alive \
+		--serverIP "${CONTROLLER_IP}" \
+		--shouldDebug true; then
+		die "Controller health check failed"
+	fi
+
+	log_success "Controller health check passed"
 }
 
 #------------------------------------------------------------------------------
