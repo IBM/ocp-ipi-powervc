@@ -288,6 +288,54 @@ func getData(resp *http.Response) ([]byte, error) {
 	}
 }
 
+// detectCouldNotRunSteps examines the top-level build-log.txt for a CI job and
+// detects whether the run ended with a "could not run steps" error. When that
+// error is present it extracts the names of every pod that is reported as
+// failed inside the error message.
+//
+// The error block in the log looks like:
+//
+//	ERRO Some steps failed:
+//	ERRO
+//	  * could not run steps: step <step> failed: ["..." pod "pod-name" failed: ...]
+//
+// Parameters:
+//   - ctx:          Context for cancellation and timeout control
+//   - client:       HTTP client to use for fetching the build log
+//   - spyglassLink: Job metadata containing the Spyglass link path
+//
+// Returns:
+//   - bool:     true if the "could not run steps" error was detected
+//   - []string: deduplicated list of pod names that are reported as failed
+//   - error:    error if the build log cannot be fetched
+func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink) (bool, []string, error) {
+	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
+	buildLogStr, err := getURLString(ctx, client, buildLogURL)
+	if err != nil {
+		return false, nil, err
+	}
+
+	if !strings.Contains(buildLogStr, "could not run steps") {
+		return false, nil, nil
+	}
+
+	// Extract every pod name from 'pod "pod-name" failed:' occurrences.
+	podRe := regexp.MustCompile(`pod "([^"]+)" failed:`)
+	rawMatches := podRe.FindAllStringSubmatch(buildLogStr, -1)
+
+	// Deduplicate while preserving first-seen order.
+	seen := make(map[string]bool)
+	var pods []string
+	for _, m := range rawMatches {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			pods = append(pods, m[1])
+		}
+	}
+
+	return true, pods, nil
+}
+
 // getZone extracts the PowerVS zone identifier from a CI job's build log.
 // It parses the build-log.txt file to find the lease acquisition message that
 // indicates which PowerVS zone was allocated for the test run. This information
@@ -923,6 +971,19 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 					}
 				} else {
 					if !args.CSV {
+						fmt.Fprintln(outputFp)
+					}
+				}
+
+				// Detect "could not run steps" error and list failed pods
+				if detected, failedPods, err := detectCouldNotRunSteps(ctx, client, spyglassLink); err != nil {
+					fmt.Fprintf(infoFp, "WARN: Failed to detect could-not-run-steps: %v\n", err)
+				} else if detected {
+					if !args.CSV {
+						fmt.Fprintf(outputFp, "FAILURE: could not run steps\n")
+						for _, pod := range failedPods {
+							fmt.Fprintf(outputFp, "  failed pod: %s\n", pod)
+						}
 						fmt.Fprintln(outputFp)
 					}
 				}
