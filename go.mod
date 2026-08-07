@@ -12,7 +12,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.13.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
-	github.com/openshift/api v0.0.0-20260724095150-18550f1a6d13
+	github.com/openshift/api v0.0.0-20260807110950-72ae4424ef35
 	github.com/sirupsen/logrus v1.9.4
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
