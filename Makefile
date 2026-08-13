@@ -84,17 +84,24 @@ tidy: ## Tidy Go modules
 build: ## Build the binary
 	@echo "Building $(OUTPUT_BINARY)..."
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(OUTPUT_BINARY) *.go
+	sha1sum $(OUTPUT_BINARY) > $(OUTPUT_BINARY).sha1
 	@echo "Build complete: $(OUTPUT_BINARY)"
+	@echo "Checksum written: $(OUTPUT_BINARY).sha1"
 
 .PHONY: build-all
 build-all: ## Build for all supported platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 *.go
+	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 > $(DIST_DIR)/$(BINARY_NAME)-linux-amd64.sha1
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 *.go
+	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 > $(DIST_DIR)/$(BINARY_NAME)-linux-arm64.sha1
 	GOOS=linux GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le *.go
+	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le > $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le.sha1
 	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 *.go
+	sha1sum $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 > $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64.sha1
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 *.go
+	sha1sum $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 > $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64.sha1
 	@echo "All platform builds complete in $(DIST_DIR)/"
 
 .PHONY: install
@@ -134,15 +141,20 @@ install-jobhistory: build-jobhistory ## Install JobHistory to GOPATH/bin
 	@echo "JobHistory installation complete"
 
 .PHONY: dist-jobhistory
-dist-jobhistory: build-jobhistory
+dist-jobhistory: build-jobhistory ## Build JobHistory for all platforms and generate checksums
 	@echo "Installing JobHistory to $(DIST_DIR)."
 	@mkdir -p $(DIST_DIR)
 	@cd JobHistory
 	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-amd64 *.go
+	sha1sum $(DIST_DIR)/JobHistory-linux-amd64 > $(DIST_DIR)/JobHistory-linux-amd64.sha1
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-arm64 *.go
+	sha1sum $(DIST_DIR)/JobHistory-linux-arm64 > $(DIST_DIR)/JobHistory-linux-arm64.sha1
 	GOOS=linux GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-linux-ppc64le *.go
+	sha1sum $(DIST_DIR)/JobHistory-linux-ppc64le > $(DIST_DIR)/JobHistory-linux-ppc64le.sha1
 	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-darwin-amd64 *.go
+	sha1sum $(DIST_DIR)/JobHistory-darwin-amd64 > $(DIST_DIR)/JobHistory-darwin-amd64.sha1
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-darwin-arm64 *.go
+	sha1sum $(DIST_DIR)/JobHistory-darwin-arm64 > $(DIST_DIR)/JobHistory-darwin-arm64.sha1
 
 .PHONY: test
 test: ## Run all tests
@@ -206,10 +218,16 @@ lint: ## Run golangci-lint (requires golangci-lint installed)
 .PHONY: check
 check: fmt vet test ## Run format, vet, and tests
 
+.PHONY: checksums
+checksums: ## Verify all .sha1 checksum files in the dist directory
+	@echo "Verifying checksums in $(DIST_DIR)/..."
+	@cd $(DIST_DIR) && sha1sum -c *.sha1
+	@echo "All checksums verified"
+
 .PHONY: clean
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
-	@rm -f $(OUTPUT_BINARY)
+	@rm -f $(OUTPUT_BINARY) $(OUTPUT_BINARY).sha1
 	@rm -f $(BINARY_NAME)-*
 	@rm -f ocp-ipi-powervc-*
 	@rm -f $(COVERAGE_FILE) coverage.html

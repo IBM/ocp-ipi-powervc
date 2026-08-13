@@ -40,15 +40,25 @@ jobs:
       with:
         files: |
           dist/ocp-ipi-powervc-darwin-amd64
+          dist/ocp-ipi-powervc-darwin-amd64.sha1
           dist/ocp-ipi-powervc-darwin-arm64
+          dist/ocp-ipi-powervc-darwin-arm64.sha1
           dist/ocp-ipi-powervc-linux-amd64
+          dist/ocp-ipi-powervc-linux-amd64.sha1
           dist/ocp-ipi-powervc-linux-arm64
+          dist/ocp-ipi-powervc-linux-arm64.sha1
           dist/ocp-ipi-powervc-linux-ppc64le
+          dist/ocp-ipi-powervc-linux-ppc64le.sha1
           dist/JobHistory-darwin-amd64
+          dist/JobHistory-darwin-amd64.sha1
           dist/JobHistory-darwin-arm64
+          dist/JobHistory-darwin-arm64.sha1
           dist/JobHistory-linux-amd64
+          dist/JobHistory-linux-amd64.sha1
           dist/JobHistory-linux-arm64
+          dist/JobHistory-linux-arm64.sha1
           dist/JobHistory-linux-ppc64le
+          dist/JobHistory-linux-ppc64le.sha1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
@@ -61,7 +71,10 @@ jobs:
           scripts/delete-cluster.sh
           scripts/console.sh
           scripts/ssh.sh
+          scripts/current-servers.sh
+          scripts/list-bastions.sh
           scripts/print-stream-json.sh
+          scripts/upload-centos.sh
           scripts/upload-rhcos.sh
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
