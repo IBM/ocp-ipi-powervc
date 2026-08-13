@@ -904,18 +904,27 @@ function verify_pullsecret() {
 	if [[ -z "${version_output}" ]]; then
 		die "openshift-install version returned empty output"
 	fi
+	log_info "version_output: ${version_output}"
 
-	# Extract release image line
-	log_info "Extracting release image from version output..."
-	if ! release_image_line=$(echo "${version_output}" | grep -i 'release image'); then
-		die "Could not find 'release image' in openshift-install version output. Output was: ${version_output}"
-	fi
+	# If the override env var is set, use it directly; otherwise parse from version output
+	if [[ -n "${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}" ]]; then
+		release_image="${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE}"
+		log_info "Using release image override: ${release_image}"
+	else
+		# Extract release image line
+		log_info "Extracting release image from version output..."
+		if ! release_image_line=$(echo "${version_output}" | grep -i '^release image'); then
+			die "Could not find 'release image' in openshift-install version output. Output was: ${version_output}"
+		fi
+		log_info "release_image_line: ${release_image_line}"
 
-	# Parse release image URL (format: "release image <image-url>")
-	# Use awk for more robust parsing instead of cut
-	release_image=$(echo "${release_image_line}" | awk '{print $3}')
-	if [[ -z "${release_image}" ]]; then
-		die "Failed to extract release image URL from line: ${release_image_line}"
+		# Parse release image URL (format: "release image <image-url>")
+		# Use awk for more robust parsing instead of cut
+		release_image=$(echo "${release_image_line}" | awk '{print $3}')
+		if [[ -z "${release_image}" ]]; then
+			die "Failed to extract release image URL from line: ${release_image_line}"
+		fi
+		log_info "release_image: ${release_image}"
 	fi
 
 	# Validate release image format (should be a registry URL)
