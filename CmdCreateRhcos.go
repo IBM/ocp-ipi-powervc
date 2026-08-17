@@ -832,6 +832,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 			AvailabilityZone:  config.AvailabilityZone,
 			FlavorName:        config.FlavorName,
 			ImageName:         config.ImageName,
+			BastionRsaPub:     config.SshPublicKey,
 		}
 		if err := createServer(ctx, &bc, port,subnet, userData); err != nil {
 			cleanupPort(port)
