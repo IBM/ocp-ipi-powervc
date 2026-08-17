@@ -110,6 +110,20 @@ func (c *cloudFlags) Set(value string) error {
 	return nil
 }
 
+// stringSliceFlags is a custom flag type that accumulates multiple string values
+// into a slice. It is intended for flags that may be specified zero or more times,
+// e.g. --kernelArg foo --kernelArg bar results in []string{"foo", "bar"}.
+type stringSliceFlags []string
+
+func (s *stringSliceFlags) String() string {
+	return strings.Join(*s, " ")
+}
+
+func (s *stringSliceFlags) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
 // validateCloudName validates a cloud name for security and correctness.
 //
 // Valid cloud names must:
@@ -513,6 +527,41 @@ func extractNetmask(ipWithNetmask string) string {
 
 	// Return everything after the slash
 	return ipWithNetmask[slashIndex+1:]
+}
+
+// extractNetmaskDotted extracts the netmask from an IP address with CIDR notation and
+// returns it in dotted-decimal (A.B.C.D) format (e.g., "255.255.255.0").
+// It accepts formats like "192.168.1.10/24" and returns the corresponding subnet mask.
+// If the input doesn't contain a netmask, or the prefix length is invalid, it returns an empty string.
+//
+// Parameters:
+//   - ipWithNetmask: IP address string that may include CIDR notation (e.g., "10.0.0.1/24")
+//
+// Returns:
+//   - string: The dotted-decimal netmask (e.g., "255.255.255.0"), or empty string if input is invalid
+//
+// Examples:
+//   - "192.168.1.10/24" returns "255.255.255.0"
+//   - "10.0.0.1/16"     returns "255.255.0.0"
+//   - "10.0.0.1/8"      returns "255.0.0.0"
+//   - "192.168.1.10"    returns ""
+func extractNetmaskDotted(ipWithNetmask string) string {
+	prefix := extractNetmask(ipWithNetmask)
+	if prefix == "" {
+		return ""
+	}
+
+	var prefixLen int
+	if _, err := fmt.Sscan(prefix, &prefixLen); err != nil || prefixLen < 0 || prefixLen > 32 {
+		return ""
+	}
+
+	mask := net.CIDRMask(prefixLen, 32)
+	if mask == nil {
+		return ""
+	}
+
+	return fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 }
 
 // buildResolvConf creates a formatted resolv.conf-style string with nameserver entries.

@@ -52,7 +52,7 @@ import (
 	"syscall"
 	"time"
 
-	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
+	igntypes "github.com/coreos/ignition/v2/config/v3_3/types"
 
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
@@ -160,6 +160,11 @@ type rhcosConfig struct {
 
 	// DomainName is the optional DNS domain for the server (requires IBMCLOUD_API_KEY)
 	DomainName string
+
+	// KernelArgs holds zero or more kernel command-line arguments to embed in the
+	// Ignition KernelArguments.ShouldExist list. Each value corresponds to one
+	// --kernelArg flag on the command line.
+	KernelArgs []string
 
 	// ShouldDebug enables verbose debug logging when true
 	ShouldDebug bool
@@ -534,6 +539,8 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	config := &rhcosConfig{}
 
 	// Define flags
+	var kernelArgs stringSliceFlags
+	createRhcosFlags.Var(&kernelArgs, "kernelArg", "A kernel argument to add (may be specified multiple times)")
 	ptrCloud := createRhcosFlags.String("cloud", "", "The cloud to use in clouds.yaml")
 	ptrRhcosName := createRhcosFlags.String("rhcosName", "", "The name of the RHCOS VM to create")
 	availabilityZone := createRhcosFlags.String("availabilityZone", defaultAvailZone, "The name of the availability zone")
@@ -560,6 +567,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	config.PasswdHash = *ptrPasswdHash
 	config.SshPublicKey = *ptrSshPublicKey
 	config.DomainName = *ptrDomainName
+	config.KernelArgs = []string(kernelArgs)
 	config.APIKey = os.Getenv("IBMCLOUD_API_KEY")
 
 	// Parse debug flag
@@ -728,7 +736,7 @@ func printProgress(step string) {
 // When the server does not exist the function:
 //  1. Finds the target network and iterates its subnets to locate a valid subnet.
 //  2. Creates a network port on that network.
-//  3. Generates an Ignition v3.2 bootstrap configuration from config.PasswdHash,
+//  3. Generates an Ignition v3.3 bootstrap configuration from config.PasswdHash,
 //     config.SshPublicKey, and the port/subnet details.
 //  4. Creates the server via createServer (which waits for ACTIVE state).
 //  5. Verifies the new server is discoverable via findServer.
@@ -817,6 +825,7 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 		userData, err := createBootstrapIgnition(
 			config.PasswdHash,
 			config.SshPublicKey,
+			config.KernelArgs,
 			port,
 			subnet)
 		if err != nil {
@@ -1292,11 +1301,11 @@ func ensureSSHDirectory(sshDir string) error {
 	return nil
 }
 
-// createBootstrapIgnition generates an Ignition v3.2 configuration for RHCOS bootstrap.
+// createBootstrapIgnition generates an Ignition v3.3 configuration for RHCOS bootstrap.
 // The configuration includes user credentials (password hash and SSH key) for the 'core' user.
 //
 // The generated configuration:
-//   - Uses Ignition v3.2 format (latest stable)
+//   - Uses Ignition v3.3 format (latest stable)
 //   - Sets HTTP response timeout to 120 seconds
 //   - Configures the 'core' user with the provided password hash and SSH public key
 //   - When port and subnet information is provided (non-nil port, non-empty CIDR,
@@ -1315,10 +1324,10 @@ func ensureSSHDirectory(sshDir string) error {
 // Returns:
 //   - []byte: JSON-encoded Ignition configuration
 //   - error: Any error encountered during generation or validation
-func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
+func createBootstrapIgnition(passwdHash string, sshPublicKey string, kernelArgs []string, port *ports.Port, subnet subnets.Subnet) ([]byte, error) {
 	log.Debugf("Creating bootstrap ignition configuration")
 
-	// Build Ignition v3.2 configuration with user credentials
+	// Build Ignition v3.3 configuration with user credentials
 	ignConfig := igntypes.Config{
 		Ignition: igntypes.Ignition{
 			Version: igntypes.MaxVersion.String(),
@@ -1328,6 +1337,51 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports
 		},
 	}
 
+	// Insert an ip= kernel cmdline argument
+	// @TODO experimental
+	if false && port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
+		log.Debugf("createBootstrapIgnition: IPAddress = %v", port.FixedIPs[0].IPAddress)
+		log.Debugf("createBootstrapIgnition: CIDR      = %v", extractNetmask(subnet.CIDR))
+		log.Debugf("createBootstrapIgnition: Netmask   = %v", extractNetmaskDotted(subnet.CIDR))
+		log.Debugf("createBootstrapIgnition: GatewayIP = %v", subnet.GatewayIP)
+
+		// ip=<client-IP>:[<peer>]:<gateway-IP>:<netmask>:<client_hostname>:<interface>:<autoconf>[:[<mtu>][:<macaddr>]]
+		// @TODO - what is a consistent interface name?
+		ipString := fmt.Sprintf("ip=%s::%s:%s::env2:",
+			port.FixedIPs[0].IPAddress,
+			subnet.GatewayIP,
+			extractNetmaskDotted(subnet.CIDR),
+		)
+
+		// Append the new ip= string to the kernel arguments
+		if len(kernelArgs) == 0 {
+			kernelArgs = make([]string, 1)
+			kernelArgs[0] = ipString
+		} else {
+			newKernelArgs := make([]string, len(kernelArgs)+1)
+			for i, arg := range kernelArgs {
+				newKernelArgs[i] = arg
+			}
+			newKernelArgs[len(kernelArgs)] = ipString
+			kernelArgs = newKernelArgs
+		}
+	}
+	for i, arg := range kernelArgs {
+		log.Debugf("createBootstrapIgnition: kernelArgs[%d] = %v", i, arg)
+	}
+
+	// Add kernel command line arguments to the ignition (only if any were supplied)
+	if len(kernelArgs) > 0 {
+		shouldExist := make([]igntypes.KernelArgument, len(kernelArgs))
+		for i, arg := range kernelArgs {
+			shouldExist[i] = igntypes.KernelArgument(arg)
+		}
+		ignConfig.KernelArguments = igntypes.KernelArguments{
+			ShouldExist: shouldExist,
+		}
+	}
+
+	// Add a user/password
 	if passwdHash != "" && sshPublicKey != "" {
 		ignConfig.Passwd = igntypes.Passwd{
 			Users: []igntypes.PasswdUser{
@@ -1344,7 +1398,7 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports
 		ignConfig.Passwd = igntypes.Passwd{
 			Users: []igntypes.PasswdUser{
 				{
-					Name:         "core",
+					Name:              "core",
 					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
 						igntypes.SSHAuthorizedKey(sshPublicKey),
 					},
@@ -1353,6 +1407,7 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, port *ports
 		}
 	}
 
+	// Add network configuration files
 	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
 		detectIfaceUnit := `[Unit]
 Description=Detect primary network interface

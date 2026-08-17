@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
+	igntypes "github.com/coreos/ignition/v2/config/v3_3/types"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 )
@@ -406,6 +406,72 @@ func TestParseRhcosFlags(t *testing.T) {
 			expectError: true,
 			errorMsg:    "failed to parse flags",
 		},
+		{
+			name: "single kernelArg",
+			args: []string{
+				"--cloud", "mycloud",
+				"--rhcosName", "test-rhcos",
+				"--flavorName", "medium",
+				"--imageName", "rhcos-4.12",
+				"--networkName", "private-net",
+				"--passwdHash", validPasswdHash,
+				"--sshPublicKey", validSSHKey,
+				"--kernelArg", "rd.neednet=1",
+			},
+			expectError: false,
+			checkConfig: func(t *testing.T, c *rhcosConfig) {
+				if len(c.KernelArgs) != 1 {
+					t.Fatalf("Expected 1 kernel arg, got %d", len(c.KernelArgs))
+				}
+				if c.KernelArgs[0] != "rd.neednet=1" {
+					t.Errorf("Expected KernelArgs[0]=%q, got %q", "rd.neednet=1", c.KernelArgs[0])
+				}
+			},
+		},
+		{
+			name: "multiple kernelArgs",
+			args: []string{
+				"--cloud", "mycloud",
+				"--rhcosName", "test-rhcos",
+				"--flavorName", "medium",
+				"--imageName", "rhcos-4.12",
+				"--networkName", "private-net",
+				"--passwdHash", validPasswdHash,
+				"--sshPublicKey", validSSHKey,
+				"--kernelArg", "rd.neednet=1",
+				"--kernelArg", "console=tty0",
+			},
+			expectError: false,
+			checkConfig: func(t *testing.T, c *rhcosConfig) {
+				if len(c.KernelArgs) != 2 {
+					t.Fatalf("Expected 2 kernel args, got %d", len(c.KernelArgs))
+				}
+				if c.KernelArgs[0] != "rd.neednet=1" {
+					t.Errorf("Expected KernelArgs[0]=%q, got %q", "rd.neednet=1", c.KernelArgs[0])
+				}
+				if c.KernelArgs[1] != "console=tty0" {
+					t.Errorf("Expected KernelArgs[1]=%q, got %q", "console=tty0", c.KernelArgs[1])
+				}
+			},
+		},
+		{
+			name: "no kernelArgs defaults to empty slice",
+			args: []string{
+				"--cloud", "mycloud",
+				"--rhcosName", "test-rhcos",
+				"--flavorName", "medium",
+				"--imageName", "rhcos-4.12",
+				"--networkName", "private-net",
+				"--passwdHash", validPasswdHash,
+				"--sshPublicKey", validSSHKey,
+			},
+			expectError: false,
+			checkConfig: func(t *testing.T, c *rhcosConfig) {
+				if len(c.KernelArgs) != 0 {
+					t.Errorf("Expected empty KernelArgs, got %v", c.KernelArgs)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -578,11 +644,68 @@ func TestCreateBootstrapIgnition(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "kernel args embedded in ignition",
+			config: &rhcosConfig{
+				PasswdHash:   validPasswdHash,
+				SshPublicKey: validSSHKey,
+				KernelArgs:   []string{"rd.neednet=1", "console=tty0"},
+			},
+			expectError: false,
+			validate: func(t *testing.T, data []byte) {
+				var rawConfig map[string]json.RawMessage
+				if err := json.Unmarshal(data, &rawConfig); err != nil {
+					t.Fatalf("Failed to unmarshal ignition config: %v", err)
+				}
+				var kaSection struct {
+					ShouldExist []string `json:"shouldExist"`
+				}
+				if err := json.Unmarshal(rawConfig["kernelArguments"], &kaSection); err != nil {
+					t.Fatalf("Failed to unmarshal kernelArguments: %v", err)
+				}
+				if len(kaSection.ShouldExist) != 2 {
+					t.Fatalf("Expected 2 kernel args, got %d", len(kaSection.ShouldExist))
+				}
+				if kaSection.ShouldExist[0] != "rd.neednet=1" {
+					t.Errorf("Expected ShouldExist[0]=%q, got %q", "rd.neednet=1", kaSection.ShouldExist[0])
+				}
+				if kaSection.ShouldExist[1] != "console=tty0" {
+					t.Errorf("Expected ShouldExist[1]=%q, got %q", "console=tty0", kaSection.ShouldExist[1])
+				}
+			},
+		},
+		{
+			name: "no kernel args produces empty shouldExist",
+			config: &rhcosConfig{
+				PasswdHash:   validPasswdHash,
+				SshPublicKey: validSSHKey,
+				KernelArgs:   nil,
+			},
+			expectError: false,
+			validate: func(t *testing.T, data []byte) {
+				var rawConfig map[string]json.RawMessage
+				if err := json.Unmarshal(data, &rawConfig); err != nil {
+					t.Fatalf("Failed to unmarshal ignition config: %v", err)
+				}
+				// kernelArguments may be present but shouldExist must be absent or empty
+				if ka, present := rawConfig["kernelArguments"]; present {
+					var kaSection struct {
+						ShouldExist []string `json:"shouldExist"`
+					}
+					if err := json.Unmarshal(ka, &kaSection); err != nil {
+						t.Fatalf("Failed to unmarshal kernelArguments: %v", err)
+					}
+					if len(kaSection.ShouldExist) != 0 {
+						t.Errorf("Expected shouldExist to be empty, got %v", kaSection.ShouldExist)
+					}
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := createBootstrapIgnition(tt.config.PasswdHash, tt.config.SshPublicKey, nil, subnets.Subnet{})
+			data, err := createBootstrapIgnition(tt.config.PasswdHash, tt.config.SshPublicKey, tt.config.KernelArgs, nil, subnets.Subnet{})
 
 			if tt.expectError {
 				if err == nil {
@@ -618,7 +741,7 @@ func TestCreateBootstrapIgnition_SizeLimit(t *testing.T) {
 		SshPublicKey: validSSHKey,
 	}
 
-	data, err := createBootstrapIgnition(config.PasswdHash, config.SshPublicKey, nil, subnets.Subnet{})
+	data, err := createBootstrapIgnition(config.PasswdHash, config.SshPublicKey, config.KernelArgs, nil, subnets.Subnet{})
 	if err != nil {
 		t.Fatalf("Failed to create ignition config: %v", err)
 	}

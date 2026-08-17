@@ -1674,6 +1674,7 @@ func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, 
 		userData, err = createBootstrapIgnition(
 			config.PasswdHash,
 			config.BastionRsaPub,
+			nil,
 			port,
 			subnet)
 		log.Debugf("createServer: err = %v", err)
