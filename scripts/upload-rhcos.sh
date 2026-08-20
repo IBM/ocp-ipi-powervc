@@ -1040,10 +1040,6 @@ function call_pvcctl() {
 	local filename="$2"
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
 
-	log_info "url=${url}"
-	log_info "filename=${filename}"
-	log_info "converted_filename=${converted_filename}"
-
 	# Display the command we will execute (for logging and verification)
 	echo pvcctl \
 		image import-linux \
