@@ -86,6 +86,8 @@ readonly COLOR_RESET='\033[0m'       # Reset to default
 # Returns: None
 # Global Variables:
 #   QUIET - If true, suppresses output
+#   COLOR_BLUE - Blue color code for info messages
+#   COLOR_RESET - Reset color code
 # Example: log_info "Processing release 4.21"
 #------------------------------------------------------------------------------
 function log_info() {
@@ -102,6 +104,8 @@ function log_info() {
 # Returns: None
 # Global Variables:
 #   QUIET - If true, suppresses output
+#   COLOR_GREEN - Green color code for success messages
+#   COLOR_RESET - Reset color code
 # Example: log_success "All releases processed successfully"
 #------------------------------------------------------------------------------
 function log_success() {
@@ -118,6 +122,8 @@ function log_success() {
 # Returns: None
 # Global Variables:
 #   QUIET - If true, suppresses output
+#   COLOR_YELLOW - Yellow color code for warning messages
+#   COLOR_RESET - Reset color code
 # Example: log_warning "No release specified, using default"
 #------------------------------------------------------------------------------
 function log_warning() {
@@ -128,11 +134,14 @@ function log_warning() {
 
 #------------------------------------------------------------------------------
 # Function: log_error
-# Description: Print error message in red color to stderr unless quiet mode is enabled
+# Description: Print error message in red color to stderr (suppressed in quiet mode)
 # Arguments:
 #   $* - Error message to display
 # Returns: None
-# Note: Errors are suppressed in QUIET mode; use die() for critical errors
+# Global Variables:
+#   QUIET - If true, suppresses output
+#   COLOR_RED - Red color code for error messages
+#   COLOR_RESET - Reset color code
 # Example: log_error "Failed to download file"
 #------------------------------------------------------------------------------
 function log_error() {
@@ -200,12 +209,14 @@ function command_exists() {
 #   - curl: For downloading files
 #   - jq: For JSON parsing
 #   - openstack: For OpenStack CLI operations
-#   - pvsadm: For converting qcow2 to OVA format
+#   - pvsadm: For converting qcow2 to OVA format (optional, warns if missing)
 #   - pvcctl OR powervc-image: For importing images into PowerVC (either one required)
 # Global Variables Modified:
+#   USE_PVSADM - Set to true if pvsadm is found, false otherwise
 #   USE_PVCCTL - Set to true if pvcctl is found, false if powervc-image is used
 # Behavior:
-#   Checks for core required programs first, then determines which PowerVC
+#   Checks for core required programs (curl, jq, openstack) first, then sets
+#   USE_PVSADM based on pvsadm availability, then determines which PowerVC
 #   import tool is available (pvcctl preferred over powervc-image)
 # Example: check_required_programs
 #------------------------------------------------------------------------------
@@ -248,11 +259,10 @@ function check_required_programs() {
 
 #------------------------------------------------------------------------------
 # Function: check_openstack_cli
-# Description: Verify that OpenStack CLI is available
+# Description: Verify that OpenStack CLI is available (exits via die if missing)
 # Arguments: None
 # Returns:
 #   0 - OpenStack CLI found
-#   1 - OpenStack CLI not found (exits via die)
 # Note: Can be skipped by using --dry-run mode
 # Example: check_openstack_cli
 #------------------------------------------------------------------------------
@@ -340,6 +350,11 @@ function verify_openstack_resource() {
 
 	log_info "Verifying ${resource_type}: ${resource_name}"
 
+	if [[ "${DRY_RUN}" == "true" ]]; then
+		log_warning "Running in DRY RUN mode - no actual call will be performed"
+		return 1
+	fi
+
 	if ! openstack --os-cloud="${cloud}" "${resource_type}" show "${resource_name}" >/dev/null 2>&1; then
 		log_error "Cannot find ${resource_type} '${resource_name}'"
 		return 1
@@ -358,20 +373,26 @@ function verify_openstack_resource() {
 #   0 - Arguments parsed successfully
 #   1 - Invalid arguments (exits via die)
 # Global Variables Modified:
-#   RELEASES - Array of release versions to process
-#   VERBOSE - Enable verbose/debug output
+#   CLOUD - OpenStack cloud name
 #   DRY_RUN - Enable dry-run mode
-#   QUIET - Suppress log output (except errors)
-#   OUTPUT_FORMAT - Output format (text, json, csv)
+#   PROJECT - Optional project prefix for image names
+#   PROJECT_UPLOAD - PowerVC project name for image upload
+#   RELEASES - Array of release versions to process
 #   RHEL_VERSION - RHEL version preference (rhel9, rhel10, or empty)
+#   SVC_HOST - PowerVC service host
+#   TEMPLATE - PowerVC template UUID
+#   VERBOSE - Enable verbose/debug output
 # Supported Options:
-#   --release <version> - Specify release (can be used multiple times)
-#   -v, --verbose - Enable verbose output
-#   -q, --quiet - Suppress log output (except errors)
-#   --dry-run - Simulate operations
-#   --format <type> - Output format (text, json, csv)
-#   --rhel <version> - RHEL version preference (rhel9 or rhel10)
-#   -h, --help - Show usage information
+#   --cloud <name>          - OpenStack cloud name from clouds.yaml
+#   --dry-run               - Simulate operations without making changes
+#   --project <name>        - Optional project prefix prepended to image filenames
+#   --project-upload <name> - PowerVC project for image upload
+#   --release <version>     - Specify release (can be used multiple times)
+#   --rhel <version>        - RHEL version preference (rhel9 or rhel10)
+#   --svc-host <host>       - PowerVC service host
+#   --template <uuid>       - PowerVC template UUID
+#   -v, --verbose           - Enable verbose output
+#   -h, --help              - Show usage information
 # Example: parse_arguments "$@"
 #------------------------------------------------------------------------------
 function parse_arguments() {
@@ -475,14 +496,16 @@ Download RHCOS images and upload them to PowerVC/OpenStack for OpenShift deploym
 This script automates the process of:
 	 1. Downloading CoreOS metadata from GitHub
 	 2. Extracting image information (URL, filename, SHA256)
-	 3. Converting qcow2 images to OVA format using pvsadm
+	 3. Converting qcow2 images to OVA format using pvsadm (if available)
 	 4. Importing OVA images into PowerVC using pvcctl or powervc-image
 
 OPTIONS:
 	   --cloud <name>         OpenStack cloud name from clouds.yaml
 	                         Can also be set via CLOUD environment variable
-	   --project <name>       PowerVC project name for image access control
-	                         Required for pvcctl image import
+	   --project <name>       Optional project prefix prepended to image filenames
+	                         Trailing '-' is stripped if present
+	   --project-upload <name> PowerVC project name for image upload
+	                         Required for image import
 	   --release <version>    Specify a release version (can be used multiple times)
 	                         Example: --release release-4.21 --release release-4.22
 	                         Default: release-4.21 if not specified
@@ -500,8 +523,10 @@ OPTIONS:
 ENVIRONMENT VARIABLES:
 	   CLOUD                  OpenStack cloud name from clouds.yaml
 	                         Can be set via --cloud option or interactively
-	   PROJECT                PowerVC project name
-	                         Can be set via --project option or interactively
+	   PROJECT                Optional project prefix prepended to image filenames
+	                         Can be set via --project option
+	   PROJECT_UPLOAD         PowerVC project name for image upload
+	                         Can be set via --project-upload option or interactively
 	   RHEL_VERSION           RHEL version preference (rhel9 or rhel10)
 	                         Can be set via --rhel option or interactively
 	   SVC_HOST               PowerVC service host
@@ -514,7 +539,7 @@ REQUIRED TOOLS:
 	   curl                   For downloading files and checking URLs
 	   jq                     For parsing JSON metadata
 	   openstack              For verifying OpenStack connectivity (unless --dry-run)
-	   pvsadm                 For converting qcow2 images to OVA format
+	   pvsadm                 For converting qcow2 images to OVA format (optional)
 	   pvcctl or powervc-image For importing images into PowerVC (either one required)
 
 EXAMPLES:
@@ -522,7 +547,7 @@ EXAMPLES:
 	   ${SCRIPT_NAME}
 
 	   # Specify all options on command line
-	   ${SCRIPT_NAME} --cloud mycloud --project myproject --release release-4.21 \\
+	   ${SCRIPT_NAME} --cloud mycloud --project-upload myproject --release release-4.21 \\
 	                  --rhel rhel9 --svc-host powervc.example.com --template <uuid>
 
 	   # Multiple releases with RHEL 9 preference
@@ -536,7 +561,7 @@ EXAMPLES:
 
 	   # Use environment variables
 	   export CLOUD=mycloud
-	   export PROJECT=myproject
+	   export PROJECT_UPLOAD=myproject
 	   export RHEL_VERSION=rhel9
 	   export SVC_HOST=powervc.example.com
 	   export TEMPLATE=<uuid>
@@ -545,17 +570,16 @@ EXAMPLES:
 WORKFLOW:
 	   1. Parse command-line arguments and collect missing variables interactively
 	   2. Validate all required environment variables are set
-	   3. Check for required programs (curl, jq, openstack, pvsadm)
-	   4. Detect available PowerVC import tool (pvcctl or powervc-image)
-	   5. Verify OpenStack connectivity (unless --dry-run)
-	   6. For each release:
+	   3. Check for required programs (curl, jq, openstack) and detect pvsadm/pvcctl
+	   4. Check OpenStack CLI availability
+	   5. For each release:
 	      a. Download CoreOS JSON metadata from GitHub
 	      b. Extract image URL, filename, and SHA256 checksum
 	      c. Check if image already exists in OpenStack
 	      d. If not exists:
-	         - Call pvsadm to convert qcow2 to OVA format
-	         - Call pvcctl (via powervc-go) or powervc-image to import OVA into PowerVC
-	   7. Report success or failure for each release
+	         - Call pvsadm to convert qcow2 to OVA format (if pvsadm available)
+	         - Call pvcctl or powervc-image to import OVA into PowerVC
+	   6. Report success or failure for each release
 
 NOTES:
 	   - If no --release is specified, defaults to release-4.21
@@ -795,9 +819,11 @@ function download_coreos_json() {
 # Global Variables:
 #   FILE1 - Input JSON file path
 #   FILE2 - Temporary file for intermediate processing
+#   PROJECT - Optional prefix prepended to filename (trailing '-' is stripped)
 # Extracted Fields:
 #   download_url - URL to download the image
-#   filename - Image filename (without .qcow2.gz extension)
+#   filename - Image filename (without .qcow2.gz extension), optionally
+#              prefixed with PROJECT (trailing '-' stripped) if PROJECT is set
 #   sha256 - SHA256 checksum of the image
 # Example:
 #   declare -A image_info
@@ -838,13 +864,14 @@ function extract_image_info() {
 #   0 - Release processed successfully
 #   1 - Failed to process release
 # Global Variables:
-#   USE_PVCCTL - Determines which PowerVC import tool to use
+#   USE_PVSADM - If true, calls pvsadm to convert qcow2 to OVA before import
+#   USE_PVCCTL - If true, uses pvcctl for import; otherwise uses powervc-image
 # Processing Steps:
 #   1. Download CoreOS JSON from GitHub
 #   2. Extract image metadata (URL, filename, SHA256)
 #   3. Verify if image already exists in OpenStack
 #   4. If image doesn't exist:
-#      a. Call pvsadm to convert qcow2 to OVA format
+#      a. If USE_PVSADM=true, call pvsadm to convert qcow2 to OVA format
 #      b. Call pvcctl (if USE_PVCCTL=true) or powervc-image to import into PowerVC
 # Example: process_release "release-4.21"
 #------------------------------------------------------------------------------
@@ -969,7 +996,7 @@ function call_pvsadm() {
 
 #------------------------------------------------------------------------------
 # Function: call_pvcctl
-# Description: Execute powervc-go to import OVA image into PowerVC
+# Description: Execute pvcctl to import OVA image into PowerVC
 # Arguments:
 #   $1 - Image filename (without extension)
 # Returns:
@@ -982,7 +1009,7 @@ function call_pvsadm() {
 #   SCRIPT_DIR - Directory containing the script (used to locate OVA file)
 #   DRY_RUN - If true, skips actual execution and only displays command
 # External Dependencies:
-#    pvcctl - PowerVC control tool
+#   pvcctl - PowerVC control tool
 # Command Details:
 #   - image import-linux: Import Linux image into PowerVC
 #   - --image: Path to the OVA image file (expects .ova.gz extension)
@@ -997,9 +1024,9 @@ function call_pvsadm() {
 # Behavior:
 #   1. Checks if OVA file exists at ${SCRIPT_DIR}/${filename}.ova.gz
 #   2. If file doesn't exist, logs error and returns 1
-#   3. Displays the command that will be executed (shows pvcctl for reference)
+#   3. Displays the command that will be executed (for logging and verification)
 #   4. If DRY_RUN is true, logs warning and returns without execution
-#   5. Otherwise, executes the powervc-go image import-linux command
+#   5. Otherwise, executes the pvcctl image import-linux command
 # File Expectations:
 #   - OVA file must exist at: ${SCRIPT_DIR}/${filename}.ova.gz
 #   - File should be created by pvsadm prior to calling this function
@@ -1008,11 +1035,6 @@ function call_pvsadm() {
 function call_pvcctl() {
 	local filename="$1"
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
-
-	if [[ ! -f "${converted_filename}" ]]; then
-		log_error "File is missing: (${converted_filename})!"
-		return 1
-	fi
 
 	# Display the command we will execute (for logging and verification)
 	echo pvcctl \
@@ -1031,6 +1053,11 @@ function call_pvcctl() {
 	if [[ "${DRY_RUN}" == "true" ]]; then
 		log_warning "Running in DRY RUN mode - no actual call will be performed"
 		return 0
+	fi
+
+	if [[ ! -f "${converted_filename}" ]]; then
+		log_error "File is missing: (${converted_filename})!"
+		return 1
 	fi
 
 	# Execute the pvcctl image import-linux command
@@ -1130,17 +1157,16 @@ function call_powervc_image() {
 #   1. Parse command-line arguments
 #   2. Collect missing environment variables interactively
 #   3. Validate all required environment variables
-#   4. Check required programs (curl, jq, openstack, pvsadm)
-#   5. Detect available PowerVC import tool (pvcctl or powervc-image) and set USE_PVCCTL
-#   6. Check OpenStack CLI availability
-#   7. Process each release:
+#   4. Check required programs (curl, jq, openstack) and detect pvsadm/pvcctl
+#   5. Check OpenStack CLI availability
+#   6. Process each release:
 #      - Download CoreOS JSON metadata from GitHub
 #      - Extract image metadata (URL, filename, SHA256)
 #      - Verify if image already exists in OpenStack
 #      - If image doesn't exist:
-#        * Call pvsadm to convert qcow2 to OVA format
-#        * Call pvcctl (via powervc-go) OR powervc-image to import OVA into PowerVC
-#   8. Log success or failure for each release
+#        * Call pvsadm to convert qcow2 to OVA format (if USE_PVSADM=true)
+#        * Call pvcctl OR powervc-image to import OVA into PowerVC
+#   7. Log success or failure for each release
 # Global Variables Used:
 #   RELEASES - Array of releases to process
 #   DRY_RUN - Dry-run mode flag (skips actual operations)
@@ -1151,6 +1177,7 @@ function call_powervc_image() {
 #   PROJECT_UPLOAD - PowerVC project for image upload
 #   SVC_HOST - PowerVC service host
 #   TEMPLATE - PowerVC template UUID
+#   USE_PVSADM - Flag indicating whether pvsadm is available
 #   USE_PVCCTL - Flag indicating which PowerVC tool to use
 #   SCRIPT_NAME - Name of this script
 # Example: main "$@"
