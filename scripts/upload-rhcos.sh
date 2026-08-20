@@ -337,10 +337,10 @@ function verify_openstack_connectivity() {
 #   $3 - Cloud name (optional, defaults to $CLOUD)
 # Returns:
 #   0 - Resource found
-#   1 - Resource not found
+#   1 - Resource not found (or dry-run mode)
 # Global Variables:
 #   CLOUD - Default OpenStack cloud name
-#   DRY_RUN - If true, skips actual verification
+#   DRY_RUN - If true, skips actual verification and returns 1
 # Example: verify_openstack_resource "image" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
 function verify_openstack_resource() {
@@ -872,7 +872,8 @@ function extract_image_info() {
 #   3. Verify if image already exists in OpenStack
 #   4. If image doesn't exist:
 #      a. If USE_PVSADM=true, call pvsadm to convert qcow2 to OVA format
-#      b. Call pvcctl (if USE_PVCCTL=true) or powervc-image to import into PowerVC
+#      b. If USE_PVCCTL=true, call pvcctl with (download_url, filename);
+#         otherwise call powervc-image with (filename)
 # Example: process_release "release-4.21"
 #------------------------------------------------------------------------------
 function process_release() {
@@ -911,7 +912,7 @@ function process_release() {
 		fi
 
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
-			if ! call_pvcctl ${image_info[filename]}; then
+			if ! call_pvcctl ${image_info[download_url]} ${image_info[filename]}; then
 				log_error "pvcctl failed!"
 				return 1
 			fi
@@ -996,9 +997,10 @@ function call_pvsadm() {
 
 #------------------------------------------------------------------------------
 # Function: call_pvcctl
-# Description: Execute pvcctl to import OVA image into PowerVC
+# Description: Execute pvcctl to import an image into PowerVC via download URL
 # Arguments:
-#   $1 - Image filename (without extension)
+#   $1 - Download URL for the image
+#   $2 - Image name (used for --name and to locate the OVA file)
 # Returns:
 #   0 - Command executed successfully or dry-run mode
 #   1 - OVA file not found or command execution failed
@@ -1007,12 +1009,12 @@ function call_pvsadm() {
 #   SVC_HOST - PowerVC service host for image import
 #   TEMPLATE - PowerVC template UUID for image creation
 #   SCRIPT_DIR - Directory containing the script (used to locate OVA file)
-#   DRY_RUN - If true, skips actual execution and only displays command
+#   DRY_RUN - If true, skips OVA existence check and actual execution
 # External Dependencies:
 #   pvcctl - PowerVC control tool
 # Command Details:
 #   - image import-linux: Import Linux image into PowerVC
-#   - --image: Path to the OVA image file (expects .ova.gz extension)
+#   - --image: Download URL of the image
 #   - --name: Name for the imported image in PowerVC
 #   - --os-type "coreos": Operating system type
 #   - --volume-size "120": Volume size in GB (120GB for OpenShift)
@@ -1022,24 +1024,30 @@ function call_pvsadm() {
 #   - --config: Configuration file (default-config.yaml)
 #   - --log-file: Log file for import operation (pwr1.log)
 # Behavior:
-#   1. Checks if OVA file exists at ${SCRIPT_DIR}/${filename}.ova.gz
-#   2. If file doesn't exist, logs error and returns 1
-#   3. Displays the command that will be executed (for logging and verification)
-#   4. If DRY_RUN is true, logs warning and returns without execution
-#   5. Otherwise, executes the pvcctl image import-linux command
+#   1. Logs the url, filename, and resolved OVA path
+#   2. Displays the command that will be executed (for logging and verification)
+#   3. If DRY_RUN is true, logs warning and returns without execution
+#   4. Checks if OVA file exists at ${SCRIPT_DIR}/${filename}.ova.gz
+#   5. If file doesn't exist, logs error and returns 1
+#   6. Otherwise, executes the pvcctl image import-linux command
 # File Expectations:
 #   - OVA file must exist at: ${SCRIPT_DIR}/${filename}.ova.gz
 #   - File should be created by pvsadm prior to calling this function
-# Example: call_pvcctl "rhcos-4.21.0"
+# Example: call_pvcctl "https://example.com/rhcos.qcow2.gz" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
 function call_pvcctl() {
-	local filename="$1"
+	local url="$1"
+	local filename="$2"
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
+
+	log_info "url=${url}"
+	log_info "filename=${filename}"
+	log_info "converted_filename=${converted_filename}"
 
 	# Display the command we will execute (for logging and verification)
 	echo pvcctl \
 		image import-linux \
-		--image "${converted_filename}" \
+		--image "${url}" \
 		--name "${filename}" \
 		--os-type "coreos" \
 		--volume-size "120" \
@@ -1063,7 +1071,7 @@ function call_pvcctl() {
 	# Execute the pvcctl image import-linux command
 	pvcctl \
 		image import-linux \
-		--image "${converted_filename}" \
+		--image "${url}" \
 		--name "${filename}" \
 		--os-type "coreos" \
 		--volume-size "120" \
