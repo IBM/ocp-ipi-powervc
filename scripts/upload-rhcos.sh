@@ -1024,15 +1024,13 @@ function call_pvsadm() {
 #   - --config: Configuration file (default-config.yaml)
 #   - --log-file: Log file for import operation (pwr1.log)
 # Behavior:
-#   1. Logs the url, filename, and resolved OVA path
-#   2. Displays the command that will be executed (for logging and verification)
-#   3. If DRY_RUN is true, logs warning and returns without execution
-#   4. Checks if OVA file exists at ${SCRIPT_DIR}/${filename}.ova.gz
-#   5. If file doesn't exist, logs error and returns 1
-#   6. Otherwise, executes the pvcctl image import-linux command
+#   1. Displays the command that will be executed (for logging and verification)
+#   2. If DRY_RUN is true, logs warning and returns without execution
+#   3. If url is a local path (not http:// or https://), checks that the file
+#      exists; logs error and returns 1 if it is missing
+#   4. Otherwise, executes the pvcctl image import-linux command
 # File Expectations:
-#   - OVA file must exist at: ${SCRIPT_DIR}/${filename}.ova.gz
-#   - File should be created by pvsadm prior to calling this function
+#   - When url is a local path, the file must exist before calling this function
 # Example: call_pvcctl "https://example.com/rhcos.qcow2.gz" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
 function call_pvcctl() {
@@ -1059,9 +1057,12 @@ function call_pvcctl() {
 		return 0
 	fi
 
-	if [[ ! -f "${converted_filename}" ]]; then
-		log_error "File is missing: (${converted_filename})!"
-		return 1
+	# Only check for a missing file when url is a local path, not a remote URL
+	if [[ "${url}" != "http://"* && "${url}" != "https://"* ]]; then
+		if [[ ! -f "${url}" ]]; then
+			log_error "File is missing: (${url})!"
+			return 1
+		fi
 	fi
 
 	# Execute the pvcctl image import-linux command
