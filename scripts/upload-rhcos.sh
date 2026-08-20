@@ -812,8 +812,9 @@ function extract_image_info() {
 	result[filename]="${result[download_url]##*/}"
 	result[filename]="${result[filename]%.qcow2.gz}"
 	if is_var_set PROJECT; then
-		log_info "Prepending project (${PROJECT}) to RHCOS filename"
-		result[filename]="${PROJECT}-${result[filename]}"
+		local project="${PROJECT%-}"
+		log_info "Prepending project (${project}) to RHCOS filename"
+		result[filename]="${project}-${result[filename]}"
 	fi
 	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
 
