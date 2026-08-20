@@ -26,8 +26,6 @@
 //
 // # Dependencies
 //
-//   - curl        – URL accessibility checks and JSON downloads
-//   - jq          – JSON parsing
 //   - openstack   – Image existence verification
 //   - pvsadm      – qcow2 → OVA conversion (optional; detected at runtime)
 //   - pvcctl OR powervc-image – PowerVC image import (one is required)
@@ -46,6 +44,7 @@
 //	  --template <uuid>        PowerVC template UUID              (env: TEMPLATE)
 //	  -v, --verbose            Enable debug output
 //	  --dry-run                Simulate operations; no real calls
+//	  --quiet                  Suppress all non-error output
 //	  -h, --help               Show usage and exit
 //
 // # Environment Variables
@@ -59,6 +58,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -80,6 +80,27 @@ const (
 	colorCyan   = "\033[0;36m"
 	colorReset  = "\033[0m"
 )
+
+// Pre-built log prefixes — avoids repeated string concatenation on every call.
+const (
+	prefixInfo    = colorBlue + "[INFO]" + colorReset + " "
+	prefixSuccess = colorGreen + "[SUCCESS]" + colorReset + " "
+	prefixWarning = colorYellow + "[WARNING]" + colorReset + " "
+	prefixError   = colorRed + "[ERROR]" + colorReset + " "
+	prefixDebug   = colorCyan + "[DEBUG]" + colorReset + " "
+)
+
+// Download retry configuration.
+const (
+	downloadMaxRetries = 3
+	downloadRetryDelay = 2 * time.Second
+	downloadTimeout    = 5 * time.Minute
+)
+
+// stdinReader is a single buffered reader over os.Stdin shared across all
+// interactive prompts.  Using one reader prevents the internal read-ahead
+// buffer of one call consuming bytes that the next call expects.
+var stdinReader = bufio.NewReader(os.Stdin)
 
 // ─── Global configuration ─────────────────────────────────────────────────────
 
@@ -131,84 +152,103 @@ type config struct {
 	usePvcctl bool
 }
 
-// imageInfo holds the metadata extracted from a CoreOS JSON file.
+// imageInfo holds the ppc64le OpenStack image metadata extracted from a
+// CoreOS JSON file by extractImageInfo.
 type imageInfo struct {
+	// DownloadURL is the full HTTPS URL of the qcow2.gz image.
 	DownloadURL string
-	Filename    string
-	SHA256      string
+
+	// Filename is the derived image name used as the PowerVC image name.
+	// It is the basename of DownloadURL with the ".qcow2.gz" suffix removed,
+	// and optionally prefixed with config.Project.
+	Filename string
+
+	// SHA256 is the hex-encoded SHA-256 checksum of the qcow2.gz image.
+	SHA256 string
 }
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
+// logInfo writes a blue [INFO] line to stdout.
+// Suppressed when c.Quiet is true.
 func (c *config) logInfo(format string, args ...any) {
 	if !c.Quiet {
-		fmt.Printf(colorBlue+"[INFO]"+colorReset+" "+format+"\n", args...)
+		fmt.Printf(prefixInfo+format+"\n", args...)
 	}
 }
 
+// logSuccess writes a green [SUCCESS] line to stdout.
+// Suppressed when c.Quiet is true.
 func (c *config) logSuccess(format string, args ...any) {
 	if !c.Quiet {
-		fmt.Printf(colorGreen+"[SUCCESS]"+colorReset+" "+format+"\n", args...)
+		fmt.Printf(prefixSuccess+format+"\n", args...)
 	}
 }
 
+// logWarning writes a yellow [WARNING] line to stdout.
+// Suppressed when c.Quiet is true.
 func (c *config) logWarning(format string, args ...any) {
 	if !c.Quiet {
-		fmt.Printf(colorYellow+"[WARNING]"+colorReset+" "+format+"\n", args...)
+		fmt.Printf(prefixWarning+format+"\n", args...)
 	}
 }
 
+// logError writes a red [ERROR] line to stderr.
+// Always visible — not suppressed by c.Quiet.
 func (c *config) logError(format string, args ...any) {
-	if !c.Quiet {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" "+format+"\n", args...)
-	}
+	fmt.Fprintf(os.Stderr, prefixError+format+"\n", args...)
 }
 
+// logDebug writes a cyan [DEBUG] line to stdout.
+// Only emitted when c.Verbose is true.
 func (c *config) logDebug(format string, args ...any) {
 	if c.Verbose {
-		fmt.Printf(colorCyan+"[DEBUG]"+colorReset+" "+format+"\n", args...)
+		fmt.Printf(prefixDebug+format+"\n", args...)
 	}
 }
 
-// die logs the message unconditionally and exits with status 1.
+// die logs format to stderr via logError and exits the process with status 1.
+// It is used for unrecoverable configuration or environment errors.
 func (c *config) die(format string, args ...any) {
-	savedQuiet := c.Quiet
-	c.Quiet = false
 	c.logError(format, args...)
-	c.Quiet = savedQuiet
 	os.Exit(1)
 }
 
 // ─── Dependency detection ─────────────────────────────────────────────────────
 
-// commandExists returns true when the named program is found in PATH.
+// commandExists reports whether the named program is available in PATH.
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
 
-// checkRequiredPrograms verifies that all required external tools are available
-// and sets c.usePvsadm / c.usePvcctl accordingly.
+// checkRequiredPrograms checks for all external tools needed at runtime and
+// configures c.usePvsadm and c.usePvcctl accordingly.
+//
+// Required (fatal if absent):
+//   - openstack — used by verifyOpenstackConnectivity and imageExistsInOpenStack.
+//   - pvcctl OR powervc-image — at least one must be present for image import.
+//
+// Optional:
+//   - pvsadm — if found, c.usePvsadm is set to true and qcow2→OVA conversion
+//     is performed before import; if absent a warning is logged and conversion
+//     is skipped.
+//
+// Side-effects: sets c.usePvsadm and c.usePvcctl.
+// Exits via die if openstack or both import tools are missing.
 func (c *config) checkRequiredPrograms() {
 	c.logInfo("Checking required programs...")
 
-	required := []string{"curl", "jq", "openstack"}
-	var missing []string
-	for _, prog := range required {
-		if !commandExists(prog) {
-			missing = append(missing, prog)
-			c.logError("Missing required program: %s", prog)
-		}
-	}
-	if len(missing) > 0 {
-		c.die("Missing required programs: %s", strings.Join(missing, ", "))
+	// openstack is the only mandatory external binary; JSON fetching and
+	// parsing are handled natively by net/http and encoding/json.
+	if !commandExists("openstack") {
+		c.die("Missing required program: openstack")
 	}
 
 	if commandExists("pvsadm") {
 		c.usePvsadm = true
 	} else {
-		c.logWarning("pvsadm is missing")
-		c.usePvsadm = false
+		c.logWarning("pvsadm not found — qcow2 to OVA conversion will be skipped")
 	}
 
 	switch {
@@ -217,7 +257,6 @@ func (c *config) checkRequiredPrograms() {
 		c.usePvcctl = true
 	case commandExists("powervc-image"):
 		c.logInfo("Did not find pvcctl, but found powervc-image instead")
-		c.usePvcctl = false
 	default:
 		c.die("Missing required programs: either pvcctl or powervc-image must exist!")
 	}
@@ -227,20 +266,25 @@ func (c *config) checkRequiredPrograms() {
 
 // ─── Interactive prompts ──────────────────────────────────────────────────────
 
-// promptInput reads a value from stdin with an optional default.  If the input
-// is empty and allowEmpty is false the program exits with an error.
+// promptInput displays prompt on stdout, reads one line from stdinReader, and
+// returns the trimmed value.
+//
+// If defaultVal is non-empty it is shown in brackets after prompt and used
+// when the user presses Enter without typing anything.  varName is only used
+// in error messages.
+//
+// If the final value is still empty and allowEmpty is false the program prints
+// an error and exits with status 1.
 func promptInput(prompt, varName, defaultVal string, allowEmpty bool) string {
-	reader := bufio.NewReader(os.Stdin)
-
 	if defaultVal != "" {
 		fmt.Printf("%s [%s]: ", prompt, defaultVal)
 	} else {
-		fmt.Printf("%s []: ", prompt)
+		fmt.Printf("%s: ", prompt)
 	}
 
-	line, err := reader.ReadString('\n')
+	line, err := stdinReader.ReadString('\n')
 	if err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" Failed to read input for %s: %v\n", varName, err)
+		fmt.Fprintf(os.Stderr, prefixError+"Failed to read input for %s: %v\n", varName, err)
 		os.Exit(1)
 	}
 
@@ -250,27 +294,61 @@ func promptInput(prompt, varName, defaultVal string, allowEmpty bool) string {
 	}
 
 	if value == "" && !allowEmpty {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" You must enter a value for %s\n", varName)
+		fmt.Fprintf(os.Stderr, prefixError+"You must enter a value for %s\n", varName)
 		os.Exit(1)
 	}
 
 	return value
 }
 
+// promptRhelVersion loops until the user enters exactly "rhel9" or "rhel10",
+// re-prompting and printing an error on each invalid entry.
+func promptRhelVersion() string {
+	for {
+		v := promptInput("RHEL version (rhel9 or rhel10)", "RHEL_VERSION", "", false)
+		if v == "rhel9" || v == "rhel10" {
+			return v
+		}
+		fmt.Fprintf(os.Stderr, prefixError+"Invalid value %q — must be rhel9 or rhel10\n", v)
+	}
+}
+
+// envOrPrompt returns the value of the environment variable envVar when it is
+// set and non-empty.  If the variable is absent or empty the user is prompted
+// interactively using promptInput with the given prompt string.
+func envOrPrompt(envVar, prompt string) string {
+	if v := os.Getenv(envVar); v != "" {
+		return v
+	}
+	return promptInput(prompt, envVar, "", false)
+}
+
 // ─── Argument parsing ─────────────────────────────────────────────────────────
 
-// releaseFlag supports --release being specified multiple times.
+// releaseFlag implements flag.Value to allow --release to be specified
+// multiple times on the command line, accumulating each value into a slice.
 type releaseFlag []string
 
+// String returns a comma-separated representation of all accumulated values,
+// satisfying the flag.Value interface.
 func (r *releaseFlag) String() string { return strings.Join(*r, ", ") }
+
+// Set appends v to the slice, satisfying the flag.Value interface.
 func (r *releaseFlag) Set(v string) error {
 	*r = append(*r, v)
 	return nil
 }
 
-// parseArguments processes os.Args[1:] and populates the configuration.  Any
-// required variable that is still empty after flag parsing is collected from the
-// environment, and if still absent, via an interactive prompt.
+// parseArguments parses args (typically os.Args[1:]), validates flag values,
+// and returns a populated *config.
+//
+// Notable behaviour:
+//   - --rhel must be "rhel9" or "rhel10" if supplied; any other value causes
+//     the program to exit with status 1.
+//   - If no --release flag is given, Releases defaults to ["release-4.21"] and
+//     a warning is logged.
+//   - The FlagSet uses flag.ExitOnError, so unknown flags or --help cause an
+//     immediate os.Exit; fs.Parse itself never returns a non-nil error.
 func parseArguments(args []string) *config {
 	c := &config{}
 
@@ -284,20 +362,23 @@ func parseArguments(args []string) *config {
 	dryRunFlag := fs.Bool("dry-run", false, "Simulate operations without making actual changes")
 	projectFlag := fs.String("project", "", "Optional project prefix prepended to image filenames")
 	projectUploadFlag := fs.String("project-upload", "", "PowerVC project name for image upload")
+	quietFlag := fs.Bool("quiet", false, "Suppress all non-error output")
 	rhelFlag := fs.String("rhel", "", "Prefer specific RHEL version: rhel9 or rhel10")
 	svcHostFlag := fs.String("svc-host", "", "PowerVC service host")
 	templateFlag := fs.String("template", "", "PowerVC template UUID")
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output with debug information")
 	fs.BoolVar(verboseFlag, "v", false, "Enable verbose output with debug information")
 
+	// ExitOnError means fs.Parse calls os.Exit(2) on failure; it never returns
+	// a non-nil error, but we assign it anyway to satisfy the compiler.
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" Failed to parse arguments: %v\n", err)
-		os.Exit(1)
+		// unreachable with flag.ExitOnError, but keeps the compiler happy.
+		os.Exit(2)
 	}
 
 	// Validate --rhel value when supplied.
 	if *rhelFlag != "" && *rhelFlag != "rhel9" && *rhelFlag != "rhel10" {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" Invalid RHEL version '%s'. Must be rhel9 or rhel10\n", *rhelFlag)
+		fmt.Fprintf(os.Stderr, prefixError+"Invalid RHEL version %q — must be rhel9 or rhel10\n", *rhelFlag)
 		os.Exit(1)
 	}
 
@@ -307,6 +388,7 @@ func parseArguments(args []string) *config {
 	c.DryRun = *dryRunFlag
 	c.Project = *projectFlag
 	c.ProjectUpload = *projectUploadFlag
+	c.Quiet = *quietFlag
 	c.RhelVersion = *rhelFlag
 	c.SvcHost = *svcHostFlag
 	c.Template = *templateFlag
@@ -321,63 +403,61 @@ func parseArguments(args []string) *config {
 	return c
 }
 
-// collectFromEnvironment fills missing configuration fields from environment
-// variables, then interactively prompts for any that remain empty.
+// collectFromEnvironment fills any config field that is still empty after flag
+// parsing.  For each field it first checks the corresponding environment
+// variable; if that is also absent the user is prompted interactively.
+//
+// Special cases:
+//   - Project (PROJECT) is optional and is only read from the environment;
+//     the user is never prompted for it.
+//   - RhelVersion (RHEL_VERSION) is validated against "rhel9"/"rhel10"; an
+//     invalid env value calls die; an absent value uses promptRhelVersion which
+//     loops until a valid choice is entered.
 func (c *config) collectFromEnvironment() {
 	c.logInfo("Collecting environment variables...")
 
-	// Cloud
 	if c.Cloud == "" {
-		if v := os.Getenv("CLOUD"); v != "" {
-			c.Cloud = v
-		} else {
-			c.Cloud = promptInput("What is the cloud name in ~/.config/openstack/clouds.yaml", "CLOUD", "", false)
-		}
+		c.Cloud = envOrPrompt("CLOUD", "Cloud name in ~/.config/openstack/clouds.yaml")
 	}
 
-	// PROJECT is optional — only fill from environment, no prompt.
+	// PROJECT is optional — read from env only, never prompt.
 	if c.Project == "" {
 		c.Project = os.Getenv("PROJECT")
 	}
 
-	// ProjectUpload
 	if c.ProjectUpload == "" {
-		if v := os.Getenv("PROJECT_UPLOAD"); v != "" {
-			c.ProjectUpload = v
-		} else {
-			c.ProjectUpload = promptInput("What is the project when uploading?", "PROJECT_UPLOAD", "", false)
-		}
+		c.ProjectUpload = envOrPrompt("PROJECT_UPLOAD", "Project name when uploading")
 	}
 
-	// RhelVersion
+	// RhelVersion requires validation; use a dedicated prompt loop.
 	if c.RhelVersion == "" {
 		if v := os.Getenv("RHEL_VERSION"); v != "" {
+			if v != "rhel9" && v != "rhel10" {
+				c.die("RHEL_VERSION has invalid value %q — must be rhel9 or rhel10", v)
+			}
 			c.RhelVersion = v
 		} else {
-			c.RhelVersion = promptInput("What is the RHEL version?", "RHEL_VERSION", "", false)
+			c.RhelVersion = promptRhelVersion()
 		}
 	}
 
-	// SvcHost
 	if c.SvcHost == "" {
-		if v := os.Getenv("SVC_HOST"); v != "" {
-			c.SvcHost = v
-		} else {
-			c.SvcHost = promptInput("What is the service host?", "SVC_HOST", "", false)
-		}
+		c.SvcHost = envOrPrompt("SVC_HOST", "PowerVC service host")
 	}
 
-	// Template
 	if c.Template == "" {
-		if v := os.Getenv("TEMPLATE"); v != "" {
-			c.Template = v
-		} else {
-			c.Template = promptInput("What is the template UUID?", "TEMPLATE", "", false)
-		}
+		c.Template = envOrPrompt("TEMPLATE", "PowerVC template UUID")
 	}
 }
 
-// validateEnvironment ensures that every required variable is non-empty.
+// validateEnvironment is a final safety check that calls die if any required
+// config field is still empty after collectFromEnvironment has run.
+//
+// Required fields: Cloud, ProjectUpload, RhelVersion, SvcHost, Template, and
+// at least one entry in Releases.
+//
+// In normal operation collectFromEnvironment guarantees these are set, so this
+// function acts as a defensive assertion rather than primary validation.
 func (c *config) validateEnvironment() {
 	c.logInfo("Validating environment variables...")
 
@@ -398,9 +478,8 @@ func (c *config) validateEnvironment() {
 		}
 	}
 
-	// RELEASES must have at least one element.
 	if len(c.Releases) == 0 {
-		c.die("RELEASES must be set and non-empty")
+		c.die("at least one --release must be specified")
 	}
 
 	c.logSuccess("All environment variables validated")
@@ -408,68 +487,74 @@ func (c *config) validateEnvironment() {
 
 // ─── OpenStack helpers ────────────────────────────────────────────────────────
 
-// verifyOpenstackConnectivity runs a quick image list to confirm credentials work.
+// verifyOpenstackConnectivity confirms that the openstack CLI can reach the
+// configured cloud by running "openstack image list".  Both stdout and stderr
+// of the subprocess are discarded; only the exit code is checked.
+//
+// In dry-run mode the check is skipped entirely and an info message is logged.
+// If the command fails, die is called — there is no point continuing without
+// a working OpenStack connection.
 func (c *config) verifyOpenstackConnectivity() {
+	if c.DryRun {
+		c.logInfo("Skipping OpenStack connectivity check in DRY RUN mode")
+		return
+	}
+
 	c.logInfo("Verifying OpenStack connectivity...")
 	cmd := exec.Command("openstack", "--os-cloud="+c.Cloud, "image", "list")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		c.die("Cannot connect to OpenStack. Please verify clouds.yaml configuration.")
 	}
 	c.logSuccess("OpenStack connectivity verified")
 }
 
-// imageExistsInOpenStack returns true when an OpenStack image with the given
-// name already exists.  In dry-run mode it always returns false (triggering
-// the upload path so that the commands are printed).
+// imageExistsInOpenStack reports whether an image named imageName already
+// exists in OpenStack by running "openstack image show <name>".  Both stdout
+// and stderr of the subprocess are discarded.
+//
+// Returns false in dry-run mode (so that the upload path and its commands are
+// always exercised and printed during a dry run).
 func (c *config) imageExistsInOpenStack(imageName string) bool {
-	c.logInfo("Verifying image: %s", imageName)
+	c.logInfo("Checking whether image already exists: %s", imageName)
 
 	if c.DryRun {
-		c.logWarning("Running in DRY RUN mode - no actual call will be performed")
+		c.logInfo("DRY RUN — skipping image existence check")
 		return false
 	}
 
 	cmd := exec.Command("openstack", "--os-cloud="+c.Cloud, "image", "show", imageName)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		c.logError("Cannot find image '%s'", imageName)
+		c.logInfo("Image not found in OpenStack: %s", imageName)
 		return false
 	}
 
-	c.logSuccess("Found image: %s", imageName)
+	c.logSuccess("Image already exists in OpenStack: %s", imageName)
 	return true
 }
 
 // ─── CoreOS JSON download ─────────────────────────────────────────────────────
 
-// canFetchURL performs a HEAD request (falling back to GET) to check whether the
-// URL returns HTTP 200.
-func (c *config) canFetchURL(url string) bool {
-	c.logDebug("Checking URL: %s", url)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Head(url)
-	if err != nil {
-		// HEAD might be blocked; try GET with range to minimise transfer.
-		req, rerr := http.NewRequest(http.MethodGet, url, nil)
-		if rerr != nil {
-			return false
-		}
-		req.Header.Set("Range", "bytes=0-0")
-		resp, err = client.Do(req)
-		if err != nil {
-			return false
-		}
-	}
-	defer resp.Body.Close()
-	// Accept 200 OK or 206 Partial Content (range request succeeded).
-	ok := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent
-	c.logDebug("HTTP status code: %d", resp.StatusCode)
-	return ok
-}
-
-// downloadCoreosJSON downloads the CoreOS JSON metadata for the given release
-// into a temporary file, trying multiple URL locations in preference order.
-// It returns the path to the temporary file on success.
+// downloadCoreosJSON fetches the CoreOS JSON metadata for release from the
+// openshift/installer GitHub repository into a temporary file and returns its
+// path.  The caller must remove the file when finished (typically via
+// defer os.Remove).
+//
+// URL candidates are drawn from the coreos/ directory of the release branch on
+// raw.githubusercontent.com.  The preference order depends on c.RhelVersion:
+//   - "rhel9"  → coreos-rhel-9.json, rhcos.json, coreos-rhel-10.json
+//   - "rhel10" → coreos-rhel-10.json, rhcos.json, coreos-rhel-9.json
+//   - ""       → rhcos.json, coreos-rhel-9.json, coreos-rhel-10.json
+//
+// For each candidate URL:
+//   - A non-200 HTTP status causes an immediate skip to the next URL.
+//   - A network error or body-copy failure is retried up to downloadMaxRetries
+//     times with a downloadRetryDelay pause between attempts.
+//
+// Returns an error if every URL has been exhausted without a successful download.
 func (c *config) downloadCoreosJSON(release string) (string, error) {
 	baseURL := "https://raw.githubusercontent.com/openshift/installer/refs/heads/" + release + "/data/data/coreos/"
 
@@ -499,48 +584,55 @@ func (c *config) downloadCoreosJSON(release string) (string, error) {
 		c.logDebug("Trying all CoreOS JSON variants in default order")
 	}
 
-	const maxRetries = 3
-	const retryDelay = 2 * time.Second
+	// Single client reused for all attempts.
+	client := &http.Client{Timeout: downloadTimeout}
 
 	for _, url := range urls {
 		c.logDebug("Trying URL: %s", url)
-		if !c.canFetchURL(url) {
-			c.logDebug("URL not available: %s", url)
-			continue
-		}
 
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			c.logDebug("Download attempt %d/%d: %s", attempt, maxRetries, url)
+		for attempt := 1; attempt <= downloadMaxRetries; attempt++ {
+			c.logDebug("Download attempt %d/%d: %s", attempt, downloadMaxRetries, url)
 
+			resp, err := client.Get(url) //nolint:noctx
+			if err != nil {
+				c.logDebug("Attempt %d/%d failed for %s: %v", attempt, downloadMaxRetries, url, err)
+				if attempt < downloadMaxRetries {
+					c.logDebug("Retrying in %s...", downloadRetryDelay)
+					time.Sleep(downloadRetryDelay)
+				}
+				continue
+			}
+
+			// Non-200 means this file doesn't exist at this URL; skip to next.
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				c.logDebug("URL returned HTTP %d, skipping: %s", resp.StatusCode, url)
+				break
+			}
+
+			// Only allocate the temp file once we have a live 200 response.
 			tmpFile, err := os.CreateTemp("", "coreos-*.json")
 			if err != nil {
+				resp.Body.Close()
 				return "", fmt.Errorf("failed to create temp file: %w", err)
 			}
 			tmpPath := tmpFile.Name()
 
-			client := &http.Client{Timeout: 5 * time.Minute}
-			resp, err := client.Get(url) //nolint:noctx
-			if err != nil {
-				tmpFile.Close()
+			_, copyErr := io.Copy(tmpFile, resp.Body)
+			resp.Body.Close()
+			tmpFile.Close()
+			if copyErr != nil {
 				os.Remove(tmpPath)
-				c.logWarning("Download attempt %d/%d failed for %s: %v", attempt, maxRetries, url, err)
-			} else {
-				_, copyErr := io.Copy(tmpFile, resp.Body)
-				resp.Body.Close()
-				tmpFile.Close()
-				if copyErr != nil {
-					os.Remove(tmpPath)
-					c.logWarning("Download attempt %d/%d failed for %s: %v", attempt, maxRetries, url, copyErr)
-				} else {
-					c.logInfo("Downloaded %s", url)
-					return tmpPath, nil
+				c.logWarning("Download attempt %d/%d failed for %s: %v", attempt, downloadMaxRetries, url, copyErr)
+				if attempt < downloadMaxRetries {
+					c.logDebug("Retrying in %s...", downloadRetryDelay)
+					time.Sleep(downloadRetryDelay)
 				}
+				continue
 			}
 
-			if attempt < maxRetries {
-				c.logDebug("Retrying in %s...", retryDelay)
-				time.Sleep(retryDelay)
-			}
+			c.logInfo("Downloaded %s", url)
+			return tmpPath, nil
 		}
 	}
 
@@ -549,14 +641,24 @@ func (c *config) downloadCoreosJSON(release string) (string, error) {
 
 // ─── JSON parsing ─────────────────────────────────────────────────────────────
 
-// extractImageInfo parses a CoreOS JSON file and returns the ppc64le OpenStack
-// image metadata.  PROJECT prefix handling mirrors the shell script behaviour:
-// any trailing "-" is stripped before prepending.
+// extractImageInfo opens the CoreOS JSON file at jsonPath, navigates to
+// .architectures.ppc64le.artifacts.openstack.formats["qcow2.gz"].disk, and
+// returns the image metadata as an *imageInfo.
+//
+// Filename derivation:
+//  1. Take the basename of the download URL.
+//  2. Strip the ".qcow2.gz" suffix.
+//  3. If c.Project is non-empty, strip any trailing "-" from it and prepend
+//     "<project>-" to the filename.
+//
+// Returns an error if the file cannot be opened, the JSON is malformed, the
+// qcow2.gz format is absent, or the location field is empty or "null".
 func (c *config) extractImageInfo(jsonPath string) (*imageInfo, error) {
-	data, err := os.ReadFile(jsonPath)
+	f, err := os.Open(jsonPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read JSON file %s: %w", jsonPath, err)
+		return nil, fmt.Errorf("failed to open JSON file %s: %w", jsonPath, err)
 	}
+	defer f.Close()
 
 	// Navigate: .architectures.ppc64le.artifacts.openstack.formats["qcow2.gz"].disk
 	var root struct {
@@ -576,7 +678,7 @@ func (c *config) extractImageInfo(jsonPath string) (*imageInfo, error) {
 		} `json:"architectures"`
 	}
 
-	if err := json.Unmarshal(data, &root); err != nil {
+	if err := json.NewDecoder(f).Decode(&root); err != nil {
 		return nil, fmt.Errorf("failed to parse CoreOS JSON: %w", err)
 	}
 
@@ -611,22 +713,31 @@ func (c *config) extractImageInfo(jsonPath string) (*imageInfo, error) {
 
 // ─── External tool invocations ────────────────────────────────────────────────
 
-// callPvsadm converts a qcow2 image to OVA format using pvsadm.
-// If the output file already exists the conversion step is skipped.
+// callPvsadm invokes "pvsadm image qcow2ova" to convert a qcow2.gz image to
+// OVA format, writing the result to <ScriptDir>/<filename>.ova.gz.
+//
+//   - filename is the image name without extension (e.g. "rhcos-4.21.0-ppc64le").
+//   - url is the remote qcow2.gz download URL passed to pvsadm via --image-url.
+//
+// If the output file already exists the conversion is skipped and nil is
+// returned immediately.  The command is always logged via logInfo before
+// execution.  In dry-run mode execution is skipped and nil is returned.
+//
+// The subprocess runs in c.ScriptDir so that pvsadm writes the OVA alongside
+// the binary.  stdout and stderr of the subprocess are inherited.
 func (c *config) callPvsadm(filename, url string) error {
 	convertedFilename := filepath.Join(c.ScriptDir, filename+".ova.gz")
 
 	if _, err := os.Stat(convertedFilename); err == nil {
-		c.logInfo("File already exists (%s)!", convertedFilename)
+		c.logInfo("OVA already exists, skipping conversion: %s", convertedFilename)
 		return nil
 	}
 
-	// Always print the command that would be / will be executed.
-	fmt.Printf("pvsadm image qcow2ova --image-dist coreos --image-name %s --image-url %s --image-size 16\n",
+	c.logInfo("Running: pvsadm image qcow2ova --image-dist coreos --image-name %s --image-url %s --image-size 16",
 		filename, url)
 
 	if c.DryRun {
-		c.logWarning("Running in DRY RUN mode - no actual call will be performed")
+		c.logInfo("DRY RUN — skipping pvsadm execution")
 		return nil
 	}
 
@@ -647,22 +758,34 @@ func (c *config) callPvsadm(filename, url string) error {
 	return nil
 }
 
-// callPvcctl imports an image into PowerVC using pvcctl.
-// When url is a local path (not http:// / https://) the file must already exist.
+// callPvcctl invokes "pvcctl image import-linux" to import an image into
+// PowerVC.
+//
+//   - url is the image source: either a remote HTTPS URL or an absolute local
+//     path (e.g. the .ova.gz produced by callPvsadm).
+//   - filename becomes the PowerVC image name (--name).
+//
+// When url is a local path (no http:// or https:// prefix) the file must
+// already exist; an error is returned if it is missing.
+//
+// The command is always logged via logInfo before execution.  In dry-run mode
+// execution is skipped and nil is returned.
+//
+// Fixed import parameters: --os-type coreos, --volume-size 120,
+// --config default-config.yaml, --log-file pwr1.log.
+// c.ProjectUpload, c.SvcHost, and c.Template supply the remaining flags.
 func (c *config) callPvcctl(url, filename string) error {
-	// Always print the command that would be / will be executed.
-	fmt.Printf("pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s --config default-config.yaml --log-file pwr1.log\n",
+	c.logInfo("Running: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s --config default-config.yaml --log-file pwr1.log",
 		url, filename, c.ProjectUpload, c.SvcHost, c.Template)
 
 	if c.DryRun {
-		c.logWarning("Running in DRY RUN mode - no actual call will be performed")
+		c.logInfo("DRY RUN — skipping pvcctl execution")
 		return nil
 	}
 
 	// Validate local file existence when URL is not remote.
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		if _, err := os.Stat(url); os.IsNotExist(err) {
-			c.logError("File is missing: (%s)!", url)
+		if _, err := os.Stat(url); errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("local file missing: %s", url)
 		}
 	}
@@ -688,33 +811,47 @@ func (c *config) callPvcctl(url, filename string) error {
 	return nil
 }
 
-// callPowervcImage imports an OVA image into PowerVC using powervc-image.
-// The OVA file must exist at <ScriptDir>/<filename>.ova.gz before calling this.
+// callPowervcImage invokes "powervc-image import" to import a previously
+// converted OVA image into PowerVC.
+//
+//   - filename is the image name without extension; the function derives the
+//     full OVA path as <ScriptDir>/<filename>.ova.gz.
+//
+// Returns an error immediately if the OVA file does not exist — callPvsadm
+// must have run successfully before this function is called (powervc-image
+// does not download images; it only imports local OVA files).
+//
+// The command is always logged via logInfo before execution.  In dry-run mode
+// execution is skipped and nil is returned.
+//
+// Fixed import parameter: a single -m flag with the value
+// "os-type=coreos architecture=ppc64le", matching the shell script exactly.
+// c.ProjectUpload and c.Template supply the remaining flags.
 func (c *config) callPowervcImage(filename string) error {
 	convertedFilename := filepath.Join(c.ScriptDir, filename+".ova.gz")
 
-	if _, err := os.Stat(convertedFilename); os.IsNotExist(err) {
-		c.logError("File is missing: (%s)!", convertedFilename)
+	if _, err := os.Stat(convertedFilename); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("OVA file missing: %s", convertedFilename)
 	}
 
-	// Always print the command that would be / will be executed.
-	fmt.Printf("powervc-image --project %s import -n %s -p %s -t %s -m os-type=coreos architecture=ppc64le\n",
+	c.logInfo("Running: powervc-image --project %s import -n %s -p %s -t %s -m os-type=coreos architecture=ppc64le",
 		c.ProjectUpload, filename, convertedFilename, c.Template)
 
 	if c.DryRun {
-		c.logWarning("Running in DRY RUN mode - no actual call will be performed")
+		c.logInfo("DRY RUN — skipping powervc-image execution")
 		return nil
 	}
 
+	// The shell passes a single -m argument whose value contains both
+	// key=value pairs separated by a space.  Two separate -m flags would be
+	// semantically different and may not be accepted by the tool.
 	cmd := exec.Command("powervc-image",
 		"--project", c.ProjectUpload,
 		"import",
 		"-n", filename,
 		"-p", convertedFilename,
 		"-t", c.Template,
-		"-m", "os-type=coreos",
-		"-m", "architecture=ppc64le",
+		"-m", "os-type=coreos architecture=ppc64le",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -727,37 +864,46 @@ func (c *config) callPowervcImage(filename string) error {
 
 // ─── Per-release processing ───────────────────────────────────────────────────
 
-// processRelease executes the full download → check → upload workflow for a
-// single release.
+// processRelease executes the full workflow for a single release branch:
+//
+//  1. Download the CoreOS JSON metadata from GitHub into a temp file.
+//  2. Parse the JSON to extract the ppc64le qcow2.gz URL, filename, and SHA256.
+//  3. Check whether the image already exists in OpenStack; return early if so.
+//  4. If c.usePvsadm is true, convert the qcow2 image to OVA via callPvsadm.
+//  5. Import the image into PowerVC via callPvcctl (if c.usePvcctl) or
+//     callPowervcImage.
+//
+// The temporary JSON file is removed via defer when the function returns.
+// Returns a non-nil error if any step fails; partial failures are not retried.
 func (c *config) processRelease(release string) error {
 	c.logInfo("Processing release: %s", release)
 
 	// Step 1: Download the CoreOS JSON metadata.
 	jsonPath, err := c.downloadCoreosJSON(release)
 	if err != nil {
-		return fmt.Errorf("%s failed: %w", release, err)
+		return err
 	}
 	defer os.Remove(jsonPath)
 
 	// Step 2: Extract image metadata.
 	info, err := c.extractImageInfo(jsonPath)
 	if err != nil {
-		return fmt.Errorf("%s failed: %w", release, err)
+		return err
 	}
 
 	c.logInfo("Download URL: %s", info.DownloadURL)
-	c.logInfo("Filename: %s", info.Filename)
-	c.logDebug("SHA256: %s", info.SHA256)
+	c.logInfo("Filename:     %s", info.Filename)
+	c.logDebug("SHA256:       %s", info.SHA256)
 
 	// Step 3: Skip upload if the image already exists.
 	if c.imageExistsInOpenStack(info.Filename) {
+		c.logSuccess("Release %s is already present — nothing to do", release)
 		return nil
 	}
 
 	// Step 4a: Optionally convert qcow2 → OVA.
 	if c.usePvsadm {
 		if err := c.callPvsadm(info.Filename, info.DownloadURL); err != nil {
-			c.logError("pvsadm failed!")
 			return err
 		}
 	}
@@ -765,21 +911,23 @@ func (c *config) processRelease(release string) error {
 	// Step 4b: Import into PowerVC.
 	if c.usePvcctl {
 		if err := c.callPvcctl(info.DownloadURL, info.Filename); err != nil {
-			c.logError("pvcctl failed!")
 			return err
 		}
 	} else {
 		if err := c.callPowervcImage(info.Filename); err != nil {
-			c.logError("call_powervc_image failed!")
 			return err
 		}
 	}
 
+	c.logSuccess("Release %s uploaded successfully", release)
 	return nil
 }
 
 // ─── Usage ────────────────────────────────────────────────────────────────────
 
+// showUsage prints comprehensive usage information to stdout, including all
+// OPTIONS, ENVIRONMENT VARIABLES, REQUIRED TOOLS, EXAMPLES, and WORKFLOW
+// sections, followed by the standard flag defaults from fs.
 func showUsage(fs *flag.FlagSet) {
 	programName := filepath.Base(os.Args[0])
 	fmt.Printf(`Usage: %s [OPTIONS]
@@ -810,6 +958,7 @@ OPTIONS:
                            Can be set via TEMPLATE environment variable
   -v, --verbose            Enable verbose output with debug information
   --dry-run                Simulate operations without making actual changes
+  --quiet                  Suppress all non-error output
   -h, --help               Show this help message and exit
 
 ENVIRONMENT VARIABLES:
@@ -821,8 +970,6 @@ ENVIRONMENT VARIABLES:
   TEMPLATE         PowerVC template UUID
 
 REQUIRED TOOLS:
-  curl                   For downloading files and checking URLs
-  jq                     For parsing JSON metadata (invoked via openstack)
   openstack              For verifying image existence (unless --dry-run)
   pvsadm                 For converting qcow2 images to OVA format (optional)
   pvcctl or powervc-image For importing images into PowerVC (either one required)
@@ -845,7 +992,8 @@ WORKFLOW:
   1. Parse command-line arguments and collect missing variables interactively
   2. Validate all required environment variables are set
   3. Check for required programs and detect pvsadm/pvcctl availability
-  4. For each release:
+  4. Verify OpenStack connectivity
+  5. For each release:
      a. Download CoreOS JSON metadata from GitHub
      b. Extract image URL, filename, and SHA256 checksum
      c. Check if image already exists in OpenStack
@@ -859,34 +1007,27 @@ WORKFLOW:
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+// main is the program entry point.  It:
+//  1. Resolves c.ScriptDir from the executable path (OVA files are written here).
+//  2. Parses command-line arguments via parseArguments.
+//  3. Checks for required external tools and detects pvsadm/pvcctl availability.
+//  4. Collects any missing configuration from environment variables or prompts.
+//  5. Validates that all required fields are set.
+//  6. Verifies OpenStack connectivity.
+//  7. Processes each release in order, logging errors but continuing on failure.
+//  8. Exits with status 0 if all releases succeeded, or status 1 if any failed.
 func main() {
 	// Resolve the directory containing this binary so that OVA files can be
 	// written alongside it, mirroring SCRIPT_DIR in the shell script.
 	exePath, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, colorRed+"[ERROR]"+colorReset+" Failed to resolve executable path: %v\n", err)
+		fmt.Fprintf(os.Stderr, prefixError+"Failed to resolve executable path: %v\n", err)
 		os.Exit(1)
 	}
 	scriptDir := filepath.Dir(exePath)
 
-	// Handle -h / --help before full flag parsing so the usage is always available.
-	for _, arg := range os.Args[1:] {
-		if arg == "-h" || arg == "--help" {
-			fs := flag.NewFlagSet("upload-rhcos", flag.ContinueOnError)
-			showUsage(fs)
-			os.Exit(0)
-		}
-	}
-
 	c := parseArguments(os.Args[1:])
 	c.ScriptDir = scriptDir
-
-	c.logDebug("Parsed arguments: releases=%v verbose=%v dry-run=%v rhel=%s project-upload=%s svc-host=%s template=%s",
-		c.Releases, c.Verbose, c.DryRun, c.RhelVersion, c.ProjectUpload, c.SvcHost, c.Template)
-
-	c.collectFromEnvironment()
-	c.validateEnvironment()
-	c.checkRequiredPrograms()
 
 	c.logInfo("Starting OpenShift RHCOS image upload program")
 	c.logInfo("Working directory: %s", scriptDir)
@@ -895,17 +1036,30 @@ func main() {
 		c.logWarning("Running in DRY RUN mode - no actual operations will be performed")
 	}
 
-	c.logInfo("Processing %d release(s): %s", len(c.Releases), strings.Join(c.Releases, ", "))
+	c.logDebug("Parsed arguments: releases=%v verbose=%v dry-run=%v rhel=%s project-upload=%s svc-host=%s template=%s",
+		c.Releases, c.Verbose, c.DryRun, c.RhelVersion, c.ProjectUpload, c.SvcHost, c.Template)
+
+	// Check tools first so we fail fast before prompting for variables.
+	c.checkRequiredPrograms()
+	c.collectFromEnvironment()
+	c.validateEnvironment()
+	c.verifyOpenstackConnectivity()
+
+	total := len(c.Releases)
+	c.logInfo("Processing %d release(s): %s", total, strings.Join(c.Releases, ", "))
 
 	var failed int
 	for _, release := range c.Releases {
 		if err := c.processRelease(release); err != nil {
-			c.logError("Failed to process %s: %v", release, err)
+			c.logError("Failed to process release %s: %v", release, err)
 			failed++
 		}
 	}
 
-	if failed > 0 {
+	if failed == 0 {
+		c.logSuccess("All %d release(s) processed successfully", total)
+	} else {
+		c.logError("%d of %d release(s) failed", failed, total)
 		os.Exit(1)
 	}
 }
