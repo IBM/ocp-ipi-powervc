@@ -760,11 +760,15 @@ function can_curl() {
 # URL Priority:
 #   If RHEL_VERSION is set: tries that version first, then others
 #   If not set: tries rhcos.json, then rhel-9, then rhel-10
+# Retry Behavior:
+#   Each URL is attempted up to 3 times with a 2-second delay between retries
 # Example: download_coreos_json "release-4.21"
 #------------------------------------------------------------------------------
 function download_coreos_json() {
 	local release="$1"
 	local -a urls=()
+	local max_retries=3
+	local retry_delay=2
 
 	# Build URL list based on RHEL_VERSION preference
 	if [[ "${RHEL_VERSION}" == "rhel9" ]]; then
@@ -793,12 +797,20 @@ function download_coreos_json() {
 	for url in "${urls[@]}"; do
 		log_debug "Trying URL: ${url}"
 		if can_curl "${url}"; then
-			if curl --silent --location --output "${FILE1}" "${url}"; then
-				log_info "Downloaded ${url}"
-				return 0
-			else
-				log_warning "Failed to download from ${url}"
-			fi
+			local attempt=1
+			while [[ ${attempt} -le ${max_retries} ]]; do
+				log_debug "Download attempt ${attempt}/${max_retries}: ${url}"
+				if curl --silent --location --output "${FILE1}" "${url}"; then
+					log_info "Downloaded ${url}"
+					return 0
+				fi
+				log_warning "Download attempt ${attempt}/${max_retries} failed for ${url}"
+				attempt=$(( attempt + 1 ))
+				if [[ ${attempt} -le ${max_retries} ]]; then
+					log_debug "Retrying in ${retry_delay}s..."
+					sleep "${retry_delay}"
+				fi
+			done
 		else
 			log_debug "URL not available: ${url}"
 		fi
