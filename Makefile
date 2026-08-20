@@ -122,9 +122,7 @@ init-snippets: ## Initialize Go modules for all snippet directories
 .PHONY: init-jobhistory
 init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 	@echo "Initializing JobHistory module..."
-	@cd JobHistory && rm -f go.mod go.sum
-	@cd JobHistory && go mod init github.com/openshift/ocp-ipi-powervc/JobHistory
-	@cd JobHistory && go mod tidy
+	@cd JobHistory && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/JobHistory && go mod tidy
 	@echo "JobHistory module initialized"
 
 .PHONY: build-jobhistory
@@ -155,6 +153,41 @@ dist-jobhistory: build-jobhistory ## Build JobHistory for all platforms and gene
 	sha1sum $(DIST_DIR)/JobHistory-darwin-amd64 > $(DIST_DIR)/JobHistory-darwin-amd64.sha1
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/JobHistory-darwin-arm64 *.go
 	sha1sum $(DIST_DIR)/JobHistory-darwin-arm64 > $(DIST_DIR)/JobHistory-darwin-arm64.sha1
+
+.PHONY: init-uploadrhcos
+init-uploadrhcos: ## Initialize UploadRhcos Go module and download dependencies
+	@echo "Initializing UploadRhcos module..."
+	@cd UploadRhcos && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/UploadRhcos && go mod tidy
+	@echo "UploadRhcos module initialized"
+
+.PHONY: build-uploadrhcos
+build-uploadrhcos: ## Build the UploadRhcos tool
+	@echo "Building UploadRhcos..."
+	@cd UploadRhcos && $(GO) build -ldflags="$(LDFLAGS)" $(GOFLAGS) -o UploadRhcos *.go
+	@echo "UploadRhcos build complete: UploadRhcos/UploadRhcos"
+
+.PHONY: install-uploadrhcos
+install-uploadrhcos: build-uploadrhcos ## Install UploadRhcos to GOPATH/bin
+	@echo "Installing UploadRhcos to $(GOPATH)/bin/UploadRhcos..."
+	@mkdir -p $(GOPATH)/bin
+	@cp UploadRhcos/UploadRhcos $(GOPATH)/bin/UploadRhcos
+	@echo "UploadRhcos installation complete"
+
+.PHONY: dist-uploadrhcos
+dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and generate checksums
+	@echo "Installing UploadRhcos to $(DIST_DIR)."
+	@mkdir -p $(DIST_DIR)
+	@cd UploadRhcos
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/UploadRhcos-linux-amd64 *.go
+	sha1sum $(DIST_DIR)/UploadRhcos-linux-amd64 > $(DIST_DIR)/UploadRhcos-linux-amd64.sha1
+	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/UploadRhcos-linux-arm64 *.go
+	sha1sum $(DIST_DIR)/UploadRhcos-linux-arm64 > $(DIST_DIR)/UploadRhcos-linux-arm64.sha1
+	GOOS=linux GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/UploadRhcos-linux-ppc64le *.go
+	sha1sum $(DIST_DIR)/UploadRhcos-linux-ppc64le > $(DIST_DIR)/UploadRhcos-linux-ppc64le.sha1
+	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/UploadRhcos-darwin-amd64 *.go
+	sha1sum $(DIST_DIR)/UploadRhcos-darwin-amd64 > $(DIST_DIR)/UploadRhcos-darwin-amd64.sha1
+	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/UploadRhcos-darwin-arm64 *.go
+	sha1sum $(DIST_DIR)/UploadRhcos-darwin-arm64 > $(DIST_DIR)/UploadRhcos-darwin-arm64.sha1
 
 .PHONY: test
 test: ## Run all tests
@@ -234,6 +267,7 @@ clean: ## Clean build artifacts
 	@rm -rf $(BUILD_DIR) $(DIST_DIR)
 	@rm -f ocp-ipi-powervc-test
 	@rm -f JobHistory/JobHistory
+	@rm -f UploadRhcos/UploadRhcos
 	@echo "Clean complete"
 
 .PHONY: clean-all
