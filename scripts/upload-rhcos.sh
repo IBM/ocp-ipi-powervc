@@ -63,6 +63,7 @@ DRY_RUN=false
 QUIET=false
 OUTPUT_FORMAT="text"  # text, json, or csv
 RHEL_VERSION=""       # rhel9, rhel10, or empty (auto-detect)
+USE_PVSADM=false      # true if pvsadm is available
 USE_PVCCTL=false      # true if pvcctl is available, false if using powervc-image
 
 # ANSI color codes for enhanced terminal output
@@ -209,7 +210,7 @@ function command_exists() {
 # Example: check_required_programs
 #------------------------------------------------------------------------------
 function check_required_programs() {
-	local -a required_programs=("curl" "jq" "openstack" "pvsadm")
+	local -a required_programs=("curl" "jq" "openstack")
 	local missing_programs=()
 
 	log_info "Checking required programs..."
@@ -223,6 +224,13 @@ function check_required_programs() {
 
 	if [[ ${#missing_programs[@]} -gt 0 ]]; then
 		die "Missing required programs: ${missing_programs[*]}"
+	fi
+
+	if command_exists "pvsadm"; then
+		USE_PVSADM=true
+	else
+		log_warning "pvsadm is missing"
+		USE_PVSADM=false
 	fi
 
 	if command_exists "pvcctl"; then
@@ -868,9 +876,11 @@ function process_release() {
 
 	# Verify OpenStack resource
 	if ! verify_openstack_resource "image" "${image_info[filename]}"; then
-		if ! call_pvsadm ${image_info[filename]} ${image_info[download_url]}; then
-			log_error "pvsadm failed!"
-			return 1
+		if [[ "${USE_PVSADM}" == "true" ]]; then
+			if ! call_pvsadm ${image_info[filename]} ${image_info[download_url]}; then
+				log_error "pvsadm failed!"
+				return 1
+			fi
 		fi
 
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
