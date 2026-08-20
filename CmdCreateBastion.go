@@ -298,14 +298,15 @@ func isHAProxyInstalled(ctx context.Context, cfg *sshConfig) (bool, error) {
 // treated as a clean (false, nil) result. Any other non-zero exit or
 // unexpected output is returned as an error.
 func isRPMInstalled(ctx context.Context, cfg *sshConfig, rpm string) (bool, error) {
-	log.Debugf("Checking if %s is installed on %s", rpm, cfg.Host)
+	log.Debugf("isRPMInstalled: Checking if %s is installed on %s", rpm, cfg.Host)
 
 	output, err := execSSHCommand(ctx, cfg, []string{"rpm", "-q", rpm})
 
 	// rpm -q returns exit code 1 if package is not installed
 	var exitError *exec.ExitError
+
 	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
-		if output == fmt.Sprintf("package %s is not installed", haproxyPackageName) {
+		if output == fmt.Sprintf("package %s is not installed", rpm) {
 			log.Debugf("%s is not installed", rpm)
 			return false, nil
 		}
@@ -315,7 +316,7 @@ func isRPMInstalled(ctx context.Context, cfg *sshConfig, rpm string) (bool, erro
 		return false, fmt.Errorf("failed to check %s installation: %w", rpm, err)
 	}
 
-	log.Debugf("%s is installed: %s", rpm, output)
+	log.Debugf("isRPMInstalled: %s is installed: %s", rpm, output)
 	return true, nil
 }
 
