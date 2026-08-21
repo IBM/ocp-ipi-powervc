@@ -88,20 +88,21 @@ build: ## Build the binary
 	@echo "Build complete: $(OUTPUT_BINARY)"
 	@echo "Checksum written: $(OUTPUT_BINARY).sha1"
 
-.PHONY: build-all
-build-all: ## Build for all supported platforms
+
+.PHONY: build-dist
+build-dist: ## Build for all supported platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 *.go
-	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 > $(DIST_DIR)/$(BINARY_NAME)-linux-amd64.sha1
+	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-linux-amd64 > $(BINARY_NAME)-linux-amd64.sha1
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 *.go
-	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 > $(DIST_DIR)/$(BINARY_NAME)-linux-arm64.sha1
+	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-linux-arm64 > $(BINARY_NAME)-linux-arm64.sha1
 	GOOS=linux GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le *.go
-	sha1sum $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le > $(DIST_DIR)/$(BINARY_NAME)-linux-ppc64le.sha1
+	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-linux-ppc64le > $(BINARY_NAME)-linux-ppc64le.sha1
 	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 *.go
-	sha1sum $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 > $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64.sha1
+	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-darwin-amd64 > $(BINARY_NAME)-darwin-amd64.sha1
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 *.go
-	sha1sum $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 > $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64.sha1
+	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-darwin-arm64 > $(BINARY_NAME)-darwin-arm64.sha1
 	@echo "All platform builds complete in $(DIST_DIR)/"
 
 .PHONY: install
@@ -110,6 +111,9 @@ install: build ## Install the binary to GOPATH/bin
 	@mkdir -p $(GOPATH)/bin
 	@cp $(OUTPUT_BINARY) $(GOPATH)/bin/$(BINARY_NAME)
 	@echo "Installation complete"
+
+.PHONY: dist
+dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadcentos
 
 .PHONY: init-snippets
 init-snippets: ## Initialize Go modules for all snippet directories
@@ -142,11 +146,11 @@ install-jobhistory: build-jobhistory ## Install JobHistory to GOPATH/bin
 dist-jobhistory: build-jobhistory ## Build JobHistory for all platforms and generate checksums
 	@echo "Building JobHistory dist binaries to $(DIST_DIR)/..."
 	@mkdir -p $(DIST_DIR)
-	@cd JobHistory && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-amd64   . && sha1sum ../$(DIST_DIR)/JobHistory-linux-amd64   > ../$(DIST_DIR)/JobHistory-linux-amd64.sha1
-	@cd JobHistory && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-arm64   . && sha1sum ../$(DIST_DIR)/JobHistory-linux-arm64   > ../$(DIST_DIR)/JobHistory-linux-arm64.sha1
-	@cd JobHistory && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-ppc64le . && sha1sum ../$(DIST_DIR)/JobHistory-linux-ppc64le > ../$(DIST_DIR)/JobHistory-linux-ppc64le.sha1
-	@cd JobHistory && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-darwin-amd64  . && sha1sum ../$(DIST_DIR)/JobHistory-darwin-amd64  > ../$(DIST_DIR)/JobHistory-darwin-amd64.sha1
-	@cd JobHistory && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-darwin-arm64  . && sha1sum ../$(DIST_DIR)/JobHistory-darwin-arm64  > ../$(DIST_DIR)/JobHistory-darwin-arm64.sha1
+	@cd JobHistory && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-amd64   . && cd ../$(DIST_DIR) && sha1sum JobHistory-linux-amd64   > JobHistory-linux-amd64.sha1
+	@cd JobHistory && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-arm64   . && cd ../$(DIST_DIR) && sha1sum JobHistory-linux-arm64   > JobHistory-linux-arm64.sha1
+	@cd JobHistory && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-linux-ppc64le . && cd ../$(DIST_DIR) && sha1sum JobHistory-linux-ppc64le > JobHistory-linux-ppc64le.sha1
+	@cd JobHistory && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-darwin-amd64  . && cd ../$(DIST_DIR) && sha1sum JobHistory-darwin-amd64  > JobHistory-darwin-amd64.sha1
+	@cd JobHistory && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/JobHistory-darwin-arm64  . && cd ../$(DIST_DIR) && sha1sum JobHistory-darwin-arm64  > JobHistory-darwin-arm64.sha1
 	@echo "JobHistory dist build complete: $(DIST_DIR)/"
 
 .PHONY: init-uploadrhcos
@@ -172,11 +176,11 @@ install-uploadrhcos: build-uploadrhcos ## Install UploadRhcos to GOPATH/bin
 dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and generate checksums
 	@echo "Building UploadRhcos dist binaries to $(DIST_DIR)/..."
 	@mkdir -p $(DIST_DIR)
-	@cd UploadRhcos && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-amd64   . && sha1sum ../$(DIST_DIR)/UploadRhcos-linux-amd64   > ../$(DIST_DIR)/UploadRhcos-linux-amd64.sha1
-	@cd UploadRhcos && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-arm64   . && sha1sum ../$(DIST_DIR)/UploadRhcos-linux-arm64   > ../$(DIST_DIR)/UploadRhcos-linux-arm64.sha1
-	@cd UploadRhcos && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-ppc64le . && sha1sum ../$(DIST_DIR)/UploadRhcos-linux-ppc64le > ../$(DIST_DIR)/UploadRhcos-linux-ppc64le.sha1
-	@cd UploadRhcos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-amd64  . && sha1sum ../$(DIST_DIR)/UploadRhcos-darwin-amd64  > ../$(DIST_DIR)/UploadRhcos-darwin-amd64.sha1
-	@cd UploadRhcos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-arm64  . && sha1sum ../$(DIST_DIR)/UploadRhcos-darwin-arm64  > ../$(DIST_DIR)/UploadRhcos-darwin-arm64.sha1
+	@cd UploadRhcos && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-amd64   . && cd ../$(DIST_DIR) && sha1sum UploadRhcos-linux-amd64   > UploadRhcos-linux-amd64.sha1
+	@cd UploadRhcos && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-arm64   . && cd ../$(DIST_DIR) && sha1sum UploadRhcos-linux-arm64   > UploadRhcos-linux-arm64.sha1
+	@cd UploadRhcos && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-linux-ppc64le . && cd ../$(DIST_DIR) && sha1sum UploadRhcos-linux-ppc64le > UploadRhcos-linux-ppc64le.sha1
+	@cd UploadRhcos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-amd64  . && cd ../$(DIST_DIR) && sha1sum UploadRhcos-darwin-amd64  > UploadRhcos-darwin-amd64.sha1
+	@cd UploadRhcos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-arm64  . && cd ../$(DIST_DIR) && sha1sum UploadRhcos-darwin-arm64  > UploadRhcos-darwin-arm64.sha1
 	@echo "UploadRhcos dist build complete: $(DIST_DIR)/"
 
 .PHONY: init-all
@@ -205,11 +209,11 @@ install-uploadcentos: build-uploadcentos ## Install UploadCentos to GOPATH/bin
 dist-uploadcentos: build-uploadcentos ## Build UploadCentos for all platforms and generate checksums
 	@echo "Building UploadCentos dist binaries to $(DIST_DIR)/..."
 	@mkdir -p $(DIST_DIR)
-	@cd UploadCentos && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-amd64   . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-amd64   > ../$(DIST_DIR)/UploadCentos-linux-amd64.sha1
-	@cd UploadCentos && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-arm64   . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-arm64   > ../$(DIST_DIR)/UploadCentos-linux-arm64.sha1
-	@cd UploadCentos && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-ppc64le . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-ppc64le > ../$(DIST_DIR)/UploadCentos-linux-ppc64le.sha1
-	@cd UploadCentos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-amd64  . && sha1sum ../$(DIST_DIR)/UploadCentos-darwin-amd64  > ../$(DIST_DIR)/UploadCentos-darwin-amd64.sha1
-	@cd UploadCentos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-arm64  . && sha1sum ../$(DIST_DIR)/UploadCentos-darwin-arm64  > ../$(DIST_DIR)/UploadCentos-darwin-arm64.sha1
+	@cd UploadCentos && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-amd64   . && cd ../$(DIST_DIR) && sha1sum UploadCentos-linux-amd64   > UploadCentos-linux-amd64.sha1
+	@cd UploadCentos && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-arm64   . && cd ../$(DIST_DIR) && sha1sum UploadCentos-linux-arm64   > UploadCentos-linux-arm64.sha1
+	@cd UploadCentos && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-ppc64le . && cd ../$(DIST_DIR) && sha1sum UploadCentos-linux-ppc64le > UploadCentos-linux-ppc64le.sha1
+	@cd UploadCentos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-amd64  . && cd ../$(DIST_DIR) && sha1sum UploadCentos-darwin-amd64  > UploadCentos-darwin-amd64.sha1
+	@cd UploadCentos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-arm64  . && cd ../$(DIST_DIR) && sha1sum UploadCentos-darwin-arm64  > UploadCentos-darwin-arm64.sha1
 	@echo "UploadCentos dist build complete: $(DIST_DIR)/"
 
 .PHONY: test
