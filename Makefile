@@ -179,6 +179,36 @@ dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and g
 	@cd UploadRhcos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-arm64  . && sha1sum ../$(DIST_DIR)/UploadRhcos-darwin-arm64  > ../$(DIST_DIR)/UploadRhcos-darwin-arm64.sha1
 	@echo "UploadRhcos dist build complete: $(DIST_DIR)/"
 
+.PHONY: init-uploadcentos
+init-uploadcentos: ## Initialize UploadCentos Go module and download dependencies
+	@echo "Initializing UploadCentos module..."
+	@cd UploadCentos && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/UploadCentos && go mod tidy
+	@echo "UploadCentos module initialized"
+
+.PHONY: build-uploadcentos
+build-uploadcentos: ## Build the UploadCentos tool
+	@echo "Building UploadCentos..."
+	@cd UploadCentos && $(GO) build -ldflags="$(LDFLAGS)" $(GOFLAGS) -o UploadCentos *.go
+	@echo "UploadCentos build complete: UploadCentos/UploadCentos"
+
+.PHONY: install-uploadcentos
+install-uploadcentos: build-uploadcentos ## Install UploadCentos to GOPATH/bin
+	@echo "Installing UploadCentos to $(GOPATH)/bin/UploadCentos..."
+	@mkdir -p $(GOPATH)/bin
+	@cp UploadCentos/UploadCentos $(GOPATH)/bin/UploadCentos
+	@echo "UploadCentos installation complete"
+
+.PHONY: dist-uploadcentos
+dist-uploadcentos: build-uploadcentos ## Build UploadCentos for all platforms and generate checksums
+	@echo "Building UploadCentos dist binaries to $(DIST_DIR)/..."
+	@mkdir -p $(DIST_DIR)
+	@cd UploadCentos && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-amd64   . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-amd64   > ../$(DIST_DIR)/UploadCentos-linux-amd64.sha1
+	@cd UploadCentos && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-arm64   . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-arm64   > ../$(DIST_DIR)/UploadCentos-linux-arm64.sha1
+	@cd UploadCentos && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-linux-ppc64le . && sha1sum ../$(DIST_DIR)/UploadCentos-linux-ppc64le > ../$(DIST_DIR)/UploadCentos-linux-ppc64le.sha1
+	@cd UploadCentos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-amd64  . && sha1sum ../$(DIST_DIR)/UploadCentos-darwin-amd64  > ../$(DIST_DIR)/UploadCentos-darwin-amd64.sha1
+	@cd UploadCentos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-arm64  . && sha1sum ../$(DIST_DIR)/UploadCentos-darwin-arm64  > ../$(DIST_DIR)/UploadCentos-darwin-arm64.sha1
+	@echo "UploadCentos dist build complete: $(DIST_DIR)/"
+
 .PHONY: test
 test: ## Run all tests
 	@echo "Running tests..."
@@ -258,6 +288,7 @@ clean: ## Clean build artifacts
 	@rm -f ocp-ipi-powervc-test
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
+	@rm -f UploadCentos/UploadCentos
 	@echo "Clean complete"
 
 .PHONY: clean-all
