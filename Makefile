@@ -179,6 +179,9 @@ dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and g
 	@cd UploadRhcos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-arm64  . && sha1sum ../$(DIST_DIR)/UploadRhcos-darwin-arm64  > ../$(DIST_DIR)/UploadRhcos-darwin-arm64.sha1
 	@echo "UploadRhcos dist build complete: $(DIST_DIR)/"
 
+.PHONY: init-all
+init-all: init-snippets init-jobhistory init-uploadrhcos init-uploadcentos
+
 .PHONY: init-uploadcentos
 init-uploadcentos: ## Initialize UploadCentos Go module and download dependencies
 	@echo "Initializing UploadCentos module..."
