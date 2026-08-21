@@ -9,7 +9,7 @@ require (
 	github.com/IBM/platform-services-go-sdk v0.103.0
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/gophercloud/gophercloud/v2 v2.13.0
+	github.com/gophercloud/gophercloud/v2 v2.14.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
 	github.com/openshift/api v0.0.0-20260812104507-9d7eaabdfe05
 	github.com/sirupsen/logrus v1.10.0
@@ -45,10 +45,10 @@ require (
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
