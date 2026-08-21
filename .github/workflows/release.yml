@@ -15,7 +15,7 @@ jobs:
       matrix:
         # List of GOOS and GOARCH pairs from `go tool dist list`
         goosarch:
-          - 'linux/ppc64le'
+        # - 'linux/ppc64le'
           - 'linux/amd64'
     steps:
     - name: Checkout code
@@ -33,6 +33,8 @@ jobs:
       run: |
         make release
         make dist-jobhistory   
+        make dist-uploadrhcos
+        make dist-uploadcentos
 
     - name: Release binaries
       uses: softprops/action-gh-release@v3
@@ -59,6 +61,26 @@ jobs:
           dist/JobHistory-linux-arm64.sha1
           dist/JobHistory-linux-ppc64le
           dist/JobHistory-linux-ppc64le.sha1
+          dist/UploadRhcos-darwin-amd64
+          dist/UploadRhcos-darwin-amd64.sha1
+          dist/UploadRhcos-darwin-arm64
+          dist/UploadRhcos-darwin-arm64.sha1
+          dist/UploadRhcos-linux-amd64
+          dist/UploadRhcos-linux-amd64.sha1
+          dist/UploadRhcos-linux-arm64
+          dist/UploadRhcos-linux-arm64.sha1
+          dist/UploadRhcos-linux-ppc64le
+          dist/UploadRhcos-linux-ppc64le.sha1
+          dist/UploadCentos-darwin-amd64
+          dist/UploadCentos-darwin-amd64.sha1
+          dist/UploadCentos-darwin-arm64
+          dist/UploadCentos-darwin-arm64.sha1
+          dist/UploadCentos-linux-amd64
+          dist/UploadCentos-linux-amd64.sha1
+          dist/UploadCentos-linux-arm64
+          dist/UploadCentos-linux-arm64.sha1
+          dist/UploadCentos-linux-ppc64le
+          dist/UploadCentos-linux-ppc64le.sha1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
