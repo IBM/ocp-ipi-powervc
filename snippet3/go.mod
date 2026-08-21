@@ -1,6 +1,6 @@
 module example/user/snippet3
 
-go 1.26.3
+go 1.27.0
 
 require (
 	github.com/gophercloud/gophercloud/v2 v2.14.0

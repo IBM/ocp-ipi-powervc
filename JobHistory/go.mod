@@ -1,6 +1,6 @@
 module github.com/openshift/ocp-ipi-powervc/JobHistory
 
-go 1.26.3
+go 1.27.0
 
 require github.com/PuerkitoBio/goquery v1.12.0
 
