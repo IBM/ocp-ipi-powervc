@@ -338,7 +338,7 @@ docker-build: ## Build Docker image (requires Dockerfile)
 	fi
 
 .PHONY: release
-release: clean deps test build-all ## Prepare a release (clean, test, build all platforms)
+release: clean deps test dist ## Prepare a release (clean, test, build all platforms)
 	@echo "Release preparation complete"
 	@echo "Binaries available in $(DIST_DIR)/"
 	@ls -lh $(DIST_DIR)/

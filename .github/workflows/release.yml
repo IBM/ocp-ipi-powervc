@@ -32,9 +32,7 @@ jobs:
     - name: Release
       run: |
         make release
-        make dist-jobhistory   
-        make dist-uploadrhcos
-        make dist-uploadcentos
+        make checksums
 
     - name: Release binaries
       uses: softprops/action-gh-release@v3
