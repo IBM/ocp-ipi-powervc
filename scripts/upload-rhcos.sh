@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2026 IBM Corp
+# Copyright 2025 IBM Corp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -60,9 +60,8 @@ declare -a RELEASES=()
 # Options
 VERBOSE=false
 DRY_RUN=false
-QUIET=false
-OUTPUT_FORMAT="text"  # text, json, or csv
-RHEL_VERSION=""       # rhel9, rhel10, or empty (auto-detect)
+# Note: RHEL_VERSION is intentionally left unset here so [[ ! -v RHEL_VERSION ]]
+# correctly detects when the user has not provided it via CLI or environment.
 USE_PVSADM=false      # true if pvsadm is available
 USE_PVCCTL=false      # true if pvcctl is available, false if using powervc-image
 
@@ -80,74 +79,50 @@ readonly COLOR_RESET='\033[0m'       # Reset to default
 
 #------------------------------------------------------------------------------
 # Function: log_info
-# Description: Print informational message in blue color (suppressed in quiet mode)
+# Description: Print informational message in blue color
 # Arguments:
 #   $* - Message to display
 # Returns: None
-# Global Variables:
-#   QUIET - If true, suppresses output
-#   COLOR_BLUE - Blue color code for info messages
-#   COLOR_RESET - Reset color code
 # Example: log_info "Processing release 4.21"
 #------------------------------------------------------------------------------
 function log_info() {
-	if [[ "${QUIET}" != "true" ]]; then
-		echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"
-	fi
+	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $*"
 }
 
 #------------------------------------------------------------------------------
 # Function: log_success
-# Description: Print success message in green color (suppressed in quiet mode)
+# Description: Print success message in green color
 # Arguments:
 #   $* - Message to display
 # Returns: None
-# Global Variables:
-#   QUIET - If true, suppresses output
-#   COLOR_GREEN - Green color code for success messages
-#   COLOR_RESET - Reset color code
 # Example: log_success "All releases processed successfully"
 #------------------------------------------------------------------------------
 function log_success() {
-	if [[ "${QUIET}" != "true" ]]; then
-		echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"
-	fi
+	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $*"
 }
 
 #------------------------------------------------------------------------------
 # Function: log_warning
-# Description: Print warning message in yellow color (suppressed in quiet mode)
+# Description: Print warning message in yellow color
 # Arguments:
 #   $* - Message to display
 # Returns: None
-# Global Variables:
-#   QUIET - If true, suppresses output
-#   COLOR_YELLOW - Yellow color code for warning messages
-#   COLOR_RESET - Reset color code
 # Example: log_warning "No release specified, using default"
 #------------------------------------------------------------------------------
 function log_warning() {
-	if [[ "${QUIET}" != "true" ]]; then
-		echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"
-	fi
+	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $*"
 }
 
 #------------------------------------------------------------------------------
 # Function: log_error
-# Description: Print error message in red color to stderr (suppressed in quiet mode)
+# Description: Print error message in red color to stderr
 # Arguments:
 #   $* - Error message to display
 # Returns: None
-# Global Variables:
-#   QUIET - If true, suppresses output
-#   COLOR_RED - Red color code for error messages
-#   COLOR_RESET - Reset color code
 # Example: log_error "Failed to download file"
 #------------------------------------------------------------------------------
 function log_error() {
-	if [[ "${QUIET}" != "true" ]]; then
-		echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*" >&2
-	fi
+	echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $*" >&2
 }
 
 #------------------------------------------------------------------------------
@@ -177,10 +152,7 @@ function log_debug() {
 # Example: die "Cannot connect to OpenStack"
 #------------------------------------------------------------------------------
 function die() {
-	local save_quiet=${QUIET}
-	QUIET=false
 	log_error "$*"
-	QUIET=${save_quiet}
 	exit 1
 }
 
@@ -241,7 +213,6 @@ function check_required_programs() {
 		USE_PVSADM=true
 	else
 		log_warning "pvsadm is missing"
-		USE_PVSADM=false
 	fi
 
 	if command_exists "pvcctl"; then
@@ -255,21 +226,6 @@ function check_required_programs() {
 	fi
 
 	log_success "All required programs are available"
-}
-
-#------------------------------------------------------------------------------
-# Function: check_openstack_cli
-# Description: Verify that OpenStack CLI is available (exits via die if missing)
-# Arguments: None
-# Returns:
-#   0 - OpenStack CLI found
-# Note: Can be skipped by using --dry-run mode
-# Example: check_openstack_cli
-#------------------------------------------------------------------------------
-function check_openstack_cli() {
-	if ! command_exists "openstack"; then
-		die "Missing required program: openstack (required for verification, use --dry-run to skip)"
-	fi
 }
 
 #------------------------------------------------------------------------------
@@ -319,6 +275,11 @@ function validate_non_empty() {
 # Example: verify_openstack_connectivity
 #------------------------------------------------------------------------------
 function verify_openstack_connectivity() {
+	if [[ "${DRY_RUN}" == "true" ]]; then
+		log_warning "Running in DRY RUN mode - skipping OpenStack connectivity check"
+		return 0
+	fi
+
 	log_info "Verifying OpenStack connectivity..."
 
 	if ! openstack --os-cloud="${CLOUD}" image list >/dev/null 2>&1; then
@@ -337,10 +298,10 @@ function verify_openstack_connectivity() {
 #   $3 - Cloud name (optional, defaults to $CLOUD)
 # Returns:
 #   0 - Resource found
-#   1 - Resource not found (or dry-run mode)
+#   1 - Resource not found, or DRY_RUN is true (shows the upload path)
 # Global Variables:
 #   CLOUD - Default OpenStack cloud name
-#   DRY_RUN - If true, skips actual verification and returns 1
+#   DRY_RUN - If true, returns 1 to exercise the full upload path in dry-run
 # Example: verify_openstack_resource "image" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
 function verify_openstack_resource() {
@@ -351,12 +312,12 @@ function verify_openstack_resource() {
 	log_info "Verifying ${resource_type}: ${resource_name}"
 
 	if [[ "${DRY_RUN}" == "true" ]]; then
-		log_warning "Running in DRY RUN mode - no actual call will be performed"
+		log_warning "DRY RUN: would check for ${resource_type} '${resource_name}' — treating as not found to show upload path"
 		return 1
 	fi
 
 	if ! openstack --os-cloud="${cloud}" "${resource_type}" show "${resource_name}" >/dev/null 2>&1; then
-		log_error "Cannot find ${resource_type} '${resource_name}'"
+		log_info "${resource_type} '${resource_name}' not found in OpenStack"
 		return 1
 	fi
 
@@ -517,7 +478,7 @@ OPTIONS:
 	                         Required for pvcctl operations
 	   -v, --verbose          Enable verbose output with debug information
 	   --dry-run              Simulate operations without making actual changes
-	                         Skips OpenStack connectivity check and image verification
+	                         Skips all OpenStack calls and image conversions/imports
 	   -h, --help             Show this help message and exit
 
 ENVIRONMENT VARIABLES:
@@ -533,7 +494,6 @@ ENVIRONMENT VARIABLES:
 	                         Can be set via --svc-host option or interactively
 	   TEMPLATE               PowerVC template UUID
 	                         Can be set via --template option or interactively
-	   DEBUG                  Enable debug mode (optional, default: false)
 
 REQUIRED TOOLS:
 	   curl                   For downloading files and checking URLs
@@ -571,7 +531,7 @@ WORKFLOW:
 	   1. Parse command-line arguments and collect missing variables interactively
 	   2. Validate all required environment variables are set
 	   3. Check for required programs (curl, jq, openstack) and detect pvsadm/pvcctl
-	   4. Check OpenStack CLI availability
+	   4. Verify OpenStack connectivity
 	   5. For each release:
 	      a. Download CoreOS JSON metadata from GitHub
 	      b. Extract image URL, filename, and SHA256 checksum
@@ -620,7 +580,7 @@ function prompt_input() {
 			read -rp "${prompt_text} [${default_value}]: " input_value
 			input_value="${input_value:-${default_value}}"
 		else
-			read -rp "${prompt_text} []: " input_value
+			read -rp "${prompt_text}: " input_value
 		fi
 	fi
 
@@ -654,29 +614,31 @@ function collect_environment_variables() {
 	log_info "Collecting environment variables..."
 
 	# Cloud name from clouds.yaml
-	if [[ ! -v CLOUD ]]; then
+	if [[ ! -v CLOUD ]] || [[ -z "${CLOUD}" ]]; then
 		prompt_input "What is the cloud name in ~/.config/openstack/clouds.yaml" "CLOUD"
 	fi
 
 	# PROJECT (to prepend) is optional!
 
-	if [[ ! -v PROJECT_UPLOAD ]]; then
+	if [[ ! -v PROJECT_UPLOAD ]] || [[ -z "${PROJECT_UPLOAD}" ]]; then
 		prompt_input "What is the project when uploading?" "PROJECT_UPLOAD"
 	fi
 
-	if [[ ! -v RHEL_VERSION ]]; then
-		prompt_input "What is the RHEL version?" "RHEL_VERSION"
+	if [[ ! -v RHEL_VERSION ]] || [[ -z "${RHEL_VERSION}" ]]; then
+		prompt_input "What is the RHEL version? (rhel9 or rhel10)" "RHEL_VERSION"
 	fi
 
-	if [[ ! -v RELEASES ]]; then
-		prompt_input "What releases should we query?" "RELEASES"
+	if [[ ${#RELEASES[@]} -eq 0 ]]; then
+		local releases_input
+		prompt_input "What releases should we query? (space-separated)" "releases_input"
+		read -ra RELEASES <<< "${releases_input}"
 	fi
 
-	if [[ ! -v SVC_HOST ]]; then
+	if [[ ! -v SVC_HOST ]] || [[ -z "${SVC_HOST}" ]]; then
 		prompt_input "What is the service host?" "SVC_HOST"
 	fi
 
-	if [[ ! -v TEMPLATE ]]; then
+	if [[ ! -v TEMPLATE ]] || [[ -z "${TEMPLATE}" ]]; then
 		prompt_input "What is the template UUID?" "TEMPLATE"
 	fi
 }
@@ -708,7 +670,6 @@ function validate_environment_variables() {
 		"CLOUD"          # OpenStack cloud configuration
 		"PROJECT_UPLOAD" # PowerVC project for image access
 		"RHEL_VERSION"   # RHEL version to use
-		"RELEASES"       # Release versions to process
 		"SVC_HOST"       # PowerVC service host
 		"TEMPLATE"       # PowerVC template UUID
 	)
@@ -718,32 +679,11 @@ function validate_environment_variables() {
 		validate_non_empty "${var}"
 	done
 
-	log_success "All environment variables validated"
-}
-
-#------------------------------------------------------------------------------
-# Function: can_curl
-# Description: Check if a URL is accessible and returns HTTP 200
-# Arguments:
-#   $1 - URL to check
-# Returns:
-#   0 - URL is accessible (HTTP 200)
-#   1 - URL is not accessible or returns non-200 status
-# Note: curl doesn't return error for 404, so we check HTTP status code
-# Example: can_curl "https://example.com/file.json" && echo "URL is valid"
-#------------------------------------------------------------------------------
-function can_curl() {
-	local url="$1"
-	local http_code
-
-	log_debug "Checking URL: ${url}"
-	http_code=$(curl --silent --location --max-time 30 --connect-timeout 10 --output /dev/null --write-out "%{http_code}" "${url}")
-	log_debug "HTTP status code: ${http_code}"
-
-	if [[ "${http_code}" -ne 200 ]]; then
-		return 1
+	if [[ ${#RELEASES[@]} -eq 0 ]]; then
+		die "RELEASES must be set and non-empty"
 	fi
-	return 0
+
+	log_success "All environment variables validated"
 }
 
 #------------------------------------------------------------------------------
@@ -795,25 +735,22 @@ function download_coreos_json() {
 	fi
 
 	for url in "${urls[@]}"; do
-		log_debug "Trying URL: ${url}"
-		if can_curl "${url}"; then
-			local attempt=1
-			while [[ ${attempt} -le ${max_retries} ]]; do
-				log_debug "Download attempt ${attempt}/${max_retries}: ${url}"
-				if curl --silent --location --output "${FILE1}" "${url}"; then
-					log_info "Downloaded ${url}"
-					return 0
-				fi
-				log_warning "Download attempt ${attempt}/${max_retries} failed for ${url}"
-				attempt=$(( attempt + 1 ))
-				if [[ ${attempt} -le ${max_retries} ]]; then
-					log_debug "Retrying in ${retry_delay}s..."
-					sleep "${retry_delay}"
-				fi
-			done
-		else
-			log_debug "URL not available: ${url}"
-		fi
+		local attempt=1
+		while [[ ${attempt} -le ${max_retries} ]]; do
+			log_debug "Download attempt ${attempt}/${max_retries}: ${url}"
+			if curl --silent --location --fail --max-time 30 --connect-timeout 10 \
+					--output "${FILE1}" "${url}"; then
+				log_info "Downloaded ${url}"
+				return 0
+			fi
+			log_debug "Attempt ${attempt}/${max_retries} failed for ${url}"
+			attempt=$(( attempt + 1 ))
+			if [[ ${attempt} -le ${max_retries} ]]; then
+				log_debug "Retrying in ${retry_delay}s..."
+				sleep "${retry_delay}"
+			fi
+		done
+		log_debug "URL not available after ${max_retries} attempts: ${url}"
 	done
 
 	log_error "Could not download CoreOS JSON from any known location for release ${release}"
@@ -863,6 +800,9 @@ function extract_image_info() {
 		result[filename]="${project}-${result[filename]}"
 	fi
 	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
+	if [[ -z "${result[sha256]}" || "${result[sha256]}" == "null" ]]; then
+		log_warning "SHA256 checksum not found in JSON — proceeding without integrity check"
+	fi
 
 	return 0
 }
@@ -883,59 +823,85 @@ function extract_image_info() {
 #   2. Extract image metadata (URL, filename, SHA256)
 #   3. Verify if image already exists in OpenStack
 #   4. If image doesn't exist:
-#      a. If USE_PVSADM=true, call pvsadm to convert qcow2 to OVA format
-#      b. If USE_PVCCTL=true, call pvcctl with (download_url, filename);
-#         otherwise call powervc-image with (filename)
+#      If pvsadm IS available:
+#        a. call pvsadm to convert qcow2 URL → local OVA file
+#        b. call pvcctl (local file) or powervc-image with the resulting OVA
+#      If pvsadm is NOT available:
+#        a. call pvcctl with the download URL directly
+#        b. powervc-image cannot be used without a local OVA (returns error)
 # Example: process_release "release-4.21"
 #------------------------------------------------------------------------------
 function process_release() {
 	local release="$1"
 	declare -A image_info
-	# Initialize with default values for failure cases
-	image_info[filename]=""
-	image_info[download_url]=""
-	image_info[sha256]=""
+
+	# Create per-release temp files so multiple releases never share state
+	local file1 file2
+	file1=$(mktemp)
+	file2=$(mktemp)
+	# Override the globals for the duration of this release
+	FILE1="${file1}"
+	FILE2="${file2}"
+	trap '/bin/rm -f "${file1}" "${file2}"' RETURN
 
 	log_info "Processing release: ${release}"
 
 	# Download CoreOS JSON
 	if ! download_coreos_json "${release}"; then
-		log_error "${release} failed"
 		return 1
 	fi
 
 	# Extract image information
 	if ! extract_image_info image_info; then
-		log_error "${release} failed"
 		return 1
 	fi
 
 	log_info "Download URL: ${image_info[download_url]}"
-	log_info "Filename: ${image_info[filename]}"
-	log_debug "SHA256: ${image_info[sha256]}"
+	log_info "Filename:     ${image_info[filename]}"
+	log_debug "SHA256:       ${image_info[sha256]:-}"
 
-	# Verify OpenStack resource
-	if ! verify_openstack_resource "image" "${image_info[filename]}"; then
-		if [[ "${USE_PVSADM}" == "true" ]]; then
-			if ! call_pvsadm ${image_info[filename]} ${image_info[download_url]}; then
-				log_error "pvsadm failed!"
-				return 1
-			fi
+	# If image already exists in OpenStack, nothing more to do
+	if verify_openstack_resource "image" "${image_info[filename]}"; then
+		log_success "${release}: image '${image_info[filename]}' already present — skipping upload"
+		return 0
+	fi
+
+	# Image not found — convert and import.
+	# When pvsadm is available it converts the qcow2 URL to a local OVA file first;
+	# the subsequent import tool then uses that local file.
+	# When pvsadm is absent, pvcctl is called directly with the download URL
+	# (powervc-image always requires a local OVA and cannot proceed without pvsadm).
+	if [[ "${USE_PVSADM}" == "true" ]]; then
+		if ! call_pvsadm "${image_info[filename]}" "${image_info[download_url]}"; then
+			log_error "pvsadm failed for ${release}"
+			return 1
 		fi
-
+		# Use the locally converted OVA file for the import
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
-			if ! call_pvcctl ${image_info[download_url]} ${image_info[filename]}; then
-				log_error "pvcctl failed!"
+			if ! call_pvcctl_local "${image_info[filename]}"; then
+				log_error "pvcctl (local) failed for ${release}"
 				return 1
 			fi
 		else
-			if ! call_powervc_image ${image_info[filename]}; then
-				log_error "call_powervc_image failed!"
+			if ! call_powervc_image "${image_info[filename]}"; then
+				log_error "powervc-image failed for ${release}"
 				return 1
 			fi
 		fi
+	else
+		# No pvsadm — only pvcctl with a URL is possible
+		if [[ "${USE_PVCCTL}" == "true" ]]; then
+			if ! call_pvcctl "${image_info[download_url]}" "${image_info[filename]}"; then
+				log_error "pvcctl failed for ${release}"
+				return 1
+			fi
+		else
+			log_error "powervc-image requires pvsadm to produce a local OVA file, but pvsadm is not available"
+			return 1
+		fi
 	fi
 
+	log_success "${release}: image '${image_info[filename]}' uploaded successfully"
 	return 0
 }
 
@@ -973,16 +939,12 @@ function call_pvsadm() {
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
 
 	if [[ -f "${converted_filename}" ]]; then
-		log_info "File already exists (${converted_filename})!"
+		log_info "OVA file already exists, skipping conversion: ${converted_filename}"
 		return 0
 	fi
 
 	# Display the command we will execute (for logging and verification)
-	echo pvsadm image qcow2ova \
-		--image-dist coreos \
-		--image-name "${filename}" \
-		--image-url "${url}" \
-		--image-size 16
+	log_info "Running: pvsadm image qcow2ova --image-dist coreos --image-name ${filename} --image-url ${url} --image-size 16"
 
 	# Skip actual execution in dry-run mode
 	if [[ "${DRY_RUN}" == "true" ]]; then
@@ -991,20 +953,16 @@ function call_pvsadm() {
 	fi
 
 	# Execute the pvsadm image qcow2ova command
-	pushd "${SCRIPT_DIR}"
-	pvsadm image qcow2ova \
+	# Run in a subshell so set -e doesn't abort the script on failure;
+	# the subshell's exit status is captured cleanly in RC.
+	local RC=0
+	(cd "${SCRIPT_DIR}" && pvsadm image qcow2ova \
 		--image-dist coreos \
 		--image-name "${filename}" \
 		--image-url "${url}" \
-		--image-size 16
-	RC=$?
-	popd
+		--image-size 16) || RC=$?
 
-	if [[ ${RC} -gt 0 ]]; then
-		return 1
-	fi
-
-	return 0
+	return ${RC}
 }
 
 #------------------------------------------------------------------------------
@@ -1038,20 +996,24 @@ function call_pvsadm() {
 # Behavior:
 #   1. Displays the command that will be executed (for logging and verification)
 #   2. If DRY_RUN is true, logs warning and returns without execution
-#   3. If url is a local path (not http:// or https://), checks that the file
-#      exists; logs error and returns 1 if it is missing
-#   4. Otherwise, executes the pvcctl image import-linux command
-# File Expectations:
-#   - When url is a local path, the file must exist before calling this function
+#   3. Otherwise, executes the pvcctl image import-linux command
 # Example: call_pvcctl "https://example.com/rhcos.qcow2.gz" "rhcos-4.21.0"
 #------------------------------------------------------------------------------
 function call_pvcctl() {
 	local url="$1"
 	local filename="$2"
-	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
 
 	# Display the command we will execute (for logging and verification)
-	echo pvcctl \
+	log_info "Running: pvcctl image import-linux --image ${url} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}"
+
+	# Skip actual execution in dry-run mode
+	if [[ "${DRY_RUN}" == "true" ]]; then
+		log_warning "Running in DRY RUN mode - no actual call will be performed"
+		return 0
+	fi
+
+	# Execute the pvcctl image import-linux command
+	pvcctl \
 		image import-linux \
 		--image "${url}" \
 		--name "${filename}" \
@@ -1062,6 +1024,31 @@ function call_pvcctl() {
 		--template "${TEMPLATE}" \
 		--config default-config.yaml \
 		--log-file pwr1.log
+}
+
+#------------------------------------------------------------------------------
+# Function: call_pvcctl_local
+# Description: Execute pvcctl to import a locally converted OVA image into PowerVC
+# Arguments:
+#   $1 - Image filename (without extension); OVA expected at ${SCRIPT_DIR}/${filename}.ova.gz
+# Returns:
+#   0 - Command executed successfully or dry-run mode
+#   1 - OVA file not found or command execution failed
+# Global Variables:
+#   PROJECT_UPLOAD, SVC_HOST, TEMPLATE, SCRIPT_DIR, DRY_RUN
+# Example: call_pvcctl_local "rhcos-4.21.0"
+#------------------------------------------------------------------------------
+function call_pvcctl_local() {
+	local filename="$1"
+	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
+
+	if [[ ! -f "${converted_filename}" ]]; then
+		log_error "OVA file not found: ${converted_filename}"
+		return 1
+	fi
+
+	# Display the command we will execute (for logging and verification)
+	log_info "Running: pvcctl image import-linux --image ${converted_filename} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}"
 
 	# Skip actual execution in dry-run mode
 	if [[ "${DRY_RUN}" == "true" ]]; then
@@ -1069,18 +1056,10 @@ function call_pvcctl() {
 		return 0
 	fi
 
-	# Only check for a missing file when url is a local path, not a remote URL
-	if [[ "${url}" != "http://"* && "${url}" != "https://"* ]]; then
-		if [[ ! -f "${url}" ]]; then
-			log_error "File is missing: (${url})!"
-			return 1
-		fi
-	fi
-
-	# Execute the pvcctl image import-linux command
+	# Execute the pvcctl image import-linux command with the local OVA file
 	pvcctl \
 		image import-linux \
-		--image "${url}" \
+		--image "${converted_filename}" \
 		--name "${filename}" \
 		--os-type "coreos" \
 		--volume-size "120" \
@@ -1129,18 +1108,12 @@ function call_powervc_image() {
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
 
 	if [[ ! -f "${converted_filename}" ]]; then
-		log_error "File is missing: (${converted_filename})!"
+		log_error "OVA file not found: ${converted_filename}"
 		return 1
 	fi
 
 	# Display the command we will execute (for logging and verification)
-	echo powervc-image \
-		--project "${PROJECT_UPLOAD}" \
-		import \
-		-n "${filename}" \
-		-p "${converted_filename}" \
-		-t "${TEMPLATE}" \
-		-m os-type=coreos architecture=ppc64le
+	log_info "Running: powervc-image --project ${PROJECT_UPLOAD} import -n ${filename} -p ${converted_filename} -t ${TEMPLATE} -m os-type=coreos architecture=ppc64le"
 
 	# Skip actual execution in dry-run mode
 	if [[ "${DRY_RUN}" == "true" ]]; then
@@ -1175,7 +1148,7 @@ function call_powervc_image() {
 #   2. Collect missing environment variables interactively
 #   3. Validate all required environment variables
 #   4. Check required programs (curl, jq, openstack) and detect pvsadm/pvcctl
-#   5. Check OpenStack CLI availability
+#   5. Verify OpenStack connectivity
 #   6. Process each release:
 #      - Download CoreOS JSON metadata from GitHub
 #      - Extract image metadata (URL, filename, SHA256)
@@ -1200,61 +1173,48 @@ function call_powervc_image() {
 # Example: main "$@"
 #------------------------------------------------------------------------------
 function main() {
-	local start_time
-	local end_time
-	local duration
+	log_info "Starting OpenShift RHCOS image upload script"
+	log_info "Script: ${SCRIPT_NAME}"
+	log_info "Working directory: $(pwd)"
 
-	start_time=$(date +%s)
-
-	# Parse command line arguments first (before any logging)
 	parse_arguments "$@"
 	collect_environment_variables
 	validate_environment_variables
 
-	log_debug "Parsed arguments: RELEASES=(${RELEASES[*]}), VERBOSE=${VERBOSE}, DRY_RUN=${DRY_RUN}, RHEL_VERSION=${RHEL_VERSION}, PROJECT_UPLOAD=${PROJECT_UPLOAD}, SVC_HOST=${SVC_HOST}, TEMPLATE=${TEMPLATE}"
-
-	# Initialize
-	check_required_programs
-	check_openstack_cli
-
-	log_info "Starting OpenShift RHCOS image verification script"
-	log_info "Script: ${SCRIPT_NAME}"
-	log_info "Working directory: $(pwd)"
+	log_debug "Parsed arguments: RELEASES=(${RELEASES[*]}), VERBOSE=${VERBOSE}, DRY_RUN=${DRY_RUN}, RHEL_VERSION=${RHEL_VERSION:-}, PROJECT_UPLOAD=${PROJECT_UPLOAD:-}, SVC_HOST=${SVC_HOST:-}, TEMPLATE=${TEMPLATE:-}"
 
 	if [[ "${DRY_RUN}" == "true" ]]; then
-		log_warning "Running in DRY RUN mode - no actual verification will be performed"
+		log_warning "Running in DRY RUN mode - no actual operations will be performed"
 	fi
 
-	# Process each release
+	check_required_programs
+	verify_openstack_connectivity
+
+	# Process each release; track failures so the script exits non-zero if any fail
 	log_info "Processing ${#RELEASES[@]} release(s): ${RELEASES[*]}"
+	local failures=0
 
 	for release in "${RELEASES[@]}"; do
 		if ! process_release "${release}"; then
 			log_error "Failed to process ${release}"
+			(( failures++ )) || true
 		fi
 	done
+
+	if [[ ${failures} -gt 0 ]]; then
+		die "${failures} release(s) failed to process"
+	fi
 }
 
 #==============================================================================
 # Script Initialization and Cleanup
 #==============================================================================
 
-# Set DEBUG flag if not already set in environment
-# DEBUG can be set to 'true' to enable additional debugging output
-if [[ ! -v DEBUG ]]; then
-	DEBUG=false
-fi
-
-# Create temporary files for JSON processing
-# FILE1: Stores the downloaded CoreOS JSON metadata
-# FILE2: Stores extracted OpenStack-specific artifacts from FILE1
-FILE1=$(mktemp)
-FILE2=$(mktemp)
-
-# Register cleanup handler to remove temporary files on script exit
-# This ensures cleanup happens even if script exits due to error
-# EXIT trap is triggered on normal exit, error exit, or signal termination
-trap "/bin/rm -rf ${FILE1} ${FILE2}" EXIT
+# FILE1 and FILE2 are overridden per-release inside process_release.
+# Initialise them empty so download_coreos_json and extract_image_info
+# always reference a defined variable even if called outside that context.
+FILE1=""
+FILE2=""
 
 #==============================================================================
 # Script Entry Point
