@@ -909,8 +909,14 @@ func (c *config) processRelease(release string) error {
 	}
 
 	// Step 4b: Import into PowerVC.
+	// When pvsadm ran, hand pvcctl the local OVA file it produced.
+	// When pvsadm was absent, fall back to the remote URL directly.
 	if c.usePvcctl {
-		if err := c.callPvcctl(info.DownloadURL, info.Filename); err != nil {
+		importSource := info.DownloadURL
+		if c.usePvsadm {
+			importSource = filepath.Join(c.ScriptDir, info.Filename+".ova.gz")
+		}
+		if err := c.callPvcctl(importSource, info.Filename); err != nil {
 			return err
 		}
 	} else {
