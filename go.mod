@@ -12,7 +12,7 @@ require (
 	github.com/gophercloud/gophercloud/v2 v2.13.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
 	github.com/openshift/api v0.0.0-20260812104507-9d7eaabdfe05
-	github.com/sirupsen/logrus v1.10.0
+	github.com/sirupsen/logrus v1.10.1
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
 	k8s.io/apimachinery v0.36.3
