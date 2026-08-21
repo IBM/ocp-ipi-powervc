@@ -10,7 +10,7 @@ require (
 	github.com/coreos/ignition/v2 v2.26.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.13.0
-	github.com/gophercloud/utils/v2 v2.0.0-20260626221802-4ae35253ac13
+	github.com/gophercloud/utils/v2 v2.0.0-20260820140002-321c0f238d1a
 	github.com/openshift/api v0.0.0-20260812104507-9d7eaabdfe05
 	github.com/sirupsen/logrus v1.10.0
 	github.com/vincent-petithory/dataurl v1.0.0
@@ -33,7 +33,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/gofrs/uuid/v5 v5.4.0 // indirect
+	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
