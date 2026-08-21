@@ -19,7 +19,7 @@ The program:
 
 | Tool | Required | Purpose |
 |------|----------|---------|
-| `openstack` | **Yes** | Image existence check |
+| `openstack` | **Yes** | Connectivity verification and image existence checks |
 | `pvcctl` | One of these two | PowerVC image import (preferred) |
 | `powervc-image` | One of these two | PowerVC image import (fallback) |
 | `pvsadm` | No | qcow2 → OVA conversion before import |
@@ -69,7 +69,7 @@ UploadCentos [OPTIONS]
 | `--template <uuid>` | `TEMPLATE` | — | PowerVC template UUID |
 | `-v`, `--verbose` | — | false | Enable `[DEBUG]` output |
 | `--dry-run` | — | false | Print commands without executing them |
-| `--quiet` | — | false | Suppress all non-error output |
+| `-q`, `--quiet` | — | false | Suppress all non-error output |
 | `-h`, `--help` | — | — | Show usage and exit |
 
 All flags can also be supplied via their corresponding environment variable.
@@ -116,11 +116,14 @@ collect missing config   (env vars → interactive prompts)
     ↓
 validate config
     ↓
+verify OpenStack connectivity
+    ↓
 fetch CentOS image listing from cloud.centos.org
     ↓
 select latest (or pinned) dated qcow2 filename
+apply --project prefix if set
     ↓
-image already in OpenStack? ──yes──→ exit 0
+image already in OpenStack? ──yes──→ done (exit 0)
     ↓ no
 pvsadm available?  ──yes──→ convert qcow2 → OVA
     ↓

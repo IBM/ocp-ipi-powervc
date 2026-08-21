@@ -27,8 +27,8 @@
 //
 // # Dependencies
 //
-//   - curl / net/http — image-listing fetch (handled natively by net/http)
-//   - openstack       — image existence check
+//   - net/http        — image-listing fetch (handled natively)
+//   - openstack       — image existence check and connectivity verification
 //   - pvsadm          — qcow2 → OVA conversion (optional; detected at runtime)
 //   - pvcctl OR powervc-image — PowerVC image import (one is required)
 //
@@ -46,7 +46,7 @@
 //	  --template <uuid>        PowerVC template UUID              (env: TEMPLATE)
 //	  -v, --verbose            Enable debug output
 //	  --dry-run                Simulate operations; no real calls
-//	  --quiet                  Suppress all non-error output
+//	  -q, --quiet              Suppress all non-error output
 //	  -h, --help               Show usage and exit
 //
 // # Environment Variables
@@ -59,6 +59,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -93,10 +94,10 @@ const (
 )
 
 // HTTP fetch configuration for the image-listing request.
-const (
-	listingTimeout        = 30 * time.Second
-	listingConnectTimeout = 10 * time.Second
-)
+const listingTimeout = 30 * time.Second
+
+// reDate matches a valid YYYYMMDD build-date pin supplied via --date.
+var reDate = regexp.MustCompile(`^\d{8}$`)
 
 // stdinReader is a single buffered reader over os.Stdin shared across all
 // interactive prompts.  Using one reader prevents the internal read-ahead
@@ -212,12 +213,13 @@ func commandExists(name string) bool {
 // configures c.usePvsadm and c.usePvcctl accordingly.
 //
 // Required (fatal if absent):
-//   - openstack — used by imageExistsInOpenStack.
+//   - openstack — used by verifyOpenstackConnectivity and imageExistsInOpenStack.
 //   - pvcctl OR powervc-image — at least one must be present for image import.
 //
 // Optional:
 //   - pvsadm — if found, c.usePvsadm is set to true and qcow2→OVA conversion
-//     is performed before import; if absent a warning is logged.
+//     is performed before import; if absent a warning is logged and conversion
+//     is skipped.
 //
 // Side-effects: sets c.usePvsadm and c.usePvcctl.
 // Exits via die if openstack or both import tools are missing.
@@ -231,7 +233,7 @@ func (c *config) checkRequiredPrograms() {
 	if commandExists("pvsadm") {
 		c.usePvsadm = true
 	} else {
-		c.logWarning("pvsadm is missing")
+		c.logWarning("pvsadm not found — qcow2 to OVA conversion will be skipped")
 	}
 
 	switch {
@@ -285,14 +287,14 @@ func promptInput(prompt, varName, defaultVal string, allowEmpty bool) string {
 }
 
 // promptCentosVersion loops until the user enters exactly "CentOS9" or
-// "CentOS10", re-prompting and printing a warning on each invalid entry.
+// "CentOS10", re-prompting and printing an error on each invalid entry.
 func promptCentosVersion() string {
 	for {
 		v := promptInput("CentOS Stream version (CentOS9 or CentOS10)", "CENTOS_VERSION", "", false)
 		if v == "CentOS9" || v == "CentOS10" {
 			return v
 		}
-		fmt.Fprintf(os.Stderr, prefixWarning+"Invalid CentOS version %q — must be CentOS9 or CentOS10\n", v)
+		fmt.Fprintf(os.Stderr, prefixError+"Invalid CentOS version %q — must be CentOS9 or CentOS10\n", v)
 	}
 }
 
@@ -331,6 +333,7 @@ func parseArguments(args []string) *config {
 	projectFlag := fs.String("project", "", "Optional project prefix prepended to image filenames")
 	projectUploadFlag := fs.String("project-upload", "", "PowerVC project name for image upload")
 	quietFlag := fs.Bool("quiet", false, "Suppress all non-error output")
+	fs.BoolVar(quietFlag, "q", false, "Suppress all non-error output")
 	svcHostFlag := fs.String("svc-host", "", "PowerVC service host")
 	templateFlag := fs.String("template", "", "PowerVC template UUID")
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output with debug information")
@@ -349,12 +352,9 @@ func parseArguments(args []string) *config {
 	}
 
 	// Validate --date value when supplied.
-	if *dateFlag != "" {
-		matched, _ := regexp.MatchString(`^\d{8}$`, *dateFlag)
-		if !matched {
-			fmt.Fprintf(os.Stderr, prefixError+"Invalid date %q — expected YYYYMMDD\n", *dateFlag)
-			os.Exit(1)
-		}
+	if *dateFlag != "" && !reDate.MatchString(*dateFlag) {
+		fmt.Fprintf(os.Stderr, prefixError+"Invalid date %q — expected YYYYMMDD\n", *dateFlag)
+		os.Exit(1)
 	}
 
 	c.CentosVersion = *centosFlag
@@ -536,8 +536,8 @@ func (c *config) findLatestCentosQcow2URL(centosVersion, pinDate string) (url, b
 	// Extract the YYYYMMDD date embedded in the filename.
 	// Pattern: CentOS-Stream-GenericCloud-N-YYYYMMDD.N.ppc64le.qcow2
 	reDateStr := fmt.Sprintf(`CentOS-Stream-GenericCloud-%s-(\d{8})`, streamNum)
-	reDate := regexp.MustCompile(reDateStr)
-	dateMatch := reDate.FindStringSubmatch(latestFilename)
+	reBuildDate := regexp.MustCompile(reDateStr)
+	dateMatch := reBuildDate.FindStringSubmatch(latestFilename)
 	if len(dateMatch) < 2 {
 		return "", "", fmt.Errorf("could not extract build date from filename: %s", latestFilename)
 	}
@@ -547,7 +547,30 @@ func (c *config) findLatestCentosQcow2URL(centosVersion, pinDate string) (url, b
 	return baseURL + latestFilename, extractedDate, nil
 }
 
-// ─── OpenStack helper ─────────────────────────────────────────────────────────
+// ─── OpenStack helpers ────────────────────────────────────────────────────────
+
+// verifyOpenstackConnectivity confirms that the openstack CLI can reach the
+// configured cloud by running "openstack image list".  Both stdout and stderr
+// of the subprocess are discarded; only the exit code is checked.
+//
+// In dry-run mode the check is skipped entirely and an info message is logged.
+// If the command fails, die is called — there is no point continuing without
+// a working OpenStack connection.
+func (c *config) verifyOpenstackConnectivity() {
+	if c.DryRun {
+		c.logInfo("Skipping OpenStack connectivity check in DRY RUN mode")
+		return
+	}
+
+	c.logInfo("Verifying OpenStack connectivity...")
+	cmd := exec.Command("openstack", "--os-cloud="+c.Cloud, "image", "list")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		c.die("Cannot connect to OpenStack. Please verify clouds.yaml configuration.")
+	}
+	c.logSuccess("OpenStack connectivity verified")
+}
 
 // imageExistsInOpenStack reports whether an image named imageName already
 // exists in OpenStack by running "openstack image show <name>".  Both stdout
@@ -556,7 +579,7 @@ func (c *config) findLatestCentosQcow2URL(centosVersion, pinDate string) (url, b
 // Returns false in dry-run mode (so that the upload path and its commands are
 // always exercised and printed during a dry run).
 func (c *config) imageExistsInOpenStack(imageName string) bool {
-	c.logInfo("Verifying image: %s", imageName)
+	c.logInfo("Checking whether image already exists: %s", imageName)
 
 	if c.DryRun {
 		c.logInfo("DRY RUN — skipping image existence check")
@@ -567,11 +590,11 @@ func (c *config) imageExistsInOpenStack(imageName string) bool {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		c.logInfo("image '%s' not found in OpenStack", imageName)
+		c.logInfo("Image not found in OpenStack: %s", imageName)
 		return false
 	}
 
-	c.logSuccess("Found image: %s", imageName)
+	c.logSuccess("Image already exists in OpenStack: %s", imageName)
 	return true
 }
 
@@ -585,7 +608,8 @@ func (c *config) imageExistsInOpenStack(imageName string) bool {
 //   - url is the remote qcow2 download URL passed to pvsadm via --image-url.
 //
 // If the output file already exists the conversion is skipped and nil is
-// returned immediately.  In dry-run mode the command is printed but not run.
+// returned immediately.  The command is always logged via logInfo before
+// execution.  In dry-run mode execution is skipped and nil is returned.
 //
 // The subprocess runs in c.ScriptDir so that pvsadm writes the OVA alongside
 // the binary.  stdout and stderr of the subprocess are inherited.
@@ -593,19 +617,17 @@ func (c *config) callPvsadm(filename, url string) error {
 	convertedFilename := filepath.Join(c.ScriptDir, filename+".ova.gz")
 
 	if _, err := os.Stat(convertedFilename); err == nil {
-		c.logInfo("File already exists (%s)!", convertedFilename)
+		c.logInfo("OVA already exists, skipping conversion: %s", convertedFilename)
 		return nil
 	}
+
+	c.logInfo("Running: pvsadm image qcow2ova --image-dist coreos --image-name %s --image-url %s --image-size 16",
+		filename, url)
 
 	if c.DryRun {
-		c.logInfo("Would run: pvsadm image qcow2ova --image-dist coreos --image-name %s --image-url %s --image-size 16",
-			filename, url)
-		c.logWarning("DRY RUN mode - skipping pvsadm conversion")
+		c.logInfo("DRY RUN — skipping pvsadm execution")
 		return nil
 	}
-
-	c.logDebug("Running: pvsadm image qcow2ova --image-dist coreos --image-name %s --image-url %s --image-size 16",
-		filename, url)
 
 	cmd := exec.Command("pvsadm",
 		"image", "qcow2ova",
@@ -631,10 +653,11 @@ func (c *config) callPvsadm(filename, url string) error {
 //     path (the .ova.gz produced by callPvsadm).  pvcctl handles both natively.
 //   - filename becomes the PowerVC image name (--name).
 //
-// When USE_PVSADM is true and a local .ova.gz is expected but not found (in
-// non-dry-run mode), an error is returned immediately.
+// When url is a local path (no http:// or https:// prefix) the file must
+// already exist; an error is returned if it is missing.
 //
-// In dry-run mode the command is printed but not run.
+// The command is always logged via logInfo before execution.  In dry-run mode
+// execution is skipped and nil is returned.
 //
 // Fixed import parameters: --os-type coreos, --volume-size 120,
 // --config default-config.yaml, --log-file pwr1.log.
@@ -645,23 +668,23 @@ func (c *config) callPvcctl(imageURL, filename string) error {
 	// fall back to the remote URL so pvcctl can fetch and convert it directly.
 	imageSource := imageURL
 	if c.usePvsadm {
-		if !c.DryRun {
-			if _, err := os.Stat(convertedFilename); os.IsNotExist(err) {
-				return fmt.Errorf("local file missing: %s", convertedFilename)
-			}
-		}
 		imageSource = convertedFilename
 	}
 
+	c.logInfo("Running: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s --config default-config.yaml --log-file pwr1.log",
+		imageSource, filename, c.ProjectUpload, c.SvcHost, c.Template)
+
 	if c.DryRun {
-		c.logInfo("Would run: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s",
-			imageSource, filename, c.ProjectUpload, c.SvcHost, c.Template)
-		c.logWarning("DRY RUN mode - skipping pvcctl import")
+		c.logInfo("DRY RUN — skipping pvcctl execution")
 		return nil
 	}
 
-	c.logDebug("Running: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s",
-		imageSource, filename, c.ProjectUpload, c.SvcHost, c.Template)
+	// Validate local file existence when URL is not remote.
+	if !strings.HasPrefix(imageSource, "http://") && !strings.HasPrefix(imageSource, "https://") {
+		if _, err := os.Stat(imageSource); errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("local file missing: %s", imageSource)
+		}
+	}
 
 	cmd := exec.Command("pvcctl",
 		"image", "import-linux",
@@ -690,28 +713,29 @@ func (c *config) callPvcctl(imageURL, filename string) error {
 //   - filename is the image name without extension; the function derives the
 //     full OVA path as <ScriptDir>/<filename>.ova.gz.
 //
-// In dry-run mode the OVA existence check is skipped and the command is printed
-// but not run.  In non-dry-run mode an error is returned if the OVA file is
-// missing — callPvsadm must have run successfully first.
+// Returns an error immediately if the OVA file does not exist — callPvsadm
+// must have run successfully before this function is called (powervc-image
+// does not download images; it only imports local OVA files).
 //
-// Fixed metadata flag: -m "os-type=rhel architecture=ppc64le", matching the
-// shell script exactly.
+// The command is always logged via logInfo before execution.  In dry-run mode
+// execution is skipped and nil is returned.
+//
+// Fixed import parameter: a single -m flag with the value
+// "os-type=coreos architecture=ppc64le".
 func (c *config) callPowervcImage(filename string) error {
 	convertedFilename := filepath.Join(c.ScriptDir, filename+".ova.gz")
 
-	if c.DryRun {
-		c.logInfo("Would run: powervc-image --project %s import -n %s -p %s -t %s -m os-type=rhel architecture=ppc64le",
-			c.ProjectUpload, filename, convertedFilename, c.Template)
-		c.logWarning("DRY RUN mode - skipping powervc-image import")
-		return nil
-	}
-
-	if _, err := os.Stat(convertedFilename); os.IsNotExist(err) {
+	if _, err := os.Stat(convertedFilename); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("OVA file missing: %s", convertedFilename)
 	}
 
-	c.logDebug("Running: powervc-image --project %s import -n %s -p %s -t %s -m os-type=rhel architecture=ppc64le",
+	c.logInfo("Running: powervc-image --project %s import -n %s -p %s -t %s -m os-type=coreos architecture=ppc64le",
 		c.ProjectUpload, filename, convertedFilename, c.Template)
+
+	if c.DryRun {
+		c.logInfo("DRY RUN — skipping powervc-image execution")
+		return nil
+	}
 
 	cmd := exec.Command("powervc-image",
 		"--project", c.ProjectUpload,
@@ -719,7 +743,7 @@ func (c *config) callPowervcImage(filename string) error {
 		"-n", filename,
 		"-p", convertedFilename,
 		"-t", c.Template,
-		"-m", "os-type=rhel architecture=ppc64le",
+		"-m", "os-type=coreos architecture=ppc64le",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -777,7 +801,7 @@ ENVIRONMENT VARIABLES:
   TEMPLATE         PowerVC template UUID
 
 REQUIRED TOOLS:
-  openstack              For verifying image existence (unless --dry-run)
+  openstack              For connectivity verification and image existence checks
   pvsadm                 For converting qcow2 images to OVA format (optional)
   pvcctl or powervc-image For importing images into PowerVC (either one required)
 
@@ -799,13 +823,15 @@ EXAMPLES:
   %s --centos CentOS9 --date 20260720
 
 WORKFLOW:
-  1. Parse command-line arguments and collect missing variables interactively
-  2. Validate all required environment variables are set
-  3. Check for required programs (openstack; pvcctl or powervc-image; optionally pvsadm)
-  4. Fetch the latest dated CentOS Stream GenericCloud qcow2 image URL
-  5. Derive the image name from the URL
-  6. Check if the image already exists in OpenStack
-  7. If not present:
+  1. Parse command-line arguments
+  2. Check for required programs (openstack; pvcctl or powervc-image; optionally pvsadm)
+  3. Collect missing config from environment variables or interactive prompts
+  4. Validate all required environment variables are set
+  5. Verify OpenStack connectivity
+  6. Fetch the latest dated CentOS Stream GenericCloud qcow2 image URL
+  7. Derive the image name from the URL (apply --project prefix if set)
+  8. Check if the image already exists in OpenStack
+  9. If not present:
      - Call pvsadm to convert qcow2 to OVA (if available)
      - Call pvcctl (with local OVA or URL) or powervc-image (with local OVA)
 
@@ -821,11 +847,12 @@ WORKFLOW:
 //  3. Checks for required external tools and detects pvsadm/pvcctl availability.
 //  4. Collects any missing configuration from environment variables or prompts.
 //  5. Validates that all required fields are set.
-//  6. Finds the latest (or pinned) CentOS Stream qcow2 image URL.
-//  7. Checks if the image already exists in OpenStack; exits cleanly if so.
-//  8. Converts the image with pvsadm (if available) then imports with pvcctl
+//  6. Verifies OpenStack connectivity.
+//  7. Finds the latest (or pinned) CentOS Stream qcow2 image URL.
+//  8. Checks if the image already exists in OpenStack; exits cleanly if so.
+//  9. Converts the image with pvsadm (if available) then imports with pvcctl
 //     or powervc-image.
-//  9. Exits with status 0 on success or status 1 on failure.
+// 10. Exits with status 0 on success or status 1 on failure.
 func main() {
 	// Resolve the directory containing this binary so that OVA files can be
 	// written alongside it, mirroring SCRIPT_DIR in the shell script.
@@ -839,19 +866,20 @@ func main() {
 	c := parseArguments(os.Args[1:])
 	c.ScriptDir = scriptDir
 
-	// Step 1: Check tools first so we fail fast before prompting for variables.
-	c.checkRequiredPrograms()
-
 	c.logInfo("Starting CentOS Stream image upload program")
 	c.logInfo("Working directory: %s", scriptDir)
 
 	if c.DryRun {
-		c.logWarning("Running in DRY RUN mode - no actual upload will be performed")
+		c.logWarning("Running in DRY RUN mode - no actual operations will be performed")
 	}
+
+	// Step 1: Check tools first so we fail fast before prompting for variables.
+	c.checkRequiredPrograms()
 
 	// Step 2: Collect and validate configuration.
 	c.collectFromEnvironment()
 	c.validateEnvironment()
+	c.verifyOpenstackConnectivity()
 
 	c.logDebug("Parsed arguments: verbose=%v dry-run=%v centos=%s project-upload=%s svc-host=%s template=%s",
 		c.Verbose, c.DryRun, c.CentosVersion, c.ProjectUpload, c.SvcHost, c.Template)
@@ -863,19 +891,27 @@ func main() {
 		c.die("%v", err)
 	}
 	c.logDebug("url=%s", imageURL)
-	c.logDebug("build_date=%s", buildDate)
+	c.logInfo("Build date: %s", buildDate)
 
 	// Step 4: Derive the image name used in OpenStack/PowerVC from the URL.
 	// e.g. https://.../CentOS-Stream-GenericCloud-9-20260720.0.ppc64le.qcow2
 	//   -> imagename = CentOS-Stream-GenericCloud-9-20260720.0.ppc64le
 	base := filepath.Base(imageURL)
 	imagename := strings.TrimSuffix(base, ".qcow2")
+
+	// Prepend optional project prefix (strip trailing "-" first).
+	if c.Project != "" {
+		project := strings.TrimSuffix(c.Project, "-")
+		c.logInfo("Prepending project (%s) to image filename", project)
+		imagename = project + "-" + imagename
+	}
+
 	c.logDebug("imagename=%s", imagename)
 
 	// Step 5: Skip upload if the image already exists in OpenStack/PowerVC.
 	if c.imageExistsInOpenStack(imagename) {
 		c.logSuccess("Image '%s' already present — skipping upload", imagename)
-		os.Exit(0)
+		return
 	}
 
 	// Step 6: Convert qcow2 to OVA when pvsadm is available.
@@ -883,7 +919,6 @@ func main() {
 	// - powervc-image requires a local file, so pvsadm is mandatory for that path.
 	if c.usePvsadm {
 		if err := c.callPvsadm(imagename, imageURL); err != nil {
-			c.logError("pvsadm failed!")
 			c.die("%v", err)
 		}
 	} else if !c.usePvcctl {
@@ -893,12 +928,10 @@ func main() {
 	// Step 7: Import the image into PowerVC.
 	if c.usePvcctl {
 		if err := c.callPvcctl(imageURL, imagename); err != nil {
-			c.logError("pvcctl failed!")
 			c.die("%v", err)
 		}
 	} else {
 		if err := c.callPowervcImage(imagename); err != nil {
-			c.logError("powervc-image failed!")
 			c.die("%v", err)
 		}
 	}
