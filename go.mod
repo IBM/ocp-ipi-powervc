@@ -15,7 +15,7 @@ require (
 	github.com/sirupsen/logrus v1.10.0
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.15.0
-	k8s.io/apimachinery v0.36.3
+	k8s.io/apimachinery v0.36.4
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	sigs.k8s.io/yaml v1.6.0
 )
