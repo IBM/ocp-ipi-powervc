@@ -427,6 +427,28 @@ Required existing binaries before running this script:
 
 - `ping` a Linux admin tool.
 
+## scripts/list-dns.sh
+
+This script lists DNS records from an IBM Cloud CIS (Cloud Internet Services) instance.  It interactively selects the CIS instance and domain, then paginates through all DNS records, optionally filtering by a regex pattern.
+
+Required environment variables before running this script:
+
+- `IBMCLOUD_API_KEY` IBM Cloud API key used for authentication.
+
+- `BASEDOMAIN` DNS base domain; used to auto-select the matching CIS domain when only one matches.
+
+Optional arguments:
+
+- `-m, --match <pattern>` Filter DNS records by name (regex).
+
+- `-r, --region <region>` IBM Cloud region to target (defaults to `us-south`).
+
+Required existing binaries before running this script:
+
+- `ibmcloud` IBM Cloud CLI with the CIS plugin installed.
+
+- `jq` The JSON query CLI tool.
+
 ## scripts/list-clusters-and-delete.sh
 
 This script lists running OpenShift clusters on PowerVC/OpenStack, prompts the user to select one, and deletes it.
@@ -543,3 +565,168 @@ Required existing binaries before running this script:
 - `jq` The JSON query CLI tool.
 
 - `getent` DNS resolution utility.
+
+# Companion tools
+
+Standalone Go binaries that live in sub-directories and are built/installed separately from the main `ocp-ipi-powervc` binary.
+
+- [JobHistory](#jobhistory)
+- [UploadCentos](#uploadcentos)
+- [UploadRhcos](#uploadrhcos)
+
+## JobHistory
+
+Extracts CI run information from OpenShift Prow job history pages and reports build and test results.  It can filter by date, output CSV files, and process multiple job URLs in one run.
+
+Build:
+
+```bash
+make build-jobhistory
+```
+
+**Important**: All flags must be specified **before** the URL(s).
+
+Example usage:
+
+```bash
+# All runs today, CSV output
+./JobHistory/JobHistory --today --csv --output output.csv \
+  https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>/
+
+# Last 7 days
+./JobHistory/JobHistory --last-n-days 7 <URL>
+
+# Custom date range
+./JobHistory/JobHistory --after-date 2024-07-01 --before-date 2024-07-31 <URL>
+```
+
+args:
+- `--today` Only show runs from today.
+
+- `--yesterday` Only show runs from yesterday.
+
+- `-l, --last-n-days <n>` Only show runs from the last n days.
+
+- `-a, --after-date <date>` Only show runs after this date (ISO 8601, e.g. `2024-07-01`).
+
+- `-b, --before-date <date>` Only show runs before this date (ISO 8601).
+
+- `-c, --csv` Output in CSV format.
+
+- `-o, --output <file>` Write output to this file instead of stdout.
+
+- `-d, --deploy-status-only` Only show deploy failures.
+
+- `-t, --test-status-only` Only show test failures.
+
+- `-v, --version` Display the program version.
+
+## UploadCentos
+
+Downloads the latest CentOS Stream GenericCloud `ppc64le` image from `cloud.centos.org` and uploads it into a PowerVC/OpenStack environment.  It checks whether the image already exists before uploading and optionally converts to OVA format with `pvsadm`.
+
+Build:
+
+```bash
+make build-uploadcentos
+```
+
+Example usage:
+
+```bash
+# Upload CentOS Stream 9
+./UploadCentos/UploadCentos \
+  --cloud mycloud \
+  --project-upload myproject \
+  --centos CentOS9 \
+  --svc-host powervc.example.com \
+  --template xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Dry run
+./UploadCentos/UploadCentos --centos CentOS9 --dry-run
+```
+
+args / environment variables:
+- `--cloud` / `CLOUD` OpenStack cloud name from `clouds.yaml` (required).
+
+- `--centos` / `CENTOS_VERSION` CentOS Stream version: `CentOS9` or `CentOS10` (required).
+
+- `--project-upload` / `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (required).
+
+- `--svc-host` / `SVC_HOST` PowerVC service host used by `pvcctl` (required).
+
+- `--template` / `TEMPLATE` PowerVC template UUID used during image import (required).
+
+- `--project` / `PROJECT` Optional prefix prepended to image filenames.
+
+- `--date <YYYYMMDD>` Pin to a specific image build date instead of using the latest.
+
+- `--dry-run` Print commands without executing them.
+
+- `-v, --verbose` Enable debug output.
+
+- `-q, --quiet` Suppress all non-error output.
+
+Required existing binaries:
+
+- `openstack` The OpenStack CLI tool.
+
+- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+
+- `pvsadm` For converting qcow2 images to OVA format (optional; required when using `powervc-image`).
+
+## UploadRhcos
+
+Downloads Red Hat CoreOS (RHCOS) `ppc64le` images from the OpenShift installer GitHub repository and uploads them into a PowerVC/OpenStack environment.  Supports multiple release branches, RHEL 9 and RHEL 10 based images, and optional OVA conversion with `pvsadm`.
+
+Build:
+
+```bash
+make build-uploadrhcos
+```
+
+Example usage:
+
+```bash
+# Upload a single release
+./UploadRhcos/UploadRhcos \
+  --cloud mycloud \
+  --project-upload myproject \
+  --release release-4.21 \
+  --rhel rhel9 \
+  --svc-host powervc.example.com \
+  --template xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Multiple releases, dry run
+./UploadRhcos/UploadRhcos --release release-4.21 --release release-4.22 --dry-run
+```
+
+args / environment variables:
+- `--cloud` / `CLOUD` OpenStack cloud name from `clouds.yaml` (required).
+
+- `--project-upload` / `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (required).
+
+- `--release <version>` Release branch to process (e.g. `release-4.21`); may be repeated for multiple releases (defaults to `release-4.21`).
+
+- `--rhel` / `RHEL_VERSION` RHEL version preference for CoreOS JSON selection: `rhel9` or `rhel10`. (optional)
+
+- `--svc-host` / `SVC_HOST` PowerVC service host used by `pvcctl` (required).
+
+- `--template` / `TEMPLATE` PowerVC template UUID used during image import (required).
+
+- `--project` / `PROJECT` Optional prefix prepended to image filenames.
+
+- `--dry-run` Print commands without executing them.
+
+- `-v, --verbose` Enable debug output.
+
+- `--quiet` Suppress all non-error output.
+
+Required existing binaries:
+
+- `openstack` The OpenStack CLI tool.
+
+- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+
+- `pvsadm` For converting qcow2 images to OVA format (optional; required when using `powervc-image`).
+
