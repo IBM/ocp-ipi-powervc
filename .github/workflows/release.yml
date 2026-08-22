@@ -43,47 +43,47 @@ jobs:
       with:
         files: |
           dist/ocp-ipi-powervc-${{ github.ref_name }}.tgz
-          dist/ocp-ipi-powervc-${{ github.ref_name }}.tgz.sha1
+          dist/ocp-ipi-powervc-${{ github.ref_name }}.tgz.sha256
           dist/ocp-ipi-powervc-darwin-amd64
-          dist/ocp-ipi-powervc-darwin-amd64.sha1
+          dist/ocp-ipi-powervc-darwin-amd64.sha256
           dist/ocp-ipi-powervc-darwin-arm64
-          dist/ocp-ipi-powervc-darwin-arm64.sha1
+          dist/ocp-ipi-powervc-darwin-arm64.sha256
           dist/ocp-ipi-powervc-linux-amd64
-          dist/ocp-ipi-powervc-linux-amd64.sha1
+          dist/ocp-ipi-powervc-linux-amd64.sha256
           dist/ocp-ipi-powervc-linux-arm64
-          dist/ocp-ipi-powervc-linux-arm64.sha1
+          dist/ocp-ipi-powervc-linux-arm64.sha256
           dist/ocp-ipi-powervc-linux-ppc64le
-          dist/ocp-ipi-powervc-linux-ppc64le.sha1
+          dist/ocp-ipi-powervc-linux-ppc64le.sha256
           dist/JobHistory-darwin-amd64
-          dist/JobHistory-darwin-amd64.sha1
+          dist/JobHistory-darwin-amd64.sha256
           dist/JobHistory-darwin-arm64
-          dist/JobHistory-darwin-arm64.sha1
+          dist/JobHistory-darwin-arm64.sha256
           dist/JobHistory-linux-amd64
-          dist/JobHistory-linux-amd64.sha1
+          dist/JobHistory-linux-amd64.sha256
           dist/JobHistory-linux-arm64
-          dist/JobHistory-linux-arm64.sha1
+          dist/JobHistory-linux-arm64.sha256
           dist/JobHistory-linux-ppc64le
-          dist/JobHistory-linux-ppc64le.sha1
+          dist/JobHistory-linux-ppc64le.sha256
           dist/UploadRhcos-darwin-amd64
-          dist/UploadRhcos-darwin-amd64.sha1
+          dist/UploadRhcos-darwin-amd64.sha256
           dist/UploadRhcos-darwin-arm64
-          dist/UploadRhcos-darwin-arm64.sha1
+          dist/UploadRhcos-darwin-arm64.sha256
           dist/UploadRhcos-linux-amd64
-          dist/UploadRhcos-linux-amd64.sha1
+          dist/UploadRhcos-linux-amd64.sha256
           dist/UploadRhcos-linux-arm64
-          dist/UploadRhcos-linux-arm64.sha1
+          dist/UploadRhcos-linux-arm64.sha256
           dist/UploadRhcos-linux-ppc64le
-          dist/UploadRhcos-linux-ppc64le.sha1
+          dist/UploadRhcos-linux-ppc64le.sha256
           dist/UploadCentos-darwin-amd64
-          dist/UploadCentos-darwin-amd64.sha1
+          dist/UploadCentos-darwin-amd64.sha256
           dist/UploadCentos-darwin-arm64
-          dist/UploadCentos-darwin-arm64.sha1
+          dist/UploadCentos-darwin-arm64.sha256
           dist/UploadCentos-linux-amd64
-          dist/UploadCentos-linux-amd64.sha1
+          dist/UploadCentos-linux-amd64.sha256
           dist/UploadCentos-linux-arm64
-          dist/UploadCentos-linux-arm64.sha1
+          dist/UploadCentos-linux-arm64.sha256
           dist/UploadCentos-linux-ppc64le
-          dist/UploadCentos-linux-ppc64le.sha1
+          dist/UploadCentos-linux-ppc64le.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
