@@ -128,6 +128,9 @@ init-snippets: ## Initialize Go modules for all snippet directories
 init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 	@echo "Initializing JobHistory module..."
 	@cd JobHistory && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/JobHistory && $(GO) mod tidy
+	@# Fail if golang.org/x/net v0.52 is present - security vulnerability
+	@# Add 'golang.org/x/net v0.55.0 // indirect' to JobHistory/go.mod require statement
+	@! grep -c 'golang.org/x/net v0.52' JobHistory/go.*
 	@echo "JobHistory module initialized"
 
 .PHONY: build-jobhistory
