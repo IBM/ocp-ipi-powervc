@@ -346,7 +346,7 @@ release: clean deps test dist ## Prepare a release (clean, test, build all platf
 	@ls -lh $(DIST_DIR)/
 	@tar cvzf "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
 	@mv "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
-	@cd $(DIST_DIR) && sha1sum "$(BINARY_NAME)-$(GIT_RELEASE).tgz" > "$(BINARY_NAME)-$(GIT_RELEASE).sha1"
+	@cd $(DIST_DIR) && sha1sum "$(BINARY_NAME)-$(GIT_RELEASE).tgz" > "$(BINARY_NAME)-$(GIT_RELEASE).tgz.sha1"
 
 .PHONY: dev
 dev: deps build test ## Quick development cycle (deps, build, test — skips clean)
