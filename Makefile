@@ -1,4 +1,4 @@
-# Copyright 2026 IBM Corp
+# Copyright 2024 IBM Corp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,11 +39,10 @@ TEST_TIMEOUT := 15m
 COVERAGE_FILE := coverage.out
 
 # Directories
-BUILD_DIR := build
 DIST_DIR := dist
 
 .PHONY: all
-all: clean deps build test
+all: clean deps build test ## Full pipeline: clean, download deps, build, and run tests
 
 .PHONY: help
 help: ## Display this help message
@@ -105,7 +104,7 @@ build-dist: ## Build for all supported platforms
 	@echo "All platform builds complete in $(DIST_DIR)/"
 
 .PHONY: build-all
-build-all: build build-jobhistory build-uploadrhcos build-uploadcentos
+build-all: build build-jobhistory build-uploadrhcos build-uploadcentos ## Build all tools (main binary + JobHistory + UploadRhcos + UploadCentos)
 
 .PHONY: install
 install: build ## Install the binary to GOPATH/bin
@@ -115,7 +114,7 @@ install: build ## Install the binary to GOPATH/bin
 	@echo "Installation complete"
 
 .PHONY: dist
-dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadcentos
+dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadcentos ## Build distribution binaries for all tools and all supported platforms
 
 .PHONY: init-snippets
 init-snippets: ## Initialize Go modules for all snippet directories
@@ -216,7 +215,7 @@ dist-uploadcentos: build-uploadcentos ## Build UploadCentos for all platforms an
 	@echo "UploadCentos dist build complete: $(DIST_DIR)/"
 
 .PHONY: init-all
-init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadcentos
+init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadcentos ## Initialize Go modules for the main project and all sub-tools
 
 .PHONY: test
 test: ## Run all tests
@@ -291,7 +290,7 @@ clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
 	@rm -f $(OUTPUT_BINARY) $(OUTPUT_BINARY).sha1
 	@rm -f $(COVERAGE_FILE) coverage.html
-	@rm -rf $(BUILD_DIR) $(DIST_DIR)
+	@rm -rf $(DIST_DIR)
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
 	@rm -f UploadCentos/UploadCentos
@@ -328,11 +327,11 @@ run-version: build ## Run with version flag
 	./$(OUTPUT_BINARY) --version
 
 .PHONY: docker-build
-docker-build: ## Build Docker image (requires Dockerfile)
+docker-build: ## Build Docker image (requires a Dockerfile to be present at the repo root)
 	@if [ -f Dockerfile ]; then \
 		docker build -t $(BINARY_NAME):$(GIT_RELEASE) .; \
 	else \
-		echo "Dockerfile not found"; \
+		echo "Error: Dockerfile not found at repo root. Create one before running this target."; \
 		exit 1; \
 	fi
 
