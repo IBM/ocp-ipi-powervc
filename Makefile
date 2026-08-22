@@ -42,7 +42,7 @@ COVERAGE_FILE := coverage.out
 DIST_DIR := dist
 
 .PHONY: all
-all: clean deps build test ## Full pipeline: clean, download deps, build, and run tests
+all: clean deps build test ## Full pipeline: clean, download deps, build, and run tests (same as 'dev' but explicit entry point)
 
 .PHONY: help
 help: ## Display this help message
@@ -127,7 +127,7 @@ init-snippets: ## Initialize Go modules for all snippet directories
 .PHONY: init-jobhistory
 init-jobhistory: ## Initialize JobHistory Go module and download dependencies
 	@echo "Initializing JobHistory module..."
-	@cd JobHistory && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/JobHistory && go mod tidy
+	@cd JobHistory && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/JobHistory && $(GO) mod tidy
 	@echo "JobHistory module initialized"
 
 .PHONY: build-jobhistory
@@ -157,7 +157,7 @@ dist-jobhistory: build-jobhistory ## Build JobHistory for all platforms and gene
 .PHONY: init-uploadrhcos
 init-uploadrhcos: ## Initialize UploadRhcos Go module and download dependencies
 	@echo "Initializing UploadRhcos module..."
-	@cd UploadRhcos && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/UploadRhcos && go mod tidy
+	@cd UploadRhcos && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/UploadRhcos && $(GO) mod tidy
 	@echo "UploadRhcos module initialized"
 
 .PHONY: build-uploadrhcos
@@ -187,7 +187,7 @@ dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and g
 .PHONY: init-uploadcentos
 init-uploadcentos: ## Initialize UploadCentos Go module and download dependencies
 	@echo "Initializing UploadCentos module..."
-	@cd UploadCentos && rm -f go.mod go.sum && go mod init github.com/openshift/ocp-ipi-powervc/UploadCentos && go mod tidy
+	@cd UploadCentos && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/UploadCentos && $(GO) mod tidy
 	@echo "UploadCentos module initialized"
 
 .PHONY: build-uploadcentos
@@ -312,11 +312,11 @@ version: ## Display version information
 
 .PHONY: run-check-alive
 run-check-alive: build ## Run check-alive command (requires -serverIP flag)
-	@if [ -z "$(SERVER_IP)" ]; then \
-		echo "Error: SERVER_IP not set. Usage: make run-check-alive SERVER_IP=192.168.1.100"; \
+	@if [ -z "$(CONTROLLER_IP)" ]; then \
+		echo "Error: CONTROLLER_IP not set. Usage: make run-check-alive CONTROLLER_IP=192.168.1.100"; \
 		exit 1; \
 	fi
-	./$(OUTPUT_BINARY) check-alive -serverIP=$(SERVER_IP)
+	./$(OUTPUT_BINARY) check-alive --serverIP "$(CONTROLLER_IP)"
 
 .PHONY: run-help
 run-help: build ## Run with help flag
@@ -342,7 +342,7 @@ release: clean deps test dist ## Prepare a release (clean, test, build all platf
 	@ls -lh $(DIST_DIR)/
 
 .PHONY: dev
-dev: clean deps build test ## Quick development cycle (clean, deps, build, test)
+dev: deps build test ## Quick development cycle (deps, build, test — skips clean)
 	@echo "Development build complete"
 
 # Default target
