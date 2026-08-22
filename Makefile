@@ -294,6 +294,7 @@ clean: ## Clean build artifacts
 	@rm -f $(OUTPUT_BINARY) $(OUTPUT_BINARY).sha1
 	@rm -f $(COVERAGE_FILE) coverage.html
 	@rm -rf $(DIST_DIR)
+	@rm -f "$(BINARY_NAME)-$(GIT_RELEASE).tgz"
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
 	@rm -f UploadCentos/UploadCentos
@@ -343,6 +344,9 @@ release: clean deps test dist ## Prepare a release (clean, test, build all platf
 	@echo "Release preparation complete"
 	@echo "Binaries available in $(DIST_DIR)/"
 	@ls -lh $(DIST_DIR)/
+	@tar cvzf "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
+	@mv "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
+	@cd $(DIST_DIR) && sha1sum "$(BINARY_NAME)-$(GIT_RELEASE).tgz" > "$(BINARY_NAME)-$(GIT_RELEASE).sha1"
 
 .PHONY: dev
 dev: deps build test ## Quick development cycle (deps, build, test — skips clean)
