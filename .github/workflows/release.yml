@@ -43,7 +43,7 @@ jobs:
       with:
         files: |
           dist/ocp-ipi-powervc-${{ github.ref_name }}.tgz
-          dist/ocp-ipi-powervc-${{ github.ref_name }}.sha1
+          dist/ocp-ipi-powervc-${{ github.ref_name }}.tgz.sha1
           dist/ocp-ipi-powervc-darwin-amd64
           dist/ocp-ipi-powervc-darwin-amd64.sha1
           dist/ocp-ipi-powervc-darwin-arm64
