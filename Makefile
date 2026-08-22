@@ -88,7 +88,6 @@ build: ## Build the binary
 	@echo "Build complete: $(OUTPUT_BINARY)"
 	@echo "Checksum written: $(OUTPUT_BINARY).sha1"
 
-
 .PHONY: build-dist
 build-dist: ## Build for all supported platforms
 	@echo "Building for all platforms..."
@@ -104,6 +103,9 @@ build-dist: ## Build for all supported platforms
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 *.go
 	cd $(DIST_DIR) && sha1sum $(BINARY_NAME)-darwin-arm64 > $(BINARY_NAME)-darwin-arm64.sha1
 	@echo "All platform builds complete in $(DIST_DIR)/"
+
+.PHONY: build-all
+build-all: build build-jobhistory build-uploadrhcos build-uploadcentos
 
 .PHONY: install
 install: build ## Install the binary to GOPATH/bin
@@ -288,11 +290,8 @@ checksums: ## Verify all .sha1 checksum files in the dist directory
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
 	@rm -f $(OUTPUT_BINARY) $(OUTPUT_BINARY).sha1
-	@rm -f $(BINARY_NAME)-*
-	@rm -f ocp-ipi-powervc-*
 	@rm -f $(COVERAGE_FILE) coverage.html
 	@rm -rf $(BUILD_DIR) $(DIST_DIR)
-	@rm -f ocp-ipi-powervc-test
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
 	@rm -f UploadCentos/UploadCentos
