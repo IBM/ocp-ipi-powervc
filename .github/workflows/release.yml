@@ -93,13 +93,22 @@ jobs:
       with:
         files: |
           scripts/create-cluster.sh
+          scripts/create-cluster.sh.sha256
           scripts/delete-cluster.sh
+          scripts/delete-cluster.sh.sha256
           scripts/console.sh
+          scripts/console.sh.sha256
           scripts/ssh.sh
+          scripts/ssh.sh.sha256
           scripts/current-servers.sh
+          scripts/current-servers.sh.sha256
           scripts/list-bastions.sh
+          scripts/list-bastions.sh.sha256
           scripts/print-stream-json.sh
+          scripts/print-stream-json.sh.sha256
           scripts/upload-centos.sh
+          scripts/upload-centos.sh.sha256
           scripts/upload-rhcos.sh
+          scripts/upload-rhcos.sh.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
