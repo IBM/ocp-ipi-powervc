@@ -92,23 +92,23 @@ jobs:
       # https://github.com/softprops/action-gh-release
       with:
         files: |
-          scripts/create-cluster.sh
-          scripts/create-cluster.sh.sha256
-          scripts/delete-cluster.sh
-          scripts/delete-cluster.sh.sha256
-          scripts/console.sh
-          scripts/console.sh.sha256
-          scripts/ssh.sh
-          scripts/ssh.sh.sha256
-          scripts/current-servers.sh
-          scripts/current-servers.sh.sha256
-          scripts/list-bastions.sh
-          scripts/list-bastions.sh.sha256
-          scripts/print-stream-json.sh
-          scripts/print-stream-json.sh.sha256
-          scripts/upload-centos.sh
-          scripts/upload-centos.sh.sha256
-          scripts/upload-rhcos.sh
-          scripts/upload-rhcos.sh.sha256
+          dist/create-cluster.sh
+          dist/create-cluster.sh.sha256
+          dist/delete-cluster.sh
+          dist/delete-cluster.sh.sha256
+          dist/console.sh
+          dist/console.sh.sha256
+          dist/ssh.sh
+          dist/ssh.sh.sha256
+          dist/current-servers.sh
+          dist/current-servers.sh.sha256
+          dist/list-bastions.sh
+          dist/list-bastions.sh.sha256
+          dist/print-stream-json.sh
+          dist/print-stream-json.sh.sha256
+          dist/upload-centos.sh
+          dist/upload-centos.sh.sha256
+          dist/upload-rhcos.sh
+          dist/upload-rhcos.sh.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret

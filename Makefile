@@ -41,6 +41,18 @@ COVERAGE_FILE := coverage.out
 # Directories
 DIST_DIR := dist
 
+# Scripts included in a release
+RELEASE_SCRIPTS := \
+	create-cluster.sh \
+	delete-cluster.sh \
+	console.sh \
+	ssh.sh \
+	current-servers.sh \
+	list-bastions.sh \
+	print-stream-json.sh \
+	upload-centos.sh \
+	upload-rhcos.sh
+
 .PHONY: all
 all: clean deps build test ## Full pipeline: clean, download deps, build, and run tests (same as 'dev' but explicit entry point)
 
@@ -298,7 +310,6 @@ clean: ## Clean build artifacts
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
 	@rm -f UploadCentos/UploadCentos
-	@rm -f scripts/*.sha256
 	@echo "Clean complete"
 
 .PHONY: clean-all
@@ -340,25 +351,24 @@ docker-build: ## Build Docker image (requires a Dockerfile to be present at the 
 		exit 1; \
 	fi
 
+.PHONY: release-scripts
+release-scripts: ## Copy release scripts and generate their checksums in dist/
+	@echo "Copying release scripts and generating checksums..."
+	@$(foreach s,$(RELEASE_SCRIPTS), \
+		cp scripts/$(s) $(DIST_DIR)/$(s) && \
+		sha256sum scripts/$(s) > $(DIST_DIR)/$(s).sha256 && \
+	) true
+	@echo "Release scripts ready in $(DIST_DIR)/"
+
 .PHONY: release
-release: clean deps test dist ## Prepare a release (clean, test, build all platforms)
+release: clean deps test dist release-scripts ## Prepare a release (clean, test, build all platforms)
 	@echo "Release preparation complete"
 	@echo "Binaries available in $(DIST_DIR)/"
 	@ls -lh $(DIST_DIR)/
+	@echo "Creating release tarball and checksum"
 	@tar cvzf "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
 	@mv "$(BINARY_NAME)-$(GIT_RELEASE).tgz" "$(DIST_DIR)/"
 	@cd $(DIST_DIR) && sha256sum "$(BINARY_NAME)-$(GIT_RELEASE).tgz" > "$(BINARY_NAME)-$(GIT_RELEASE).tgz.sha256"
-	@echo "Generating checksums for release scripts..."
-	@sha256sum scripts/create-cluster.sh      > scripts/create-cluster.sh.sha256
-	@sha256sum scripts/delete-cluster.sh      > scripts/delete-cluster.sh.sha256
-	@sha256sum scripts/console.sh             > scripts/console.sh.sha256
-	@sha256sum scripts/ssh.sh                 > scripts/ssh.sh.sha256
-	@sha256sum scripts/current-servers.sh     > scripts/current-servers.sh.sha256
-	@sha256sum scripts/list-bastions.sh       > scripts/list-bastions.sh.sha256
-	@sha256sum scripts/print-stream-json.sh   > scripts/print-stream-json.sh.sha256
-	@sha256sum scripts/upload-centos.sh       > scripts/upload-centos.sh.sha256
-	@sha256sum scripts/upload-rhcos.sh        > scripts/upload-rhcos.sh.sha256
-	@echo "Script checksums written to scripts/"
 
 .PHONY: dev
 dev: deps build test ## Quick development cycle (deps, build, test — skips clean)
