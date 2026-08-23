@@ -356,7 +356,9 @@ release-scripts: ## Copy release scripts and generate their checksums in dist/
 	@echo "Copying release scripts and generating checksums..."
 	@$(foreach s,$(RELEASE_SCRIPTS), \
 		cp scripts/$(s) $(DIST_DIR)/$(s) && \
-		sha256sum scripts/$(s) > $(DIST_DIR)/$(s).sha256 && \
+	) true
+	@cd $(DIST_DIR) && $(foreach s,$(RELEASE_SCRIPTS), \
+		sha256sum $(s) > $(s).sha256 && \
 	) true
 	@echo "Release scripts ready in $(DIST_DIR)/"
 
