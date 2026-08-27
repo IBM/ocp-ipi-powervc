@@ -303,6 +303,13 @@ function ibmcloud_cis_instances() {
 		return 1
 	fi
 
+	# Test to see if there are any overall issues
+	if ! jq -r '.[] | "\(.crn) \(.name)"' "${TEMP_JSON}" > /dev/null 2>&1; then
+		log_error "ibmcloud_cis_instances jq error with:"
+		cat "${TEMP_JSON}"
+		return 1
+	fi
+
 	declare -g -a CIS_INSTANCE_CRNS=()
 	declare -g -a CIS_INSTANCE_NAMES=()
 	while IFS=' ' read -r crn name; do
@@ -377,6 +384,13 @@ function ibmcloud_cis_instance_set() {
 ################################################################################
 function ibmcloud_cis_domains() {
 	ibmcloud cis domains --output json > "${TEMP_JSON}"
+
+	# Test to see if there are any overall issues
+	if ! jq -r '.[] | select(.status == "active") | "\(.id) \(.name)"' "${TEMP_JSON}" > /dev/null 2>&1; then
+		log_error "ibmcloud_cis_domains jq error with:"
+		cat "${TEMP_JSON}"
+		return 1
+	fi
 
 	declare -g -a CIS_DOMAIN_IDS=()
 	declare -g -a CIS_DOMAIN_NAMES=()
@@ -484,8 +498,15 @@ function ibmcloud_cis_dns_records() {
 	while true; do
 		ibmcloud cis dns-records "${CIS_DOMAIN}" --page "${page}" --output json > "${TEMP_JSON}"
 
+		# Test to see if there are any overall issues
+		if ! jq -r 'length' "${TEMP_JSON}" > /dev/null 2>&1; then
+			log_error "ibmcloud_cis_dns_records#1 jq error with:"
+			cat "${TEMP_JSON}"
+			return 1
+		fi
+
 		local count
-		count=$(jq -r 'length' < "${TEMP_JSON}")
+		count=$(jq -r 'length' "${TEMP_JSON}")
 
 		if (( count == 0 )); then
 			break
@@ -498,10 +519,17 @@ function ibmcloud_cis_dns_records() {
 			jq_filter='.[] | "\(.id) \(.name)"'
 		fi
 
+		# Test to see if there are any overall issues
+		if ! jq -r "${jq_filter}" "${TEMP_JSON}" > /dev/null 2>&1; then
+			log_error "ibmcloud_cis_dns_records#2 jq error with:"
+			cat "${TEMP_JSON}"
+			return 1
+		fi
+
 		while read -r uuid name; do
 			echo "${name} ${uuid}"
 			(( total++ )) || true
-		done < <(jq -r "${jq_filter}" < "${TEMP_JSON}")
+		done < <(jq -r "${jq_filter}" "${TEMP_JSON}")
 
 		page=$(( page + 1 ))
 	done
