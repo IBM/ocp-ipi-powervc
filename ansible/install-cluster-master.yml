@@ -25,6 +25,11 @@
         msg: "The variable 'project_id' is empty or not defined. Please provide a value."
       when: project_id | default('') | length == 0
 
+    - name: Check if project_name is empty
+      ansible.builtin.fail:
+        msg: "The variable 'project_name' is empty or not defined. Please provide a value."
+      when: project_name | default('') | length == 0
+
     - name: Gather all facts
       ansible.builtin.setup:
         gather_subset:
@@ -111,21 +116,21 @@
           - python3-openstackclient
       become: yes
 
-    - name: Git checkout PowerVC-Tool
+    - name: Git checkout ocp-ipi-powervc
       ansible.builtin.git:
         repo: 'https://github.com/IBM/ocp-ipi-powervc.git'
-        dest: /home/cloud-user/PowerVC-Tool
+        dest: /home/cloud-user/ocp-ipi-powervc
         version: main
 
     - name: Get PowerVC-Tool status
       stat:
-        path: /home/cloud-user/PowerVC-Tool/PowerVC-Tool
+        path: /home/cloud-user/ocp-ipi-powervc/TODO
       register: pvct_stat
 
-    - name: Install PowerVC-Tool
+    - name: Install ocp-ipi-powervc
       shell: |
         (
-          cd ~/PowerVC-Tool/
+          cd ~/ocp-ipi-powervc/
           TAG=$(git describe --abbrev=0 --tags)
           VERSION=$(git describe --always --long --dirty)
           ARCH=$(uname -m)
@@ -149,7 +154,7 @@
     - name: Install Go
       shell: |
         (
-          VERSION="1.26.0"
+          VERSION="1.27.0"
           if [ -d /usr/local/go/ ]
           then
             /bin/rm -rf /usr/local/go/
@@ -179,7 +184,7 @@
                 username: "{{ username }}"
                 password: "{{ password }}"
                 project_id: "{{ project_id }}"
-                project_name: "ocp-ci"
+                project_name: "{{ project_name }}"
                 user_domain_name: "Default"
               cacert: /home/cloud-user/.config/openstack/ocp-ci-ca.pem
               interface: "public"
@@ -213,7 +218,7 @@
     - name: Install oc
       shell: |
         (
-          VERSION="4.21.5"
+          VERSION="4.22.9"
           cd ~/bin/
           /bin/rm oc kubectl
           curl --silent --location --remote-name https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/${VERSION}/openshift-client-linux-ppc64le-rhel9-${VERSION}.tar.gz
