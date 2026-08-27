@@ -1061,7 +1061,7 @@ function display_console_command() {
 	log_info "To connect to the console, run the following command:"
 	echo ""
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
+	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh-agent ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	echo ""
 	log_warning "Note: You must have SSH_PASSWORDS array set in your environment:"
