@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/gophercloud/gophercloud/v2 v2.14.0
-	github.com/gophercloud/utils/v2 v2.0.0-20260820140002-321c0f238d1a
+	github.com/gophercloud/utils/v2 v2.0.0-20260824073324-42b9474d09d4
 	github.com/sirupsen/logrus v1.10.1
 	k8s.io/apimachinery v0.36.4
 )
