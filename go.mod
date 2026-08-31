@@ -7,7 +7,7 @@ require (
 	github.com/IBM/go-sdk-core/v5 v5.23.2
 	github.com/IBM/networking-go-sdk v0.53.10
 	github.com/IBM/platform-services-go-sdk v0.103.0
-	github.com/coreos/ignition/v2 v2.26.0
+	github.com/coreos/ignition/v2 v2.27.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gophercloud/gophercloud/v2 v2.14.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260820140002-321c0f238d1a
@@ -22,7 +22,7 @@ require (
 
 require (
 	github.com/coreos/go-semver v0.3.1 // indirect
-	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/coreos/vcontext v0.0.0-20230201181013-d72178a18687 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
