@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260624064701-576d2f801297
-	github.com/IBM/go-sdk-core/v5 v5.23.2
+	github.com/IBM/go-sdk-core/v5 v5.23.3
 	github.com/IBM/networking-go-sdk v0.53.10
 	github.com/IBM/platform-services-go-sdk v0.103.0
 	github.com/coreos/ignition/v2 v2.26.0
@@ -46,7 +46,7 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
