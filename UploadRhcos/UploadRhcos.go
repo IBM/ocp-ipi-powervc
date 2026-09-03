@@ -20,13 +20,16 @@
 // For each requested release the program:
 //  1. Downloads CoreOS JSON metadata from the openshift/installer GitHub repository.
 //  2. Extracts the ppc64le OpenStack qcow2.gz image URL, filename, and SHA-256.
-//  3. Checks whether the image already exists in OpenStack via the openstack CLI.
+//  3. Checks whether the image already exists in OpenStack via the gophercloud
+//     Glance API.
 //  4. If the image is absent, optionally converts the qcow2 image to OVA format
 //     with pvsadm, then imports it into PowerVC with pvcctl or powervc-image.
 //
 // # Dependencies
 //
-//   - openstack   – Image existence verification
+// OpenStack connectivity and image lookups use the gophercloud API directly
+// (clouds.yaml), so no openstack CLI binary is required.  External programs:
+//
 //   - pvsadm      – qcow2 → OVA conversion (optional; detected at runtime)
 //   - pvcctl OR powervc-image – PowerVC image import (one is required)
 //
@@ -57,6 +60,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -226,7 +230,6 @@ func commandExists(name string) bool {
 // configures c.usePvsadm and c.usePvcctl accordingly.
 //
 // Required (fatal if absent):
-//   - openstack — used by verifyOpenstackConnectivity and imageExistsInOpenStack.
 //   - pvcctl OR powervc-image — at least one must be present for image import.
 //
 // Optional:
@@ -234,16 +237,13 @@ func commandExists(name string) bool {
 //     is performed before import; if absent a warning is logged and conversion
 //     is skipped.
 //
+// OpenStack connectivity and image existence are handled natively via the
+// gophercloud API (see OpenStack.go), so no openstack CLI binary is required.
+//
 // Side-effects: sets c.usePvsadm and c.usePvcctl.
-// Exits via die if openstack or both import tools are missing.
+// Exits via die if both import tools are missing.
 func (c *config) checkRequiredPrograms() {
 	c.logInfo("Checking required programs...")
-
-	// openstack is the only mandatory external binary; JSON fetching and
-	// parsing are handled natively by net/http and encoding/json.
-	if !commandExists("openstack") {
-		c.die("Missing required program: openstack")
-	}
 
 	if commandExists("pvsadm") {
 		c.usePvsadm = true
@@ -487,13 +487,14 @@ func (c *config) validateEnvironment() {
 
 // ─── OpenStack helpers ────────────────────────────────────────────────────────
 
-// verifyOpenstackConnectivity confirms that the openstack CLI can reach the
-// configured cloud by running "openstack image list".  Both stdout and stderr
-// of the subprocess are discarded; only the exit code is checked.
+// verifyOpenstackConnectivity confirms that the configured cloud is reachable by
+// listing images through the gophercloud API (see getAllImages in
+// OpenStack.go).  A successful list proves both authentication and image-service
+// availability.
 //
 // In dry-run mode the check is skipped entirely and an info message is logged.
-// If the command fails, die is called — there is no point continuing without
-// a working OpenStack connection.
+// If the lookup fails, die is called — there is no point continuing without a
+// working OpenStack connection.
 func (c *config) verifyOpenstackConnectivity() {
 	if c.DryRun {
 		c.logInfo("Skipping OpenStack connectivity check in DRY RUN mode")
@@ -501,21 +502,25 @@ func (c *config) verifyOpenstackConnectivity() {
 	}
 
 	c.logInfo("Verifying OpenStack connectivity...")
-	cmd := exec.Command("openstack", "--os-cloud="+c.Cloud, "image", "list")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		c.die("Cannot connect to OpenStack. Please verify clouds.yaml configuration.")
+
+	// Bound the API call so a hung cloud cannot stall startup.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if _, err := c.getAllImages(ctx, c.Cloud); err != nil {
+		c.die("Cannot connect to OpenStack: %v. Please verify clouds.yaml configuration.", err)
 	}
 	c.logSuccess("OpenStack connectivity verified")
 }
 
 // imageExistsInOpenStack reports whether an image named imageName already
-// exists in OpenStack by running "openstack image show <name>".  Both stdout
-// and stderr of the subprocess are discarded.
+// exists in OpenStack by querying the Glance image service directly via the
+// gophercloud API (see findImage in OpenStack.go).
 //
 // Returns false in dry-run mode (so that the upload path and its commands are
-// always exercised and printed during a dry run).
+// always exercised and printed during a dry run).  A lookup that fails for any
+// reason other than a clean "found" is treated as not-present so the upload
+// path proceeds; the reason is logged.
 func (c *config) imageExistsInOpenStack(imageName string) bool {
 	c.logInfo("Checking whether image already exists: %s", imageName)
 
@@ -524,11 +529,13 @@ func (c *config) imageExistsInOpenStack(imageName string) bool {
 		return false
 	}
 
-	cmd := exec.Command("openstack", "--os-cloud="+c.Cloud, "image", "show", imageName)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		c.logInfo("Image not found in OpenStack: %s", imageName)
+	// Bound the API lookup so a hung cloud cannot stall the program; 2 minutes
+	// matches the timeout used by the main tool's rhcos-exists command.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if _, err := c.findImage(ctx, c.Cloud, imageName); err != nil {
+		c.logInfo("Image not found in OpenStack: %s (%v)", imageName, err)
 		return false
 	}
 
@@ -976,7 +983,6 @@ ENVIRONMENT VARIABLES:
   TEMPLATE         PowerVC template UUID
 
 REQUIRED TOOLS:
-  openstack              For verifying image existence (unless --dry-run)
   pvsadm                 For converting qcow2 images to OVA format (optional)
   pvcctl or powervc-image For importing images into PowerVC (either one required)
 
