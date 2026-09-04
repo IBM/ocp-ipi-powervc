@@ -105,7 +105,7 @@ while IFS=',' read -r id name status networks image flavor created_at; do
       cluster_status[$cluster_id]="$status"
     fi
 
-    cluster_nodes[$cluster_id]+="    $(printf "%-30s  %-18s  %s" "$node" "$ip" "$status")"$'\n'
+    cluster_nodes[$cluster_id]+="    $(printf "%-30s  %-18s  %-22s  %s" "$node" "$ip" "$created_at" "$status")"$'\n'
   else
     standalone_names+=("$name")
     standalone_ips+=("$ip")
