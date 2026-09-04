@@ -376,6 +376,14 @@ release: clean deps test dist release-scripts ## Prepare a release (clean, test,
 dev: deps build test ## Quick development cycle (deps, build, test — skips clean)
 	@echo "Development build complete"
 
+.PHONY: init-all
+init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadcentos ## Update all go modules
+
+.PHONY: 
+git-init-all: init-all ## Update all go modules and check it in
+	git add go.* snippet*/go.* JobHistory/go.* UploadRhcos/go.* UploadCentos/go.*
+	git commit -m "Update go.mod, go.sum"
+
 # Default target
 .DEFAULT_GOAL := help
 
