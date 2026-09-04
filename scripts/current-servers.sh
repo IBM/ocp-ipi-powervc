@@ -14,26 +14,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Usage: ./current-servers.sh [-c <cloud>]
+# Usage: ./current-servers.sh [-c <cloud>|--cloud <cloud>] [-i|--show-ips]
 #
 # Lists OpenStack servers grouped by cluster and standalone VMs.
 # The cloud name is taken from -c <cloud>, the CLOUD env var, or OS_CLOUD.
+# Pass -i / --show-ips to include IP addresses in the output.
 
 set -euo pipefail
 
 # ---------- argument parsing ----------
+SHOW_IPS=false
+
 usage() {
   cat >&2 <<EOF
-Usage: $0 [-c <cloud>]
-  -c <cloud>   OpenStack cloud name (overrides \$CLOUD / \$OS_CLOUD)
-  -h           Show this help text
+Usage: $0 [-c <cloud>|--cloud <cloud>] [-i|--show-ips]
+  -c / --cloud <cloud>   OpenStack cloud name (overrides \$CLOUD / \$OS_CLOUD)
+  -i / --show-ips        Show IP addresses
+  -h                     Show this help text
 EOF
   exit 1
 }
 
-while getopts ":c:h" opt; do
+# Pre-process long options into short ones
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cloud)    args+=("-c" "${2?Error: --cloud requires an argument.}"); shift 2 ;;
+    --show-ips) args+=("-i"); shift ;;
+    --)         args+=("--"); shift; break ;;
+    *)          args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
+
+while getopts ":c:ih" opt; do
   case $opt in
     c) CLOUD="$OPTARG" ;;
+    i) SHOW_IPS=true ;;
     h) usage ;;
     :) echo "Error: -$OPTARG requires an argument." >&2; usage ;;
     \?) echo "Error: unknown option -$OPTARG." >&2; usage ;;
@@ -105,7 +122,11 @@ while IFS=',' read -r id name status networks image flavor created_at; do
       cluster_status[$cluster_id]="$status"
     fi
 
-    cluster_nodes[$cluster_id]+="    $(printf "%-30s  %-18s  %-22s  %s" "$node" "$ip" "$created_at" "$status")"$'\n'
+    if [[ "$SHOW_IPS" == true ]]; then
+      cluster_nodes[$cluster_id]+="    $(printf "%-30s  %-18s  %-22s  %s" "$node" "$ip" "$created_at" "$status")"$'\n'
+    else
+      cluster_nodes[$cluster_id]+="    $(printf "%-30s  %-22s  %s" "$node" "$created_at" "$status")"$'\n'
+    fi
   else
     standalone_names+=("$name")
     standalone_ips+=("$ip")
@@ -143,18 +164,33 @@ for cid in "${cluster_order[@]}"; do
 done
 
 W=$standalone_max_name
-sep_len=$(( W + 18 + 10 + 50 + 22 + 8 ))
+if [[ "$SHOW_IPS" == true ]]; then
+  sep_len=$(( W + 18 + 10 + 50 + 22 + 8 ))
+else
+  sep_len=$(( W + 10 + 50 + 22 + 6 ))
+fi
 echo ""
 echo "STANDALONE / BASTION VMs (${standalone_count})"
 echo "========================"
-printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" "Name" "IP" "Status" "Created At" "Image"
+if [[ "$SHOW_IPS" == true ]]; then
+  printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" "Name" "IP" "Status" "Created At" "Image"
+else
+  printf "  %-${W}s  %-10s  %-22s  %s\n" "Name" "Status" "Created At" "Image"
+fi
 printf '  '
 printf '─%.0s' $(seq 1 "$sep_len")
 printf '\n'
 for i in "${!standalone_names[@]}"; do
-  printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" \
-    "${standalone_names[$i]}" "${standalone_ips[$i]}" \
-    "${standalone_statuses[$i]}" "${standalone_created[$i]}" \
-    "${standalone_images[$i]}"
+  if [[ "$SHOW_IPS" == true ]]; then
+    printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" \
+      "${standalone_names[$i]}" "${standalone_ips[$i]}" \
+      "${standalone_statuses[$i]}" "${standalone_created[$i]}" \
+      "${standalone_images[$i]}"
+  else
+    printf "  %-${W}s  %-10s  %-22s  %s\n" \
+      "${standalone_names[$i]}" \
+      "${standalone_statuses[$i]}" "${standalone_created[$i]}" \
+      "${standalone_images[$i]}"
+  fi
 done
 echo ""
