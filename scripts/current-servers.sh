@@ -58,7 +58,7 @@ done
 
 # ---------- fetch data ----------
 echo "Fetching server list from cloud: ${CLOUD} ..." >&2
-csv_data=$(openstack --os-cloud="${CLOUD}" server list --format=csv) || {
+csv_data=$(openstack --os-cloud="${CLOUD}" server list --format=csv -c ID -c Name -c Status -c Networks -c Image -c Flavor -c "Created At") || {
   echo "Error: openstack command failed." >&2
   exit 1
 }
@@ -72,18 +72,21 @@ fi
 declare -A cluster_images
 declare -A cluster_nodes
 declare -A cluster_status          # tracks any non-ACTIVE node per cluster
+declare -A cluster_created         # earliest creation time per cluster
 declare -a cluster_order
 declare -a standalone_names
 declare -a standalone_ips
 declare -a standalone_statuses
 declare -a standalone_images
+declare -a standalone_created
 standalone_max_name=4              # minimum width = length of "Name" header
 
-while IFS=',' read -r id name status networks image flavor; do
+while IFS=',' read -r id name status networks image flavor created_at; do
   name="${name//\"/}"
   status="${status//\"/}"
   image="${image//\"/}"
   flavor="${flavor//\"/}"
+  created_at="${created_at//\"/}"
   ip=$(grep -oE '[0-9]+(\.[0-9]+){3}' <<< "$networks" | head -1 || true)
 
   if [[ "$name" =~ ^p-[a-f0-9-]+-([a-z0-9]+)-(master|worker|bootstrap) ]]; then
@@ -93,6 +96,7 @@ while IFS=',' read -r id name status networks image flavor; do
     if [[ -z "${cluster_images[$cluster_id]+set}" ]]; then
       cluster_images[$cluster_id]="$image"
       cluster_status[$cluster_id]="ACTIVE"
+      cluster_created[$cluster_id]="$created_at"
       cluster_order+=("$cluster_id")
     fi
 
@@ -107,6 +111,7 @@ while IFS=',' read -r id name status networks image flavor; do
     standalone_ips+=("$ip")
     standalone_statuses+=("$status")
     standalone_images+=("$image")
+    standalone_created+=("$created_at")
     (( ${#name} > standalone_max_name )) && standalone_max_name=${#name}
   fi
 done < <(tail -n +2 <<< "$csv_data")
@@ -131,23 +136,25 @@ for cid in "${cluster_order[@]}"; do
   [[ "$overall" == "ACTIVE" ]] && flag="" || flag="  [!] has non-ACTIVE nodes"
   echo ""
   echo "  Cluster : $cid${flag}"
+  echo "  Created : ${cluster_created[$cid]}"
   echo "  Image   : ${cluster_images[$cid]}"
   echo "  Nodes   :"
   printf "%s" "${cluster_nodes[$cid]}"
 done
 
 W=$standalone_max_name
-sep_len=$(( W + 18 + 10 + 50 + 8 ))
+sep_len=$(( W + 18 + 10 + 50 + 22 + 8 ))
 echo ""
 echo "STANDALONE / BASTION VMs (${standalone_count})"
 echo "========================"
-printf "  %-${W}s  %-18s  %-10s  %s\n" "Name" "IP" "Status" "Image"
+printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" "Name" "IP" "Status" "Created At" "Image"
 printf '  '
 printf '─%.0s' $(seq 1 "$sep_len")
 printf '\n'
 for i in "${!standalone_names[@]}"; do
-  printf "  %-${W}s  %-18s  %-10s  %s\n" \
+  printf "  %-${W}s  %-18s  %-10s  %-22s  %s\n" \
     "${standalone_names[$i]}" "${standalone_ips[$i]}" \
-    "${standalone_statuses[$i]}" "${standalone_images[$i]}"
+    "${standalone_statuses[$i]}" "${standalone_created[$i]}" \
+    "${standalone_images[$i]}"
 done
 echo ""
