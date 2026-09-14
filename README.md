@@ -403,7 +403,11 @@ This script lists OpenStack servers grouped by cluster and standalone VMs.
 
 Optional arguments:
 
-- `-c <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
+- `-c <cloud>` / `--cloud <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
+
+- `-i` / `--show-ips` Show IP addresses.
+
+- `-s` / `--show-standalone` Show standalone/bastion VMs (default: false).
 
 Required existing binaries before running this script:
 
