@@ -1409,7 +1409,7 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, kernelArgs 
 	}
 
 	// Add network configuration files
-	if false && port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
+	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
 		detectIfaceUnit := `[Unit]
 Description=Detect primary network interface
 Before=NetworkManager.service
