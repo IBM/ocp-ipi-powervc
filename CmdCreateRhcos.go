@@ -73,7 +73,6 @@ const (
 	sshDirPerms               = 0700
 
 	// SSH key validation
-	minSSHKeyLength       = 100 // Minimum reasonable SSH public key length
 	minPasswordHashLength = 13  // Minimum crypt hash length
 
 	// Retry configuration
@@ -263,11 +262,10 @@ func (c *rhcosConfig) validateSSHKey() error {
 	// Trim whitespace
 	key := strings.TrimSpace(c.SshPublicKey)
 
-	// Check minimum length
-	if len(key) < minSSHKeyLength {
+	if key == "" {
 		return &ValidationError{
 			Field:   "SshPublicKey",
-			Message: fmt.Sprintf("appears invalid (too short, minimum %d characters)", minSSHKeyLength),
+			Message: "is required",
 		}
 	}
 
@@ -302,8 +300,10 @@ func (c *rhcosConfig) validateSSHKey() error {
 		}
 	}
 
-	// Validate base64 encoding of key data
-	decodedData, err := base64.StdEncoding.DecodeString(keyData)
+	// Validate base64 encoding of key data.
+	// SSH public key data (RFC 4253) is standard base64 without padding,
+	// so we must use RawStdEncoding (not StdEncoding) to avoid spurious errors.
+	decodedData, err := base64.RawStdEncoding.DecodeString(keyData)
 	if err != nil {
 		return &ValidationError{
 			Field:   "SshPublicKey",
@@ -1408,7 +1408,7 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, kernelArgs 
 	}
 
 	// Add network configuration files
-	if port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
+	if false && port != nil && subnet.CIDR != "" && subnet.GatewayIP != "" && len(subnet.DNSNameservers) > 0 {
 		detectIfaceUnit := `[Unit]
 Description=Detect primary network interface
 Before=NetworkManager.service
