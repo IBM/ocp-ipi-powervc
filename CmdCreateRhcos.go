@@ -301,13 +301,16 @@ func (c *rhcosConfig) validateSSHKey() error {
 	}
 
 	// Validate base64 encoding of key data.
-	// SSH public key data (RFC 4253) is standard base64 without padding,
-	// so we must use RawStdEncoding (not StdEncoding) to avoid spurious errors.
-	decodedData, err := base64.RawStdEncoding.DecodeString(keyData)
+	// SSH public keys may use standard base64 with padding (ssh-keygen output)
+	// or unpadded base64 (RFC 4253). Try both encodings.
+	decodedData, err := base64.StdEncoding.DecodeString(keyData)
 	if err != nil {
-		return &ValidationError{
-			Field:   "SshPublicKey",
-			Message: fmt.Sprintf("invalid base64 encoding in key data: %v", err),
+		decodedData, err = base64.RawStdEncoding.DecodeString(keyData)
+		if err != nil {
+			return &ValidationError{
+				Field:   "SshPublicKey",
+				Message: fmt.Sprintf("invalid base64 encoding in key data: %v", err),
+			}
 		}
 	}
 

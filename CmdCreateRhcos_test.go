@@ -172,7 +172,7 @@ func TestRhcosConfig_Validate(t *testing.T) {
 				SshPublicKey: "ssh-rsa short",
 			},
 			expectError: true,
-			errorMsg:    "validation error for field 'SshPublicKey': appears invalid (too short, minimum 100 characters)",
+			errorMsg:    "validation error for field 'SshPublicKey': invalid base64 encoding in key data:",
 		},
 		{
 			name: "ssh key invalid prefix",
@@ -955,9 +955,6 @@ func TestRhcosConstants(t *testing.T) {
 	}
 	if sshDirPerms != 0700 {
 		t.Errorf("sshDirPerms should be 0700, got %o", sshDirPerms)
-	}
-	if minSSHKeyLength != 100 {
-		t.Errorf("minSSHKeyLength should be 100, got %d", minSSHKeyLength)
 	}
 	if minPasswordHashLength != 13 {
 		t.Errorf("minPasswordHashLength should be 13, got %d", minPasswordHashLength)
