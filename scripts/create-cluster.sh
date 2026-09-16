@@ -143,6 +143,9 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Temporary file for storing bastion IP address
 readonly TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
 
+# Temporary HACK to use SR-IOV network adaptors rather than SEA adaptors
+readonly USE_SRIOV=false
+
 # Security: Prevent symlink attacks on temporary file
 if [[ -L "${TEMP_BASTION_IP}" ]]; then
 	echo "Security error: ${TEMP_BASTION_IP} is a symlink" >&2
@@ -1260,6 +1263,49 @@ function run_openshift_install() {
 		check-alive \
 		--serverIP "${CONTROLLER_IP}" \
 		--shouldDebug true
+
+	# Testing: Use SR-IOV networking
+	if ${USE_SRIOV}; then
+		echo "Using SR-IOV networking"
+
+		# Modify bootstrap and master machines
+		find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
+			-exec printf 'Updating: %s\n' '{}' \; \
+			-exec yq eval --inplace \
+			'.spec.ports[0].vnicType = "direct"' '{}' \;
+		find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
+			-exec printf 'Result: %s\n' '{}' \; \
+			-exec yq eval '.spec.ports' '{}' \;
+
+		local name
+		for name in "${infra_id}-bootstrap" "${infra_id}-master-0" "${infra_id}-master-1" "${infra_id}-master-2"
+		do
+			echo "Creating port: ${name}-0"
+			openstack --os-cloud=${CLOUD} port create \
+				--network ${NETWORK_NAME} \
+				--vnic-type direct \
+				--binding-profile '{"capacity": 0.02, "delete_with_instance": 1, "vnic_required_vfs": 2}' \
+				"${name}-0"
+		done
+
+		# Modify worker machineset
+		local file
+		file=$(find "${CLUSTER_DIR}" -type f -name 99_openshift-cluster-api_worker-machineset-0.yaml)
+		local network_id
+		network_id=$(openstack --os-cloud="${CLOUD}" network show "${NETWORK_NAME}" -f value -c id)
+		yq eval --inplace 'del(.spec.template.spec.providerSpec.value.networks)' "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].vnicType = "direct"' "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].portSecurity = false' "${file}"
+		yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].networkID = \"${network_id}\"" "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].nameSuffix = "nodes"' "${file}"
+		yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].fixedIPs[0].subnetID = \"${SUBNET_ID}\"" "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.capacity = "0.02"' "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.delete_with_instance = "1"' "${file}"
+		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.vnic_required_vfs = "2"' "${file}"
+		echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
+		yq eval '.spec.template.spec.providerSpec.value' "${file}"
+		echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
+	fi
 
 	# Deploy the OpenShift cluster (this is the longest operation)
 	log_info "Creating OpenShift cluster (this may take 30-45 minutes)..."
