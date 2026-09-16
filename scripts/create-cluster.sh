@@ -21,7 +21,7 @@
 # This script orchestrates the complete process of creating an OpenShift cluster
 # on PowerVC infrastructure, including:
 #   - Environment validation and prerequisite checks
-#   - Pull secret validation with podman
+#   - Pull secret validation with podman (when PULLSECRET_FILE is set)
 #   - Bastion host creation with HAProxy load balancer
 #   - DNS propagation verification
 #   - OpenShift installation configuration generation
@@ -60,7 +60,7 @@
 #   - jq: JSON processor
 #   - getent: DNS resolution utility
 #   - podman: Pull secret validation
-#   - ssh-keygen: Optional SSH public key validation
+#   - ssh-keygen: SSH public key validation
 #   - ping: Controller connectivity check
 #
 # Generated Files:
@@ -101,7 +101,7 @@
 #   1. Initialize the architecture-specific PowerVC tool and check dependencies
 #   2. Collect inputs, verify OpenStack connectivity, and validate variables
 #   3. Retrieve network and RHCOS image information
-#   4. Verify pull secret, controller health, and OpenStack resources
+#   4. Verify pull secret (when PULLSECRET_FILE is set), controller health, and OpenStack resources
 #   5. Create bastion host and determine API/ingress VIPs
 #   6. Wait for DNS propagation and verify API DNS matches the VIP
 #   7. Generate install-config.yaml
@@ -493,6 +493,8 @@ function initialize_powervc_tool() {
 #   - openstack: OpenStack CLI client
 #   - jq: JSON processor
 #   - getent: DNS resolution utility
+#   - podman: Pull secret validation
+#   - ssh-keygen: SSH public key validation
 # Exits: If any required program is missing
 ################################################################################
 function check_required_programs() {
@@ -741,15 +743,11 @@ function collect_environment_variables() {
 		die "Invalid SSH public key format in ${INSTALLER_SSHKEY}. Expected format: 'ssh-<type> <key-data> [optional-comment]'"
 	fi
 
-	# Additional validation: try to use ssh-keygen to verify the key format
-	if command -v ssh-keygen &> /dev/null; then
-		if ! ssh-keygen -l -f "${INSTALLER_SSHKEY}" &> /dev/null; then
-			die "SSH key validation failed: ${INSTALLER_SSHKEY} is not a valid public SSH key"
-		fi
-		log_success "Verified SSH public key format"
-	else
-		log_warning "ssh-keygen not found, skipping advanced SSH key validation"
+	# Additional validation: use ssh-keygen to verify the key format
+	if ! ssh-keygen -l -f "${INSTALLER_SSHKEY}" &> /dev/null; then
+		die "SSH key validation failed: ${INSTALLER_SSHKEY} is not a valid public SSH key"
 	fi
+	log_success "Verified SSH public key format"
 
 	readonly SSH_KEY
 
@@ -849,14 +847,19 @@ function verify_all_openstack_resources() {
 #
 # This validation provides early feedback before installation begins.
 #
+# NOTE: This function requires PULLSECRET_FILE to be set and point to a
+# readable file. It will fail if only PULL_SECRET is provided directly
+# (without a backing file). Callers must ensure PULLSECRET_FILE is set
+# before invoking this function.
+#
 # Prerequisites:
-#   - PULLSECRET_FILE must reference a readable auth file
+#   - PULLSECRET_FILE must be set and reference a readable auth file
 #   - openshift-install binary must be in PATH
 #   - podman must be installed and accessible
 #   - Network connectivity to the image registry
 #
 # Global Variables Used:
-#   PULLSECRET_FILE - Path to the pull secret file
+#   PULLSECRET_FILE - Path to the pull secret file (must be set)
 #
 # Exit Conditions:
 #   - Pull secret file not found or not readable
@@ -1323,8 +1326,8 @@ function run_openshift_install() {
 # Collects bastion access details if needed and starts watch-create to help
 # diagnose the failed installation.
 # Steps:
-#   1. Prompt for bastion username if needed
-#   2. Prompt for bastion private key if needed
+#   1. Prompt for bastion private key path if BASTION_RSA is not set
+#   2. Validate that the private key file exists
 #   3. Run watch-create, using kubeconfig when available
 ################################################################################
 function handle_cluster_creation_failure() {
@@ -1373,7 +1376,8 @@ function handle_cluster_creation_failure() {
 #   Phase 1: Initialization and dependency checks
 #   Phase 2: Input collection, connectivity checks, and validation
 #   Phase 3: Network and RHCOS discovery
-#   Phase 4: Pull secret, controller, and resource verification
+#   Phase 4: Pull secret (when PULLSECRET_FILE is set), controller, and
+#            resource verification
 #   Phase 5: Bastion creation and DNS verification
 #   Phase 6: install-config generation and cluster deployment
 # Each phase must complete successfully before proceeding to the next
@@ -1398,7 +1402,9 @@ function main() {
 	get_rhcos_info
 
 	# Phase 4: Verify resources exist and are accessible
-	verify_pullsecret
+	if [[ -v PULLSECRET_FILE ]]; then
+		verify_pullsecret
+	fi
 	verify_controller
 	verify_all_openstack_resources
 
