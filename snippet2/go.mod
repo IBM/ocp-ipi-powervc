@@ -3,7 +3,7 @@ module example/user/snippet2
 go 1.27.0
 
 require (
-	github.com/gophercloud/gophercloud/v2 v2.14.0
+	github.com/gophercloud/gophercloud/v2 v2.15.0
 	github.com/gophercloud/utils v0.0.0-20231010081019-80377eca5d56
 )
 
