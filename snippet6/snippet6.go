@@ -254,7 +254,30 @@ func createPVC(ctx context.Context, kubeClient kubernetes.Interface, namespace s
 
 	createdPVC, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PVC %q in namespace %q: %w", pvcName, namespace, err)
+		if errors.IsAlreadyExists(err) {
+			log.Debugf("createPVC: PVC %q already exists in namespace %q, attempting cleanup", pvcName, namespace)
+			fmt.Printf("PersistentVolumeClaim %q already exists in namespace %q. Cleaning up previous PVC and associated pod...\n", pvcName, namespace)
+
+			// Clean up any consumer pod that might be using the existing PVC
+			podName := pvcName + "-consumer-pod"
+			if errPod := deletePod(ctx, kubeClient, namespace, podName); errPod != nil {
+				log.Debugf("createPVC: cleanup deletePod returned %v", errPod)
+			}
+
+			// Clean up the existing PVC
+			if errPVC := deletePVC(ctx, kubeClient, namespace, pvcName); errPVC != nil {
+				return nil, fmt.Errorf("failed to clean up existing PVC %q: %w", pvcName, errPVC)
+			}
+			fmt.Printf("Previous resources cleaned up successfully. Re-creating PersistentVolumeClaim %q...\n", pvcName)
+
+			// Re-attempt creation
+			createdPVC, err = kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to re-create PVC %q in namespace %q: %w", pvcName, namespace, err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to create PVC %q in namespace %q: %w", pvcName, namespace, err)
+		}
 	}
 
 	log.Debugf("createPVC: PVC created with UID=%s, waiting for status", createdPVC.UID)
@@ -406,7 +429,19 @@ func createConsumerPod(ctx context.Context, kubeClient kubernetes.Interface, nam
 
 	createdPod, err := kubeClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create consumer pod %q in namespace %q: %w", podName, namespace, err)
+		if errors.IsAlreadyExists(err) {
+			log.Debugf("createConsumerPod: pod %q already exists in namespace %q, deleting and recreating", podName, namespace)
+			fmt.Printf("Consumer pod %q already exists in namespace %q. Deleting and recreating...\n", podName, namespace)
+			if errDel := deletePod(ctx, kubeClient, namespace, podName); errDel != nil {
+				return nil, fmt.Errorf("failed to delete existing consumer pod %q: %w", podName, errDel)
+			}
+			createdPod, err = kubeClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to re-create consumer pod %q in namespace %q: %w", podName, namespace, err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to create consumer pod %q in namespace %q: %w", podName, namespace, err)
+		}
 	}
 
 	log.Debugf("createConsumerPod: pod created with UID=%s", createdPod.UID)
