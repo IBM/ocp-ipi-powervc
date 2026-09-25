@@ -81,3 +81,86 @@ E0924 04:35:30.511422 1 utils.go:99] [ID:967] GRPC error: rpc error: code = Inte
    - When local device lookup times out, the Cinder CSI node driver falls back to querying OpenStack's link-local metadata service at `http://169.254.169.254/openstack/latest/meta_data.json` to get volume-to-device mapping.
    - In this test cluster environment, the metadata service route / proxy is either not routed on the worker network or blocked, resulting in `dial tcp 169.254.169.254:80: i/o timeout`.
    - As a result, the node driver cannot determine the `/dev/` device node to format/mount, causing the container mount step to block in `ContainerCreating`.
+
+---
+
+## 3. How to Identify the CSI Driver Pod for a Worker Node
+
+1. **Find the node running the pod**:
+   ```bash
+   oc get pod test-consumer-pod -n default -o wide
+   ```
+   *Example output: `NODE: rdr-ci-openstack-xkqb9-worker-0-rg4bw`*
+
+2. **Find the CSI daemonset pod running on that specific node**:
+   ```bash
+   oc get pod -n openshift-cluster-csi-drivers -o wide --field-selector spec.nodeName=rdr-ci-openstack-xkqb9-worker-0-rg4bw
+   ```
+   *Example output: `openstack-cinder-csi-driver-node-mmj69`*
+
+3. **Check the CSI node driver logs**:
+   ```bash
+   oc logs openstack-cinder-csi-driver-node-mmj69 -n openshift-cluster-csi-drivers -c csi-driver --tail=30
+   ```
+
+---
+
+## 4. In-Node Debugging Guide (`oc debug node/<node-name>`)
+
+When accessing the worker node shell (`oc debug node/<node>` followed by `chroot /host`), run the following commands to diagnose device discovery and metadata connectivity:
+
+### Step 1: Check Attached Block Devices & Symlinks
+The Cinder CSI driver looks for symlinks matching the Cinder volume UUID in `/dev/disk/by-id/`.
+
+```bash
+# List all device symlinks by ID
+ls -la /dev/disk/by-id/
+
+# List all device symlinks by path
+ls -la /dev/disk/by-path/
+
+# Inspect all block devices, SCSI model, serial numbers, and WWNs
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,WWN
+```
+
+### Step 2: Check SCSI Events & Trigger Bus Rescan
+Check if the Linux kernel received the attachment notification, and force a SCSI bus rescan if needed:
+
+```bash
+# Check kernel ring buffer for SCSI device attachments
+dmesg -T | grep -iE 'scsi|sd[a-z]|attachment|multipath' | tail -n 50
+
+# Rescan all SCSI hosts on the worker node
+for host in /sys/class/scsi_host/host*/scan; do
+    echo "- - -" > "$host"
+done
+
+# Check if new block devices appeared after rescan
+lsblk
+```
+
+### Step 3: Test OpenStack Metadata Service Connectivity
+The CSI driver attempts to reach the link-local metadata address `169.254.169.254:80` when local `/dev/disk/by-id` matching fails.
+
+```bash
+# Test metadata HTTP endpoint
+curl -v --connect-timeout 5 http://169.254.169.254/openstack/latest/meta_data.json
+
+# Check routing table for link-local or default route
+ip route get 169.254.169.254
+ip route show
+
+# Check firewall / packet filtering rules
+iptables -L -n -v | grep 169.254
+```
+
+### Step 4: Check Multipath Configuration (SAN / FibreChannel)
+If using PowerVC FibreChannel/NPIV storage:
+
+```bash
+# Check multipath topology
+multipath -ll
+
+# Check multipath daemon status
+systemctl status multipathd
+```
