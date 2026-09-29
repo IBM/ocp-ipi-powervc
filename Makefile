@@ -126,7 +126,7 @@ install: build ## Install the binary to GOPATH/bin
 	@echo "Installation complete"
 
 .PHONY: dist
-dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadcentos ## Build distribution binaries for all tools and all supported platforms
+dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadrhcosapi dist-uploadcentos ## Build distribution binaries for all tools and all supported platforms
 
 .PHONY: init-snippets
 init-snippets: ## Initialize Go modules for all snippet directories

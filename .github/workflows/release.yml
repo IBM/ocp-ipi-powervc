@@ -74,6 +74,16 @@ jobs:
           dist/UploadRhcos-linux-arm64.sha256
           dist/UploadRhcos-linux-ppc64le
           dist/UploadRhcos-linux-ppc64le.sha256
+          dist/UploadRhcosAPI-darwin-amd64
+          dist/UploadRhcosAPI-darwin-amd64.sha256
+          dist/UploadRhcosAPI-darwin-arm64
+          dist/UploadRhcosAPI-darwin-arm64.sha256
+          dist/UploadRhcosAPI-linux-amd64
+          dist/UploadRhcosAPI-linux-amd64.sha256
+          dist/UploadRhcosAPI-linux-arm64
+          dist/UploadRhcosAPI-linux-arm64.sha256
+          dist/UploadRhcosAPI-linux-ppc64le
+          dist/UploadRhcosAPI-linux-ppc64le.sha256
           dist/UploadCentos-darwin-amd64
           dist/UploadCentos-darwin-amd64.sha256
           dist/UploadCentos-darwin-arm64
