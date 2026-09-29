@@ -41,6 +41,7 @@
 //	  --insecure            Skip TLS certificate verification
 //	  -v, --verbose         Enable debug output
 //	  --dry-run             Simulate operations; no real calls
+//	  --log-payload         Print outgoing import JSON payload (credentials redacted)
 //	  --quiet               Suppress all non-error output
 //	  -h, --help            Show usage and exit
 //
@@ -190,6 +191,10 @@ type config struct {
 
 	// DryRun skips all real external operations when true.
 	DryRun bool
+
+	// LogPayload prints the outgoing import JSON payload (with credentials
+	// redacted) when true.  Enabled by --log-payload.
+	LogPayload bool
 
 	// Quiet suppresses all non-error output when true.
 	Quiet bool
@@ -428,6 +433,7 @@ func parseArguments(args []string) *config {
 	caCertFlag := fs.String("ca-cert", "", "Path to PEM CA certificate for import service TLS (env: CACERT)")
 	cloudFlag := fs.String("cloud", "", "OpenStack cloud name from clouds.yaml (env: CLOUD)")
 	dryRunFlag := fs.Bool("dry-run", false, "Simulate operations without making actual changes")
+	logPayloadFlag := fs.Bool("log-payload", false, "Print outgoing import JSON payload (credentials redacted)")
 	insecureFlag := fs.Bool("insecure", false, "Skip SSL/TLS certificate verification for import service")
 	quietFlag := fs.Bool("quiet", false, "Suppress all non-error output")
 	rhelFlag := fs.String("rhel", "", "Prefer specific RHEL version: rhel9 or rhel10 (env: RHEL_VERSION)")
@@ -454,6 +460,7 @@ func parseArguments(args []string) *config {
 	c.Releases = []string(releases)
 	c.Cloud = *cloudFlag
 	c.DryRun = *dryRunFlag
+	c.LogPayload = *logPayloadFlag
 	c.Insecure = *insecureFlag
 	c.Quiet = *quietFlag
 	c.RhelVersion = *rhelFlag
@@ -489,7 +496,12 @@ func (c *config) collectFromEnvironment() {
 	if c.Cloud != "" {
 		if authOptions, _, _, err := clouds.Parse(clouds.WithCloudName(c.Cloud)); err == nil {
 			if c.PowerVCURL == "" && authOptions.IdentityEndpoint != "" {
-				c.PowerVCURL = authOptions.IdentityEndpoint
+				endpoint := authOptions.IdentityEndpoint
+				// Keystone v3 requires the /v3 path; append it if missing.
+				if !strings.HasSuffix(strings.TrimRight(endpoint, "/"), "/v3") {
+					endpoint = strings.TrimRight(endpoint, "/") + "/v3"
+				}
+				c.PowerVCURL = endpoint
 				c.logDebug("Extracted PowerVC URL from clouds.yaml: %s", c.PowerVCURL)
 			}
 			if c.PowerVCUser == "" && authOptions.Username != "" {
@@ -948,16 +960,18 @@ const jobPollInterval = 15 * time.Second
 const jobPollTimeout = 60 * time.Minute
 
 // pollJob polls the job status endpoint derived from pollAt until the job
-// reaches a terminal state (completed, failed, or error) or jobPollTimeout
-// elapses.
+// reaches a terminal state or jobPollTimeout elapses.
+//
+// In-progress states: queued, pending, running, acquiring, extracting, importing.
+// Success states:     done, completed  → returns nil.
+// Failure states:     failed, error    → returns non-nil error.
 //
 // pollAt may be either a full URL (e.g. "https://host:8181/jobs/<id>") or a
 // bare path (e.g. "/jobs/<id>").  When it is already absolute it is used
 // directly; when it is a path it is resolved against ImportServiceURL.
 //
 // On each poll cycle the current status, progress percentage, and bytes read
-// are logged.  Returns nil only when status is "completed"; any other terminal
-// state, timeout, or unrecoverable error returns a non-nil error.
+// are logged.
 func (c *config) pollJob(pollClient *http.Client, jobID, pollAt string) error {
 	// Use pollAt directly if it is already an absolute URL, otherwise resolve
 	// it as a path against the import service base URL.
@@ -1052,12 +1066,12 @@ func (c *config) pollJob(pollClient *http.Client, jobID, pollAt string) error {
 		}
 
 		switch js.Status {
-		case "completed":
+		case "done", "completed":
 			c.logSuccess("Job %s completed successfully — image: %s", jobID, js.ImageName)
 			return nil
 		case "failed", "error":
 			return fmt.Errorf("job %s failed — image: %s\nerror: %s", jobID, js.ImageName, js.Error)
-		case "pending", "running":
+		case "queued", "pending", "running", "acquiring", "extracting", "importing":
 			// Expected in-progress states — fall through to sleep.
 		default:
 			c.logWarning("Job %s: unrecognised status %q — continuing to poll", jobID, js.Status)
@@ -1094,13 +1108,14 @@ func (c *config) uploadImageAPI(info *imageInfo) error {
 
 	c.logInfo("Sending image import request to %s for image %s", c.ImportServiceURL, info.Filename)
 
-	// Log payload with credentials redacted so --verbose is safe to use.
-	if c.Verbose {
+	if c.LogPayload {
 		redacted := reqPayload
+		redacted.PowerVCUser = "***"
 		redacted.PowerVCPassword = "***"
+		redacted.SvcUser = "***"
 		redacted.SvcPassword = "***"
 		redactedBytes, _ := json.MarshalIndent(redacted, "", "  ")
-		c.logDebug("Image import payload (credentials redacted):\n%s", string(redactedBytes))
+		c.logInfo("Image import payload (credentials redacted):\n%s", string(redactedBytes))
 	}
 
 	if c.DryRun {
@@ -1262,6 +1277,7 @@ OPTIONS:
   --insecure            Skip TLS certificate verification (default: false)
   -v, --verbose         Enable verbose output with debug information
   --dry-run             Simulate operations without making actual changes
+  --log-payload         Print outgoing import JSON payload (credentials redacted)
   --quiet               Suppress all non-error output
   -h, --help            Show this help message and exit
 
