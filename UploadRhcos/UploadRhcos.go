@@ -492,15 +492,11 @@ func (c *config) validateEnvironment() {
 // OpenStack.go).  A successful list proves both authentication and image-service
 // availability.
 //
-// In dry-run mode the check is skipped entirely and an info message is logged.
+// The check runs in both normal and dry-run mode because dry-run still queries
+// OpenStack to determine whether an image already exists.
 // If the lookup fails, die is called — there is no point continuing without a
 // working OpenStack connection.
 func (c *config) verifyOpenstackConnectivity() {
-	if c.DryRun {
-		c.logInfo("Skipping OpenStack connectivity check in DRY RUN mode")
-		return
-	}
-
 	c.logInfo("Verifying OpenStack connectivity...")
 
 	// Bound the API call so a hung cloud cannot stall startup.
@@ -517,17 +513,12 @@ func (c *config) verifyOpenstackConnectivity() {
 // exists in OpenStack by querying the Glance image service directly via the
 // gophercloud API (see findImage in OpenStack.go).
 //
-// Returns false in dry-run mode (so that the upload path and its commands are
-// always exercised and printed during a dry run).  A lookup that fails for any
-// reason other than a clean "found" is treated as not-present so the upload
+// The check is performed in both normal and dry-run mode so that a dry run can
+// skip the upload when the image is already present.  A lookup that fails for
+// any reason other than a clean "found" is treated as not-present so the upload
 // path proceeds; the reason is logged.
 func (c *config) imageExistsInOpenStack(imageName string) bool {
 	c.logInfo("Checking whether image already exists: %s", imageName)
-
-	if c.DryRun {
-		c.logInfo("DRY RUN — skipping image existence check")
-		return false
-	}
 
 	// Bound the API lookup so a hung cloud cannot stall the program; 2 minutes
 	// matches the timeout used by the main tool's rhcos-exists command.
