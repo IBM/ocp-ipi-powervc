@@ -4,18 +4,18 @@ go 1.27.0
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260916083538-6e91b9f8f36f
-	github.com/IBM/go-sdk-core/v5 v5.23.4
-	github.com/IBM/networking-go-sdk v0.54.0
-	github.com/IBM/platform-services-go-sdk v0.103.2
+	github.com/IBM/go-sdk-core/v5 v5.23.5
+	github.com/IBM/networking-go-sdk v0.55.0
+	github.com/IBM/platform-services-go-sdk v0.103.4
 	github.com/coreos/ignition/v2 v2.27.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/gophercloud/gophercloud/v2 v2.14.0
-	github.com/gophercloud/utils/v2 v2.0.0-20260824073324-42b9474d09d4
-	github.com/openshift/api v0.0.0-20260916132046-fba11a566839
+	github.com/gophercloud/gophercloud/v2 v2.15.0
+	github.com/gophercloud/utils/v2 v2.0.0-20260922174841-b4759ea0529b
+	github.com/openshift/api v0.0.0-20260925090845-44bef346c3f0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.16.0
-	k8s.io/apimachinery v0.37.0
+	k8s.io/apimachinery v0.37.1
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	sigs.k8s.io/yaml v1.6.0
 )
