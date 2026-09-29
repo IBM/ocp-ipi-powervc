@@ -10,7 +10,8 @@ For each requested release the program:
 1. Fetches CoreOS JSON metadata from the `openshift/installer` GitHub repository.
 2. Extracts the `ppc64le` OpenStack `qcow2.gz` image URL, filename, and SHA-256.
 3. Checks whether the image already exists in OpenStack via the gophercloud Glance API.
-4. If the image is absent, uploads/imports the image into PowerVC/OpenStack via API.
+4. If the image is absent, POSTs an import request to the PowerVC image import service.
+5. Polls the job status endpoint until the import reaches a terminal state (`done` / `failed`).
 
 ## Building
 
@@ -49,11 +50,13 @@ must be supplied via environment variables (see below).
 |------|---------|---------|-------------|
 | `--ca-cert <path>` | `CACERT` | — | Path to PEM CA certificate for import service TLS; auto-detected from `clouds.yaml` when `--cloud` is set |
 | `--cloud <name>` | `CLOUD` | — | OpenStack cloud name from `clouds.yaml` |
+| `--connect-timeout <d>` | `CONNECT_TIMEOUT` | `2m` | Timeout for the OpenStack connectivity check at startup (Go duration, e.g. `30s`, `2m`) |
 | `--release <version>` | — | `release-4.21` | Release branch to process; may be repeated |
 | `--rhel <rhel9\|rhel10>` | `RHEL_VERSION` | — | RHEL version preference for CoreOS JSON selection |
-| `--insecure` | — | `false` | Skip TLS certificate verification |
+| `--insecure` | — | `false` | Skip TLS certificate verification for the import service |
 | `-v`, `--verbose` | — | `false` | Enable `[DEBUG]` output |
 | `--dry-run` | — | `false` | Simulate operations without executing them |
+| `--log-payload` | — | `false` | Print the outgoing import JSON payload (credentials redacted) |
 | `--quiet` | — | `false` | Suppress all non-error output |
 | `-h`, `--help` | — | — | Show usage and exit |
 
@@ -83,7 +86,8 @@ program prompts interactively; otherwise it exits with an error.
 |----------|---------|-------------|
 | `CACERT` | — | Path to PEM CA certificate for import service TLS |
 | `CLOUD` | — | OpenStack cloud name from `clouds.yaml` |
-| `IMPORT_SERVICE_URL` | `http://<powervc-host>:8181/images/import` | Image import service URL |
+| `CONNECT_TIMEOUT` | `2m` | Timeout for the OpenStack connectivity check (Go duration, e.g. `30s`, `2m`) |
+| `IMPORT_SERVICE_URL` | `https://<powervc-host>:8181/images/import` | Image import service URL |
 | `OS_TYPE` | `coreos` | Operating system type |
 | `POWERVC_TENANT` | same as `PROJECT_UPLOAD` | PowerVC tenant/project name |
 | `PROJECT` | — | Optional prefix prepended to image filenames (trailing `-` stripped) |
@@ -112,7 +116,25 @@ UploadRhcosAPI --release release-4.21 --dry-run
 
 # Verbose debug output
 UploadRhcosAPI --release release-4.21 --verbose
+
+# Print the outgoing import JSON payload (useful for debugging auth issues)
+UploadRhcosAPI --release release-4.21 --log-payload
+
+# Shorter startup timeout (useful on slow networks)
+UploadRhcosAPI --release release-4.21 --connect-timeout 30s
 ```
+
+## Job polling
+
+After a successful POST the import service returns a job ID and a `poll_at` URL.
+The program polls that URL every 15 seconds (up to 1 hour) and logs the job
+progress until a terminal state is reached:
+
+| Status | Meaning |
+|--------|---------|
+| `queued`, `pending`, `running`, `acquiring`, `extracting`, `importing` | In progress |
+| `done`, `completed` | Success |
+| `failed`, `error` | Failure — error message logged and exit code 1 |
 
 ## Exit codes
 
