@@ -150,7 +150,7 @@ type config struct {
 	SvcPassword string
 
 	// ImportServiceURL is the URL for the image import service (env: IMPORT_SERVICE_URL).
-	// Default: http://<powervc_host>:8181/images/import
+	// Default: https://<powervc_host>:8181/images/import
 	ImportServiceURL string
 
 	// PowerVCURL is the PowerVC Keystone URL (e.g. https://<host>:5000/v3).
@@ -194,6 +194,10 @@ type config struct {
 	// Quiet suppresses all non-error output when true.
 	Quiet bool
 
+	// ConnectTimeout is the maximum time to wait when verifying OpenStack
+	// connectivity at startup (env: CONNECT_TIMEOUT, default: 2m).
+	ConnectTimeout time.Duration
+
 	// ScriptDir is the directory that contains this binary.
 	ScriptDir string
 }
@@ -219,9 +223,9 @@ type imageImportRequest struct {
 //
 // Example:
 //
-//	{"job_id":"b2f6107e…","poll_at":"/jobs/b2f6107e…","status":"pending"}
+//	{"id":"b2f6107e…","poll_at":"https://…/jobs/b2f6107e…","queue_position":1,"status":"queued"}
 type importResponse struct {
-	JobID  string `json:"job_id"`
+	JobID  string `json:"id"`
 	PollAt string `json:"poll_at"`
 	Status string `json:"status"`
 }
@@ -427,6 +431,7 @@ func parseArguments(args []string) *config {
 	insecureFlag := fs.Bool("insecure", false, "Skip SSL/TLS certificate verification for import service")
 	quietFlag := fs.Bool("quiet", false, "Suppress all non-error output")
 	rhelFlag := fs.String("rhel", "", "Prefer specific RHEL version: rhel9 or rhel10 (env: RHEL_VERSION)")
+	connectTimeoutFlag := fs.Duration("connect-timeout", 0, "Timeout for OpenStack connectivity check (e.g. 30s, 2m) (env: CONNECT_TIMEOUT, default: 2m)")
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output with debug information")
 	fs.BoolVar(verboseFlag, "v", false, "Enable verbose output with debug information")
 
@@ -445,6 +450,7 @@ func parseArguments(args []string) *config {
 
 	// Populate config from flags.
 	c.CACert = *caCertFlag
+	c.ConnectTimeout = *connectTimeoutFlag
 	c.Releases = []string(releases)
 	c.Cloud = *cloudFlag
 	c.DryRun = *dryRunFlag
@@ -595,16 +601,30 @@ func (c *config) collectFromEnvironment() {
 		if v := os.Getenv("IMPORT_SERVICE_URL"); v != "" {
 			c.ImportServiceURL = v
 		} else if c.PowerVCURL != "" {
-			// Infer from PowerVC URL: always use http:// for the import service
-			// on port 8181 — it speaks plain HTTP regardless of whether Keystone
-			// is on https://.
+			// Infer from PowerVC URL: use the same scheme and host as Keystone
+			// but on port 8181.  The import service uses HTTPS (self-signed cert;
+			// use --insecure or supply --ca-cert / clouds.yaml cacert to verify).
 			if u, err := url.Parse(c.PowerVCURL); err == nil && u.Hostname() != "" {
-				c.ImportServiceURL = fmt.Sprintf("http://%s:8181/images/import", u.Hostname())
+				c.ImportServiceURL = fmt.Sprintf("%s://%s:8181/images/import", u.Scheme, u.Hostname())
 			}
 		}
 	}
 	if c.ImportServiceURL == "" {
 		c.ImportServiceURL = envOrPrompt("IMPORT_SERVICE_URL", "Image import service URL")
+	}
+
+	// CONNECT_TIMEOUT is optional — read from env only, never prompt.
+	if c.ConnectTimeout == 0 {
+		if v := os.Getenv("CONNECT_TIMEOUT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				c.ConnectTimeout = d
+			} else {
+				c.logWarning("CONNECT_TIMEOUT %q is not a valid duration (e.g. 30s, 2m) — using default 2m", v)
+			}
+		}
+	}
+	if c.ConnectTimeout == 0 {
+		c.ConnectTimeout = 2 * time.Minute
 	}
 
 	// VOLUME_SIZE and OS_TYPE are optional — read from env only, never prompt.
@@ -675,11 +695,13 @@ func (c *config) validateEnvironment() {
 // OpenStack to determine whether an image already exists.
 // If the lookup fails, die is called — there is no point continuing without a
 // working OpenStack connection.
+//
+// The timeout is controlled by c.ConnectTimeout (--connect-timeout / CONNECT_TIMEOUT,
+// default 2m).
 func (c *config) verifyOpenstackConnectivity() {
-	c.logInfo("Verifying OpenStack connectivity...")
+	c.logInfo("Verifying OpenStack connectivity (timeout: %s)...", c.ConnectTimeout)
 
-	// Bound the API call so a hung cloud cannot stall startup.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), c.ConnectTimeout)
 	defer cancel()
 
 	if _, err := c.getAllImages(ctx, c.Cloud); err != nil {
@@ -929,23 +951,28 @@ const jobPollTimeout = 60 * time.Minute
 // reaches a terminal state (completed, failed, or error) or jobPollTimeout
 // elapses.
 //
-// pollAt is the path returned in the import response (e.g. "/jobs/<id>").
-// The full URL is constructed by combining the scheme+host of ImportServiceURL
-// with pollAt.
+// pollAt may be either a full URL (e.g. "https://host:8181/jobs/<id>") or a
+// bare path (e.g. "/jobs/<id>").  When it is already absolute it is used
+// directly; when it is a path it is resolved against ImportServiceURL.
 //
 // On each poll cycle the current status, progress percentage, and bytes read
 // are logged.  Returns nil only when status is "completed"; any other terminal
 // state, timeout, or unrecoverable error returns a non-nil error.
 func (c *config) pollJob(pollClient *http.Client, jobID, pollAt string) error {
-	// Build the poll URL using net/url so scheme, host, and port are parsed
-	// correctly regardless of trailing slashes or path segments in ImportServiceURL.
-	base, err := url.Parse(c.ImportServiceURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse ImportServiceURL %q: %w", c.ImportServiceURL, err)
+	// Use pollAt directly if it is already an absolute URL, otherwise resolve
+	// it as a path against the import service base URL.
+	var pollURL string
+	if u, err := url.Parse(pollAt); err == nil && u.IsAbs() {
+		pollURL = pollAt
+	} else {
+		base, err := url.Parse(c.ImportServiceURL)
+		if err != nil {
+			return fmt.Errorf("failed to parse ImportServiceURL %q: %w", c.ImportServiceURL, err)
+		}
+		base.Path = pollAt
+		base.RawQuery = ""
+		pollURL = base.String()
 	}
-	base.Path = pollAt
-	base.RawQuery = ""
-	pollURL := base.String()
 
 	c.logInfo("─── Job polling ────────────────────────────────")
 	c.logInfo("Job ID:   %s", jobID)
@@ -1226,6 +1253,8 @@ OPTIONS:
   --ca-cert <path>      Path to PEM CA certificate for import service TLS (env: CACERT)
                         Auto-detected from clouds.yaml cacert field when --cloud is set
   --cloud <name>        OpenStack cloud name from clouds.yaml (env: CLOUD)
+  --connect-timeout <d> Timeout for OpenStack connectivity check (env: CONNECT_TIMEOUT, default: 2m)
+                        Accepts Go duration strings, e.g. 30s, 90s, 2m
   --release <version>   Specify a release version (can be used multiple times)
                         Example: --release release-4.21 --release release-4.22
                         Default: release-4.21 if not specified
@@ -1250,7 +1279,8 @@ ENVIRONMENT VARIABLES (required):
 ENVIRONMENT VARIABLES (optional):
   CACERT             Path to PEM CA certificate for import service TLS
   CLOUD              OpenStack cloud name from clouds.yaml
-  IMPORT_SERVICE_URL Image import service URL (default: http://<powervc-host>:8181/images/import)
+  CONNECT_TIMEOUT    Timeout for OpenStack connectivity check (e.g. 30s, 2m; default: 2m)
+  IMPORT_SERVICE_URL Image import service URL (default: https://<powervc-host>:8181/images/import)
   OS_TYPE            Operating system type (default: coreos)
   POWERVC_TENANT     PowerVC tenant/project name (default: same as PROJECT_UPLOAD)
   PROJECT            Optional project prefix prepended to image filenames

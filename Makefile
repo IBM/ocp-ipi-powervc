@@ -116,7 +116,7 @@ build-dist: ## Build for all supported platforms
 	@echo "All platform builds complete in $(DIST_DIR)/"
 
 .PHONY: build-all
-build-all: build build-jobhistory build-uploadrhcos build-uploadcentos ## Build all tools (main binary + JobHistory + UploadRhcos + UploadCentos)
+build-all: build build-jobhistory build-uploadrhcos build-uploadrhcosapi build-uploadcentos ## Build all tools (main binary + JobHistory + UploadRhcos + UploadRhcosAPI + UploadCentos)
 
 .PHONY: install
 install: build ## Install the binary to GOPATH/bin
@@ -198,6 +198,36 @@ dist-uploadrhcos: build-uploadrhcos ## Build UploadRhcos for all platforms and g
 	@cd UploadRhcos && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-amd64  . && cd ../$(DIST_DIR) && sha256sum UploadRhcos-darwin-amd64  > UploadRhcos-darwin-amd64.sha256
 	@cd UploadRhcos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcos-darwin-arm64  . && cd ../$(DIST_DIR) && sha256sum UploadRhcos-darwin-arm64  > UploadRhcos-darwin-arm64.sha256
 	@echo "UploadRhcos dist build complete: $(DIST_DIR)/"
+
+.PHONY: init-uploadrhcosapi
+init-uploadrhcosapi: ## Initialize UploadRhcosAPI Go module and download dependencies
+	@echo "Initializing UploadRhcosAPI module..."
+	@cd UploadRhcosAPI && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/UploadRhcosAPI && $(GO) mod tidy
+	@echo "UploadRhcosAPI module initialized"
+
+.PHONY: build-uploadrhcosapi
+build-uploadrhcosapi: ## Build the UploadRhcosAPI tool
+	@echo "Building UploadRhcosAPI..."
+	@cd UploadRhcosAPI && $(GO) build -ldflags="$(LDFLAGS)" $(GOFLAGS) -o UploadRhcosAPI *.go
+	@echo "UploadRhcosAPI build complete: UploadRhcosAPI/UploadRhcosAPI"
+
+.PHONY: install-uploadrhcosapi
+install-uploadrhcosapi: build-uploadrhcosapi ## Install UploadRhcosAPI to GOPATH/bin
+	@echo "Installing UploadRhcosAPI to $(GOPATH)/bin/UploadRhcosAPI..."
+	@mkdir -p $(GOPATH)/bin
+	@cp UploadRhcosAPI/UploadRhcosAPI $(GOPATH)/bin/UploadRhcosAPI
+	@echo "UploadRhcosAPI installation complete"
+
+.PHONY: dist-uploadrhcosapi
+dist-uploadrhcosapi: build-uploadrhcosapi ## Build UploadRhcosAPI for all platforms and generate checksums
+	@echo "Building UploadRhcosAPI dist binaries to $(DIST_DIR)/..."
+	@mkdir -p $(DIST_DIR)
+	@cd UploadRhcosAPI && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcosAPI-linux-amd64   . && cd ../$(DIST_DIR) && sha256sum UploadRhcosAPI-linux-amd64   > UploadRhcosAPI-linux-amd64.sha256
+	@cd UploadRhcosAPI && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcosAPI-linux-arm64   . && cd ../$(DIST_DIR) && sha256sum UploadRhcosAPI-linux-arm64   > UploadRhcosAPI-linux-arm64.sha256
+	@cd UploadRhcosAPI && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcosAPI-linux-ppc64le . && cd ../$(DIST_DIR) && sha256sum UploadRhcosAPI-linux-ppc64le > UploadRhcosAPI-linux-ppc64le.sha256
+	@cd UploadRhcosAPI && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcosAPI-darwin-amd64  . && cd ../$(DIST_DIR) && sha256sum UploadRhcosAPI-darwin-amd64  > UploadRhcosAPI-darwin-amd64.sha256
+	@cd UploadRhcosAPI && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadRhcosAPI-darwin-arm64  . && cd ../$(DIST_DIR) && sha256sum UploadRhcosAPI-darwin-arm64  > UploadRhcosAPI-darwin-arm64.sha256
+	@echo "UploadRhcosAPI dist build complete: $(DIST_DIR)/"
 
 .PHONY: init-uploadcentos
 init-uploadcentos: ## Initialize UploadCentos Go module and download dependencies
@@ -309,6 +339,7 @@ clean: ## Clean build artifacts
 	@rm -f "$(BINARY_NAME)-$(GIT_RELEASE).tgz"
 	@rm -f JobHistory/JobHistory
 	@rm -f UploadRhcos/UploadRhcos
+	@rm -f UploadRhcosAPI/UploadRhcosAPI
 	@rm -f UploadCentos/UploadCentos
 	@echo "Clean complete"
 
@@ -377,11 +408,11 @@ dev: deps build test ## Quick development cycle (deps, build, test — skips cle
 	@echo "Development build complete"
 
 .PHONY: init-all
-init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadcentos ## Update all go modules
+init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadrhcosapi init-uploadcentos ## Update all go modules
 
-.PHONY: 
+.PHONY:
 git-init-all: init-all ## Update all go modules and check it in
-	git add go.* snippet*/go.* JobHistory/go.* UploadRhcos/go.* UploadCentos/go.*
+	git add go.* snippet*/go.* JobHistory/go.* UploadRhcos/go.* UploadRhcosAPI/go.* UploadCentos/go.*
 	git commit -m "Update go.mod, go.sum"
 
 # Default target
