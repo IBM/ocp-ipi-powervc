@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20260916083538-6e91b9f8f36f
-	github.com/IBM/go-sdk-core/v5 v5.23.5
+	github.com/IBM/go-sdk-core/v5 v5.24.0
 	github.com/IBM/networking-go-sdk v0.55.0
 	github.com/IBM/platform-services-go-sdk v0.103.4
 	github.com/coreos/ignition/v2 v2.27.0
@@ -27,11 +27,11 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
-	github.com/go-openapi/errors v0.22.8 // indirect
+	github.com/go-openapi/errors v0.22.9 // indirect
 	github.com/go-openapi/strfmt v0.27.2 // indirect
-	github.com/go-playground/locales v0.14.1 // indirect
-	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.30.4 // indirect
+	github.com/go-playground/locales v0.14.2 // indirect
+	github.com/go-playground/universal-translator v0.18.2 // indirect
+	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
