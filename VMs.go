@@ -197,6 +197,7 @@ func (vms *VMs) ClusterStatus() error {
 		allServers     []servers.Server
 		server         servers.Server
 		allHypervisors []hypervisors.Hypervisor
+		imageIDToName  map[string]string
 		hasError       = false
 		err            error
 	)
@@ -251,6 +252,18 @@ func (vms *VMs) ClusterStatus() error {
 	}
 	log.Debugf("ClusterStatus: Retrieved %d hypervisors", len(allHypervisors))
 
+	// Build image ID → name lookup map
+	imageIDToName = make(map[string]string)
+	allImages, err := getAllImages(ctx, cloud)
+	if err != nil {
+		log.Debugf("ClusterStatus: getAllImages returned error (continuing): %v", err)
+	} else {
+		for _, img := range allImages {
+			imageIDToName[img.ID] = img.Name
+		}
+		log.Debugf("ClusterStatus: Built image lookup map with %d entries", len(imageIDToName))
+	}
+
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
 	clusterServerCount := 0
@@ -260,6 +273,7 @@ func (vms *VMs) ClusterStatus() error {
 			ipAddress  string
 			sshAlive   = sshStatusNA
 			hypervisor hypervisors.Hypervisor
+			imageName  string
 		)
 
 		// Have we run out of time?
@@ -275,6 +289,19 @@ func (vms *VMs) ClusterStatus() error {
 		}
 		log.Debugf("ClusterStatus: FOUND cluster server = %s", server.Name)
 		clusterServerCount++
+
+		if name, ok := server.Image["name"].(string); ok && name != "" {
+			imageName = name
+		} else if id, ok := server.Image["id"].(string); ok && id != "" {
+			if mapped, found := imageIDToName[id]; found {
+				imageName = mapped
+			} else {
+				imageName = id
+			}
+		} else {
+			imageName = statusNotAvailable
+		}
+		log.Debugf("ClusterStatus: image for server %s = %s", server.Name, imageName)
 
 		macAddress, ipAddress, err = findIpAddress(server)
 		if err != nil {
@@ -299,7 +326,9 @@ func (vms *VMs) ClusterStatus() error {
 			sshAlive = sshStatusDead
 
 			var outb []byte
-			outb, err = keyscanServer(ctx, ipAddress, true)
+			sshCtx, sshCancel := context.WithTimeout(ctx, 7*time.Second)
+			outb, err = keyscanServer(sshCtx, ipAddress, true)
+			sshCancel()
 			if err == nil && len(outb) > 0 {
 				sshAlive = sshStatusAlive
 				log.Debugf("ClusterStatus: SSH is alive for server %s at %s", server.Name, ipAddress)
@@ -338,7 +367,7 @@ func (vms *VMs) ClusterStatus() error {
 			kubeletStr = "DEAD (" + kubeletStatus + ")"
 		}
 
-		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), ssh status (%s), hypervisor (%s), kubelet (%s)\n",
+		fmt.Printf("%s: %s has status (%s), power state (%s), MAC address (%s), IP address (%s), ssh status (%s), hypervisor (%s), kubelet (%s), image (%s)\n",
 			VMsName,
 			server.Name,
 			server.Status,
@@ -348,6 +377,7 @@ func (vms *VMs) ClusterStatus() error {
 			sshAlive,
 			hypervisorName,
 			kubeletStr,
+			imageName,
 		)
 		fmt.Println()
 	}

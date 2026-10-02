@@ -467,7 +467,7 @@ func keyscanServer(ctx context.Context, ipAddress string, silent bool) ([]byte, 
 
 	var result []byte
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(retryCtx context.Context) (bool, error) {
-		outb, err := runSplitCommandNoErrWithContext(retryCtx, []string{"ssh-keyscan", ipAddress}, silent)
+		outb, err := runSplitCommandNoErrWithContext(retryCtx, []string{"ssh-keyscan", "-T", "5", ipAddress}, silent)
 		if err != nil {
 			log.Debugf("keyscanServer: retry needed, error: %v", err)
 			return false, nil // Retry
