@@ -146,6 +146,9 @@ readonly TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
 # Temporary HACK to use SR-IOV network adaptors rather than SEA adaptors
 readonly USE_SRIOV=false
 
+# Optional: Enable multipath on master nodes
+readonly USE_MULTIPATH=false
+
 # Security: Prevent symlink attacks on temporary file
 if [[ -L "${TEMP_BASTION_IP}" ]]; then
 	echo "Security error: ${TEMP_BASTION_IP} is a symlink" >&2
@@ -1211,6 +1214,135 @@ skip { skip=0 }
 }
 
 ################################################################################
+# configure_multipath: Configure multipath on master and worker nodes
+# If USE_MULTIPATH is enabled:
+#   1. Creates MachineConfig manifest for master nodes (99-master-multipath.yaml)
+#   2. Creates MachineConfig manifest for worker nodes (99-worker-multipath.yaml)
+# Modifies: ${CLUSTER_DIR}/manifests/
+################################################################################
+function configure_multipath() {
+	if ! ${USE_MULTIPATH}; then
+		return 0
+	fi
+
+	log_info "Configuring multipath on master and worker nodes..."
+
+	cat > "${CLUSTER_DIR}/manifests/99-master-multipath.yaml" <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-master-multipath
+  labels:
+    machineconfiguration.openshift.io/role: master
+spec:
+  kernelArguments:
+    - rd.multipath=default
+    - root=/dev/disk/by-label/dm-mpath-root
+  config:
+    ignition:
+      version: 3.4.0
+    storage:
+      files:
+        - path: /etc/multipath.conf
+          mode: 420
+          overwrite: true
+          contents:
+            source: data:,defaults%20%7B%0A%20%20user_friendly_names%20yes%0A%20%20find_multipaths%20yes%0A%7D%0A
+    systemd:
+      units:
+        - name: multipathd.service
+          enabled: true
+EOF
+
+	cat > "${CLUSTER_DIR}/manifests/99-worker-multipath.yaml" <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-worker-multipath
+  labels:
+    machineconfiguration.openshift.io/role: worker
+spec:
+  kernelArguments:
+    - rd.multipath=default
+    - root=/dev/disk/by-label/dm-mpath-root
+  config:
+    ignition:
+      version: 3.4.0
+    storage:
+      files:
+        - path: /etc/multipath.conf
+          mode: 420
+          overwrite: true
+          contents:
+            source: data:,defaults%20%7B%0A%20%20user_friendly_names%20yes%0A%20%20find_multipaths%20yes%0A%7D%0A
+    systemd:
+      units:
+        - name: multipathd.service
+          enabled: true
+EOF
+
+	log_success "Multipath MachineConfigs created: 99-master-multipath.yaml and 99-worker-multipath.yaml"
+}
+
+################################################################################
+# configure_sriov: Configure SR-IOV direct vNIC networking
+# If USE_SRIOV is enabled:
+#   1. Updates bootstrap and master inframachine manifests for direct vNICs
+#   2. Pre-creates OpenStack direct ports with binding profile for bootstrap/masters
+#   3. Updates worker machineset manifest to use direct vNIC ports
+# Arguments:
+#   $1 - infra_id (cluster infrastructure ID from metadata.json)
+# Modifies: Manifests in ${CLUSTER_DIR}
+################################################################################
+function configure_sriov() {
+	local infra_id="$1"
+
+	if ! ${USE_SRIOV}; then
+		return 0
+	fi
+
+	echo "Using SR-IOV networking"
+
+	# Modify bootstrap and master machines
+	find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
+		-exec printf 'Updating: %s\n' '{}' \; \
+		-exec yq eval --inplace \
+		'.spec.ports[0].vnicType = "direct"' '{}' \;
+	find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
+		-exec printf 'Result: %s\n' '{}' \; \
+		-exec yq eval '.spec.ports' '{}' \;
+
+	local name
+	for name in "${infra_id}-bootstrap" "${infra_id}-master-0" "${infra_id}-master-1" "${infra_id}-master-2"
+	do
+		echo "Creating port: ${name}-0"
+		openstack --os-cloud=${CLOUD} port create \
+			--network ${NETWORK_NAME} \
+			--vnic-type direct \
+			--binding-profile '{"capacity": 0.02, "delete_with_instance": 1, "vnic_required_vfs": 2}' \
+			"${name}-0"
+	done
+
+	# Modify worker machineset
+	local file
+	file=$(find "${CLUSTER_DIR}" -type f -name 99_openshift-cluster-api_worker-machineset-0.yaml)
+	local network_id
+	network_id=$(openstack --os-cloud="${CLOUD}" network show "${NETWORK_NAME}" -f value -c id)
+	yq eval --inplace 'del(.spec.template.spec.providerSpec.value.networks)' "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].vnicType = "direct"' "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].portSecurity = false' "${file}"
+	yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].networkID = \"${network_id}\"" "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].nameSuffix = "nodes"' "${file}"
+	yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].fixedIPs[0].subnetID = \"${SUBNET_ID}\"" "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.capacity = "0.02"' "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.delete_with_instance = "1"' "${file}"
+	yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.vnic_required_vfs = "2"' "${file}"
+	echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
+	yq eval '.spec.template.spec.providerSpec.value' "${file}"
+	echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
+}
+
+################################################################################
 # run_openshift_install: Execute OpenShift installation workflow
 # Orchestrates the complete OpenShift installation process:
 #   1. Display installer version
@@ -1219,7 +1351,9 @@ skip { skip=0 }
 #   4. Send metadata to PowerVC controller
 #   5. Create manifests
 #   6. Verify controller health
-#   7. Deploy cluster (30-45 minutes)
+#   7. Configure SR-IOV networking (if enabled)
+#   8. Configure multipath on master and worker nodes (if enabled)
+#   9. Deploy cluster (30-45 minutes)
 # Handles manifest and cluster creation failures explicitly
 # Creates: Multiple files in ${CLUSTER_DIR} including auth/kubeconfig
 ################################################################################
@@ -1268,47 +1402,10 @@ function run_openshift_install() {
 		--shouldDebug true
 
 	# Testing: Use SR-IOV networking
-	if ${USE_SRIOV}; then
-		echo "Using SR-IOV networking"
+	configure_sriov "${infra_id}"
 
-		# Modify bootstrap and master machines
-		find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
-			-exec printf 'Updating: %s\n' '{}' \; \
-			-exec yq eval --inplace \
-			'.spec.ports[0].vnicType = "direct"' '{}' \;
-		find "${CLUSTER_DIR}" -type f -iname "*10_inframachine*" \
-			-exec printf 'Result: %s\n' '{}' \; \
-			-exec yq eval '.spec.ports' '{}' \;
-
-		local name
-		for name in "${infra_id}-bootstrap" "${infra_id}-master-0" "${infra_id}-master-1" "${infra_id}-master-2"
-		do
-			echo "Creating port: ${name}-0"
-			openstack --os-cloud=${CLOUD} port create \
-				--network ${NETWORK_NAME} \
-				--vnic-type direct \
-				--binding-profile '{"capacity": 0.02, "delete_with_instance": 1, "vnic_required_vfs": 2}' \
-				"${name}-0"
-		done
-
-		# Modify worker machineset
-		local file
-		file=$(find "${CLUSTER_DIR}" -type f -name 99_openshift-cluster-api_worker-machineset-0.yaml)
-		local network_id
-		network_id=$(openstack --os-cloud="${CLOUD}" network show "${NETWORK_NAME}" -f value -c id)
-		yq eval --inplace 'del(.spec.template.spec.providerSpec.value.networks)' "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].vnicType = "direct"' "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].portSecurity = false' "${file}"
-		yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].networkID = \"${network_id}\"" "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].nameSuffix = "nodes"' "${file}"
-		yq eval --inplace ".spec.template.spec.providerSpec.value.ports[0].fixedIPs[0].subnetID = \"${SUBNET_ID}\"" "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.capacity = "0.02"' "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.delete_with_instance = "1"' "${file}"
-		yq eval --inplace '.spec.template.spec.providerSpec.value.ports[0].profile.vnic_required_vfs = "2"' "${file}"
-		echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
-		yq eval '.spec.template.spec.providerSpec.value' "${file}"
-		echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
-	fi
+	# Optional: Enable multipath on master nodes
+	configure_multipath
 
 	# Deploy the OpenShift cluster (this is the longest operation)
 	log_info "Creating OpenShift cluster (this may take 30-45 minutes)..."
