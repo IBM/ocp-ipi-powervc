@@ -116,7 +116,7 @@ build-dist: ## Build for all supported platforms
 	@echo "All platform builds complete in $(DIST_DIR)/"
 
 .PHONY: build-all
-build-all: build build-jobhistory build-uploadrhcos build-uploadrhcosapi build-uploadcentos ## Build all tools (main binary + JobHistory + UploadRhcos + UploadRhcosAPI + UploadCentos)
+build-all: build build-jobhistory build-uploadrhcos build-uploadrhcosapi build-uploadcentos build-grabconsole ## Build all tools (main binary + JobHistory + UploadRhcos + UploadRhcosAPI + UploadCentos + GrabConsole)
 
 .PHONY: install
 install: build ## Install the binary to GOPATH/bin
@@ -126,7 +126,7 @@ install: build ## Install the binary to GOPATH/bin
 	@echo "Installation complete"
 
 .PHONY: dist
-dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadrhcosapi dist-uploadcentos ## Build distribution binaries for all tools and all supported platforms
+dist: build-dist dist-jobhistory dist-uploadrhcos dist-uploadrhcosapi dist-uploadcentos dist-grabconsole ## Build distribution binaries for all tools and all supported platforms
 
 .PHONY: init-snippets
 init-snippets: ## Initialize Go modules for all snippet directories
@@ -259,6 +259,36 @@ dist-uploadcentos: build-uploadcentos ## Build UploadCentos for all platforms an
 	@cd UploadCentos && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/UploadCentos-darwin-arm64  . && cd ../$(DIST_DIR) && sha256sum UploadCentos-darwin-arm64  > UploadCentos-darwin-arm64.sha256
 	@echo "UploadCentos dist build complete: $(DIST_DIR)/"
 
+.PHONY: init-grabconsole
+init-grabconsole: ## Initialize GrabConsole Go module and download dependencies
+	@echo "Initializing GrabConsole module..."
+	@cd GrabConsole && rm -f go.mod go.sum && $(GO) mod init github.com/openshift/ocp-ipi-powervc/GrabConsole && $(GO) mod tidy
+	@echo "GrabConsole module initialized"
+
+.PHONY: build-grabconsole
+build-grabconsole: ## Build the GrabConsole tool
+	@echo "Building GrabConsole..."
+	@cd GrabConsole && $(GO) build -ldflags="$(LDFLAGS)" $(GOFLAGS) -o GrabConsole *.go
+	@echo "GrabConsole build complete: GrabConsole/GrabConsole"
+
+.PHONY: install-grabconsole
+install-grabconsole: build-grabconsole ## Install GrabConsole to GOPATH/bin
+	@echo "Installing GrabConsole to $(GOPATH)/bin/GrabConsole..."
+	@mkdir -p $(GOPATH)/bin
+	@cp GrabConsole/GrabConsole $(GOPATH)/bin/GrabConsole
+	@echo "GrabConsole installation complete"
+
+.PHONY: dist-grabconsole
+dist-grabconsole: build-grabconsole ## Build GrabConsole for all platforms and generate checksums
+	@echo "Building GrabConsole dist binaries to $(DIST_DIR)/..."
+	@mkdir -p $(DIST_DIR)
+	@cd GrabConsole && GOOS=linux   GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/GrabConsole-linux-amd64   . && cd ../$(DIST_DIR) && sha256sum GrabConsole-linux-amd64   > GrabConsole-linux-amd64.sha256
+	@cd GrabConsole && GOOS=linux   GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/GrabConsole-linux-arm64   . && cd ../$(DIST_DIR) && sha256sum GrabConsole-linux-arm64   > GrabConsole-linux-arm64.sha256
+	@cd GrabConsole && GOOS=linux   GOARCH=ppc64le $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/GrabConsole-linux-ppc64le . && cd ../$(DIST_DIR) && sha256sum GrabConsole-linux-ppc64le > GrabConsole-linux-ppc64le.sha256
+	@cd GrabConsole && GOOS=darwin  GOARCH=amd64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/GrabConsole-darwin-amd64  . && cd ../$(DIST_DIR) && sha256sum GrabConsole-darwin-amd64  > GrabConsole-darwin-amd64.sha256
+	@cd GrabConsole && GOOS=darwin  GOARCH=arm64   $(GO) build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/GrabConsole-darwin-arm64  . && cd ../$(DIST_DIR) && sha256sum GrabConsole-darwin-arm64  > GrabConsole-darwin-arm64.sha256
+	@echo "GrabConsole dist build complete: $(DIST_DIR)/"
+
 .PHONY: init-all
 init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadcentos ## Initialize Go modules for the main project and all sub-tools
 
@@ -341,6 +371,7 @@ clean: ## Clean build artifacts
 	@rm -f UploadRhcos/UploadRhcos
 	@rm -f UploadRhcosAPI/UploadRhcosAPI
 	@rm -f UploadCentos/UploadCentos
+	@rm -f GrabConsole/GrabConsole
 	@echo "Clean complete"
 
 .PHONY: clean-all
@@ -408,11 +439,11 @@ dev: deps build test ## Quick development cycle (deps, build, test — skips cle
 	@echo "Development build complete"
 
 .PHONY: init-all
-init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadrhcosapi init-uploadcentos ## Update all go modules
+init-all: init init-snippets init-jobhistory init-uploadrhcos init-uploadrhcosapi init-uploadcentos init-grabconsole ## Update all go modules
 
 .PHONY:
 git-init-all: init-all ## Update all go modules and check it in
-	git add go.* snippet*/go.* JobHistory/go.* UploadRhcos/go.* UploadRhcosAPI/go.* UploadCentos/go.*
+	git add go.* snippet*/go.* JobHistory/go.* UploadRhcos/go.* UploadRhcosAPI/go.* UploadCentos/go.* GrabConsole/go.*
 	git commit -m "Update go.mod, go.sum"
 
 # Default target
