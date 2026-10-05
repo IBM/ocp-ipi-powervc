@@ -54,6 +54,7 @@ jobs:
           dist/ocp-ipi-powervc-linux-arm64.sha256
           dist/ocp-ipi-powervc-linux-ppc64le
           dist/ocp-ipi-powervc-linux-ppc64le.sha256
+
           dist/JobHistory-darwin-amd64
           dist/JobHistory-darwin-amd64.sha256
           dist/JobHistory-darwin-arm64
@@ -64,6 +65,7 @@ jobs:
           dist/JobHistory-linux-arm64.sha256
           dist/JobHistory-linux-ppc64le
           dist/JobHistory-linux-ppc64le.sha256
+
           dist/UploadRhcos-darwin-amd64
           dist/UploadRhcos-darwin-amd64.sha256
           dist/UploadRhcos-darwin-arm64
@@ -74,6 +76,7 @@ jobs:
           dist/UploadRhcos-linux-arm64.sha256
           dist/UploadRhcos-linux-ppc64le
           dist/UploadRhcos-linux-ppc64le.sha256
+
           dist/UploadRhcosAPI-darwin-amd64
           dist/UploadRhcosAPI-darwin-amd64.sha256
           dist/UploadRhcosAPI-darwin-arm64
@@ -84,6 +87,7 @@ jobs:
           dist/UploadRhcosAPI-linux-arm64.sha256
           dist/UploadRhcosAPI-linux-ppc64le
           dist/UploadRhcosAPI-linux-ppc64le.sha256
+
           dist/UploadCentos-darwin-amd64
           dist/UploadCentos-darwin-amd64.sha256
           dist/UploadCentos-darwin-arm64
@@ -94,6 +98,28 @@ jobs:
           dist/UploadCentos-linux-arm64.sha256
           dist/UploadCentos-linux-ppc64le
           dist/UploadCentos-linux-ppc64le.sha256
+
+          dist/GrabConsole-darwin-amd64
+          dist/GrabConsole-darwin-amd64.sha256
+          dist/GrabConsole-darwin-arm64
+          dist/GrabConsole-darwin-arm64.sha256
+          dist/GrabConsole-linux-amd64
+          dist/GrabConsole-linux-amd64.sha256
+          dist/GrabConsole-linux-arm64
+          dist/GrabConsole-linux-arm64.sha256
+          dist/GrabConsole-linux-ppc64le
+          dist/GrabConsole-linux-ppc64le.sha256
+
+          dist/SshNode-darwin-amd64
+          dist/SshNode-darwin-amd64.sha256
+          dist/SshNode-darwin-arm64
+          dist/SshNode-darwin-arm64.sha256
+          dist/SshNode-linux-amd64
+          dist/SshNode-linux-amd64.sha256
+          dist/SshNode-linux-arm64
+          dist/SshNode-linux-arm64.sha256
+          dist/SshNode-linux-ppc64le
+          dist/SshNode-linux-ppc64le.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
 
