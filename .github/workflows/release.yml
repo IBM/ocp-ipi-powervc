@@ -6,11 +6,14 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: read
+
 jobs:
   release-linux-amd64:
     name: release linux/amd64
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions: write
     strategy:
       matrix:
         # List of GOOS and GOARCH pairs from `go tool dist list`
