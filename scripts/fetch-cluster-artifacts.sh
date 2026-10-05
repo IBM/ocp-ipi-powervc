@@ -21,8 +21,9 @@
 # This script automates the retrieval of cluster artifacts from an OpenShift
 # CI installation pod, including:
 #   - Extracting the INFRA ID from the pod logs
-#   - Copying the cluster artifact directory from the controller host via SCP
-#   - Extracting the kubeconfig from the pod via oc rsh (Running pods only)
+#   - Fetching metadata.json and kubeconfig from the pod via oc rsh (Running pods)
+#   - Falling back to SCP from the controller for metadata.json when the pod has
+#     already finished (kubeconfig is only accessible while the pod is Running)
 #
 # The script replicates the following manual workflow:
 #   oc logs -c <container> pod/<pod-name> | grep INFRAID=
@@ -78,11 +79,11 @@
 #   2. Collect inputs: poll for running install pod, prompt for CONTROLLER_IP
 #      if not already set, validate SSH key
 #   3. Extract INFRA ID from pod logs (skipped if INFRAID is already set)
-#   4. Copy artifact directory from controller host via SCP; prompts for
-#      confirmation if the destination directory already exists
-#   5. Retrieve kubeconfig via oc rsh (Running pod only); skipped with a
-#      warning when the pod has already finished, since the kubeconfig lives
-#      only inside the container and cannot be retrieved after it exits
+#   4. Fetch metadata.json and kubeconfig from the pod via oc rsh (Running pod);
+#      if the pod has already finished, warns and skips the kubeconfig, then
+#      falls back to SCP from the controller for metadata.json
+#   5. SCP artifact directory from controller host only when metadata.json was
+#      not already retrieved from the pod
 #
 ################################################################################
 
@@ -734,6 +735,115 @@ function extract_infraid() {
 }
 
 #------------------------------------------------------------------------------
+# rsh_file - Stream a single file from a pod container via oc rsh into a local path
+#
+# Runs oc rsh to cat a remote file into a local temporary file, then moves
+# it atomically to the destination only if the content is non-empty.
+# On any failure the temporary file is removed and the function returns 1
+# so callers can decide whether to die or fall back.
+#
+# Arguments:
+#   $1 - Remote path inside the container (e.g. /tmp/installer/auth/kubeconfig)
+#   $2 - Local destination path
+#
+# Returns:
+#   0 - File written successfully
+#   1 - oc rsh failed or returned empty content
+#
+# Globals Read:
+#   CONTAINER_NAME - Container name within the pod
+#   POD_NAME       - Name of the CI pod
+#
+# Example:
+#   rsh_file /tmp/installer/metadata.json "${INFRAID}/metadata.json"
+#------------------------------------------------------------------------------
+function rsh_file() {
+	local remote_path="$1"
+	local dest_path="$2"
+
+	local tmp
+	tmp=$(mktemp)
+
+	if ! oc rsh -c "${CONTAINER_NAME}" "pod/${POD_NAME}" \
+		/bin/bash -c "cat ${remote_path}" \
+		> "${tmp}" 2>/dev/null; then
+		rm -f "${tmp}"
+		return 1
+	fi
+
+	if [[ ! -s "${tmp}" ]]; then
+		rm -f "${tmp}"
+		return 1
+	fi
+
+	mkdir -p "$(dirname "${dest_path}")"
+	mv "${tmp}" "${dest_path}"
+	return 0
+}
+
+#------------------------------------------------------------------------------
+# fetch_pod_artifacts - Retrieve metadata.json and kubeconfig from the pod
+#
+# Checks the pod phase first. If the pod is Running, uses oc rsh to fetch
+# both /tmp/installer/metadata.json and /tmp/installer/auth/kubeconfig.
+#
+# If the pod has already finished, only the kubeconfig is inaccessible (it
+# lives only inside the container); a warning is emitted for it and the
+# function returns 1 so main() knows to fall back to SCP for metadata.json.
+# A finished pod also returns 1 so the SCP fallback is triggered.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0 - Both files fetched from the pod successfully; SCP fallback not needed
+#   1 - Pod is not Running; SCP fallback required for metadata.json
+#
+# Globals Read:
+#   INFRAID        - Destination directory name
+#   CONTAINER_NAME - Container name within the pod
+#   POD_NAME       - Name of the CI pod
+#
+# Example:
+#   fetch_pod_artifacts
+#------------------------------------------------------------------------------
+function fetch_pod_artifacts() {
+	local pod_phase
+	pod_phase=$(oc get "pod/${POD_NAME}" --no-headers -o jsonpath='{.status.phase}' 2>/dev/null || true)
+	log_debug "pod_phase=${pod_phase}"
+
+	if [[ "${pod_phase}" != "Running" ]]; then
+		log_warning "Pod phase is '${pod_phase}' — kubeconfig is only accessible while the pod is Running"
+		log_warning "Skipping kubeconfig retrieval; set KUBECONFIG manually if needed"
+		return 1
+	fi
+
+	log_info "Pod is Running — fetching artifacts via oc rsh (container: ${CONTAINER_NAME})..."
+
+	local metadata_ok=false
+	local kubeconfig_ok=false
+
+	if rsh_file "/tmp/installer/metadata.json" "${INFRAID}/metadata.json"; then
+		log_success "metadata.json written to ${INFRAID}/metadata.json"
+		metadata_ok=true
+	else
+		log_warning "Could not fetch metadata.json via oc rsh — will fall back to SCP"
+	fi
+
+	if rsh_file "/tmp/installer/auth/kubeconfig" "${INFRAID}/auth/kubeconfig"; then
+		log_success "kubeconfig written to ${INFRAID}/auth/kubeconfig"
+		kubeconfig_ok=true
+	else
+		log_warning "Could not fetch kubeconfig via oc rsh"
+	fi
+
+	log_debug "metadata_ok=${metadata_ok} kubeconfig_ok=${kubeconfig_ok}"
+
+	# Return 0 only when metadata.json was obtained; kubeconfig is best-effort.
+	${metadata_ok} && return 0 || return 1
+}
+
+#------------------------------------------------------------------------------
 # scp_artifacts - Copy cluster artifact directory from the controller
 #
 # Uses SCP to recursively copy the INFRAID directory from the controller's
@@ -784,90 +894,6 @@ function scp_artifacts() {
 	log_success "Artifacts copied to ./${INFRAID}/"
 }
 
-#------------------------------------------------------------------------------
-# fetch_kubeconfig - Retrieve kubeconfig from the pod via oc rsh
-#
-# Validates that the cluster directory (INFRAID/) exists, then creates the
-# auth/ sub-directory inside it.
-#
-# The kubeconfig lives only inside the pod container at
-# /tmp/installer/auth/kubeconfig. It is not written to the controller host,
-# so it can only be retrieved while the pod is still Running via oc rsh.
-# If the pod has already finished, the kubeconfig is no longer accessible;
-# a warning is emitted and the function returns successfully so the rest of
-# the artifacts (metadata, etc.) are still usable.
-#
-# The file is written atomically via a temporary file: it is only moved into
-# its final location once the content has been verified non-empty, so a failed
-# oc rsh never leaves a partial kubeconfig in place.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0 - kubeconfig written, or pod already finished (with warning)
-#   Never returns if the cluster dir is missing or oc rsh fails on a Running pod
-#   (calls die)
-#
-# Globals Read:
-#   INFRAID        - Local cluster directory name (must already exist)
-#   CONTAINER_NAME - Container name within the pod
-#   POD_NAME       - Name of the CI pod
-#
-# Example:
-#   fetch_kubeconfig
-#------------------------------------------------------------------------------
-function fetch_kubeconfig() {
-	local cluster_dir="${INFRAID}"
-	local auth_dir="${cluster_dir}/auth"
-	local kubeconfig_path="${auth_dir}/kubeconfig"
-
-	if [[ ! -d "${cluster_dir}" ]]; then
-		die "Cluster directory not found: ${cluster_dir} (was scp_artifacts run successfully?)"
-	fi
-
-	log_info "Creating auth directory: ${auth_dir}"
-	mkdir -p "${auth_dir}"
-
-	# The kubeconfig lives only inside the container; oc rsh requires a Running pod.
-	local pod_phase
-	pod_phase=$(oc get "pod/${POD_NAME}" --no-headers -o jsonpath='{.status.phase}' 2>/dev/null || true)
-	log_debug "pod_phase=${pod_phase}"
-
-	if [[ "${pod_phase}" != "Running" ]]; then
-		log_warning "Pod phase is '${pod_phase}' — kubeconfig is only accessible while the pod is Running"
-		log_warning "Skipping kubeconfig retrieval; set KUBECONFIG manually if needed"
-		return 0
-	fi
-
-	log_info "Fetching kubeconfig from pod/${POD_NAME} via oc rsh (container: ${CONTAINER_NAME})..."
-
-	# Write to a temp file so a failed oc rsh does not leave an empty kubeconfig.
-	local tmp_kubeconfig
-	tmp_kubeconfig=$(mktemp)
-	# Ensure the temp file is always removed on any exit (normal, error, or signal).
-	# INT and TERM re-raise the signal after cleanup so callers see the correct exit status.
-	# shellcheck disable=SC2064
-	trap "rm -f '${tmp_kubeconfig}'" EXIT
-	trap "rm -f '${tmp_kubeconfig}'; trap - INT;  kill -INT  \$\$" INT
-	trap "rm -f '${tmp_kubeconfig}'; trap - TERM; kill -TERM \$\$" TERM
-
-	if ! oc rsh -c "${CONTAINER_NAME}" "pod/${POD_NAME}" \
-		/bin/bash -c "cat /tmp/installer/auth/kubeconfig" \
-		> "${tmp_kubeconfig}"; then
-		rm -f "${tmp_kubeconfig}"
-		die "Failed to fetch kubeconfig from pod/${POD_NAME} via oc rsh"
-	fi
-
-	if [[ ! -s "${tmp_kubeconfig}" ]]; then
-		rm -f "${tmp_kubeconfig}"
-		die "kubeconfig retrieved from pod/${POD_NAME} is empty"
-	fi
-
-	mv "${tmp_kubeconfig}" "${kubeconfig_path}"
-	log_success "kubeconfig written to ${kubeconfig_path}"
-}
-
 #==============================================================================
 # Main Execution
 #==============================================================================
@@ -880,8 +906,8 @@ function fetch_kubeconfig() {
 # 2. Check required programs
 # 3. Collect inputs
 # 4. Extract INFRA ID from pod logs
-#   5. SCP artifact directory from controller host
-#   6. Fetch kubeconfig via oc rsh (Running pod only; warns and skips if finished)
+# 5. Fetch metadata.json + kubeconfig from the pod via oc rsh (Running pod);
+#    fall back to SCP from the controller for metadata.json if pod is finished
 #
 # Arguments:
 #   $@ - All command-line arguments (passed to parse_arguments)
@@ -913,12 +939,12 @@ function main() {
 	extract_infraid
 	echo ""
 
-	# Copy artifacts from controller
-	scp_artifacts
-	echo ""
-
-	# Fetch kubeconfig from pod
-	fetch_kubeconfig
+	# Try to fetch metadata.json + kubeconfig directly from the pod.
+	# Fall back to SCP from the controller if the pod is no longer Running.
+	mkdir -p "${INFRAID}"
+	if ! fetch_pod_artifacts; then
+		scp_artifacts
+	fi
 	echo ""
 
 	log_success "All artifacts fetched successfully"
