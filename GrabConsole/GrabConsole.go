@@ -78,6 +78,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -86,6 +87,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -98,23 +100,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// newHTTPClient builds an http.Client for PowerVC REST calls.
-// When caCertFile is non-empty the cert is loaded and TLS verification is
-// enabled; when it is empty a warning is emitted and InsecureSkipVerify is
-// used as a fallback (matching the original console.sh --insecure behaviour).
+// newHTTPClient builds an http.Client used for every HTTPS call in this
+// program: the direct PowerVC REST calls (token, hypervisor, HMC) as well as
+// the gophercloud OpenStack calls (Keystone auth, compute API).
+//
+// # Why a single shared client matters
+//
+// PowerVC commonly presents a certificate signed by a private CA that is not
+// in the system trust store.  The original console.sh worked around this with
+// curl --insecure on every request.  When we replaced that with Go's
+// net/http the equivalent would be InsecureSkipVerify — which suppresses the
+// error but also defeats certificate validation entirely.
+//
+// The better approach is to load the CA certificate that PowerVC's Keystone
+// advertises and add it to a dedicated CertPool so that Go can verify the
+// chain without trusting arbitrary unknown CAs.  The CA cert path is read
+// from the "cacert" field of the cloud entry in clouds.yaml, which is the
+// standard OpenStack client convention.
+//
+// # Fallback behaviour
+//
+// If no cacert is configured, InsecureSkipVerify is used with a [WARNING] so
+// existing deployments without a cacert entry keep working.  Add a cacert line
+// to clouds.yaml to silence the warning and enable proper verification:
+//
+//	clouds:
+//	  ocp-ci:
+//	    cacert: /path/to/powervc-ca.pem
+//	    auth:
+//	      ...
 func newHTTPClient(caCertFile string, debug bool) (*http.Client, error) {
 	tlsCfg := &tls.Config{}
 	if caCertFile != "" {
-		pem, err := os.ReadFile(caCertFile)
+		pemBytes, err := os.ReadFile(caCertFile)
 		if err != nil {
 			return nil, fmt.Errorf("cannot read CA cert %s: %w", caCertFile, err)
 		}
 		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
+		if !pool.AppendCertsFromPEM(pemBytes) {
 			return nil, fmt.Errorf("no valid PEM certificates found in %s", caCertFile)
 		}
 		tlsCfg.RootCAs = pool
-		logDebug(debug, "TLS: using CA cert %s", caCertFile)
+		logDebug(debug, "TLS: loaded CA cert pool from %s", caCertFile)
+
+		// When debug is on, decode and log every certificate in the file so
+		// the operator can confirm the right CA is being loaded and spot
+		// mismatches (wrong issuer, expired cert, DER-encoded file, etc.).
+		if debug {
+			debugLogCertFile(pemBytes, caCertFile)
+		}
 	} else {
 		logWarning("no cacert found in clouds.yaml — falling back to InsecureSkipVerify")
 		tlsCfg.InsecureSkipVerify = true //nolint:gosec // no CA cert available
@@ -123,6 +157,118 @@ func newHTTPClient(caCertFile string, debug bool) (*http.Client, error) {
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 		Timeout:   30 * time.Second,
 	}, nil
+}
+
+// debugLogCertFile decodes every PEM block in pemBytes and logs the Subject,
+// Issuer, and validity window of each certificate.  Call only when debug=true.
+func debugLogCertFile(pemBytes []byte, filename string) {
+	rest := pemBytes
+	idx := 0
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			logDebug(true, "TLS CA file: block %d type=%q (skipped)", idx, block.Type)
+			idx++
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			logDebug(true, "TLS CA file: block %d parse error: %v", idx, err)
+			idx++
+			continue
+		}
+		logDebug(true, "TLS CA cert[%d] subject=%q issuer=%q notBefore=%s notAfter=%s",
+			idx,
+			cert.Subject.String(),
+			cert.Issuer.String(),
+			cert.NotBefore.Format(time.RFC3339),
+			cert.NotAfter.Format(time.RFC3339),
+		)
+		idx++
+	}
+	if idx == 0 {
+		logDebug(true, "TLS CA file %s: no PEM blocks found", filename)
+	}
+}
+
+// debugLogServerChain opens a TLS connection to the host extracted from
+// identityEndpoint and logs every certificate in the chain the server
+// presents.  The dial uses InsecureSkipVerify so the chain is always logged
+// even when verification fails — the goal is to show what the server is
+// sending so the operator can compare it against the loaded CA cert.
+func debugLogServerChain(identityEndpoint string, hc *http.Client) {
+	u, err := url.Parse(identityEndpoint)
+	if err != nil {
+		logDebug(true, "TLS server chain: cannot parse identity endpoint %q: %v", identityEndpoint, err)
+		return
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	addr := net.JoinHostPort(host, port)
+
+	// Dial with InsecureSkipVerify so we always receive the full chain,
+	// regardless of whether it verifies against our pool.  We use the
+	// same timeout as the main HTTP client.
+	dialCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // debug dial only — never used for real requests
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 10 * time.Second},
+		"tcp", addr, dialCfg,
+	)
+	if err != nil {
+		logDebug(true, "TLS server chain: dial %s failed: %v", addr, err)
+		return
+	}
+	defer conn.Close()
+
+	chains := conn.ConnectionState().PeerCertificates
+	logDebug(true, "TLS server chain: %d certificate(s) presented by %s", len(chains), addr)
+	for i, cert := range chains {
+		logDebug(true, "TLS server cert[%d] subject=%q issuer=%q notBefore=%s notAfter=%s",
+			i,
+			cert.Subject.String(),
+			cert.Issuer.String(),
+			cert.NotBefore.Format(time.RFC3339),
+			cert.NotAfter.Format(time.RFC3339),
+		)
+	}
+
+	// Attempt verification against the loaded CA pool and report the outcome
+	// for each cert.  When every cert fails, also emit a plain-language
+	// diagnosis: the most common cause is that the cacert file contains the
+	// server's leaf cert (grabbed with openssl s_client or a browser export)
+	// rather than the root CA that issued it.
+	if t, ok := hc.Transport.(*http.Transport); ok && t.TLSClientConfig != nil && t.TLSClientConfig.RootCAs != nil {
+		anyOK := false
+		for i, cert := range chains {
+			opts := x509.VerifyOptions{Roots: t.TLSClientConfig.RootCAs}
+			if _, err := cert.Verify(opts); err != nil {
+				logDebug(true, "TLS verify cert[%d] (%s): FAIL: %v", i, cert.Subject.String(), err)
+			} else {
+				logDebug(true, "TLS verify cert[%d] (%s): OK", i, cert.Subject.String())
+				anyOK = true
+			}
+		}
+		if !anyOK && len(chains) > 0 {
+			// Collect the issuer of the server's leaf cert and the subject(s)
+			// of the certs we loaded, so the operator can see the mismatch at
+			// a glance without having to mentally parse the lines above.
+			leafIssuer := chains[0].Issuer.String()
+			logDebug(true, "TLS diagnosis: none of the server certs verified against the loaded CA pool")
+			logDebug(true, "TLS diagnosis: server leaf cert is issued by: %s", leafIssuer)
+			logDebug(true, "TLS diagnosis: the cacert file must contain the root CA (or full chain) that issued that cert,")
+			logDebug(true, "TLS diagnosis: not the server leaf cert itself")
+			logDebug(true, "TLS diagnosis: to fetch the correct root CA, run:")
+			logDebug(true, "TLS diagnosis:   openssl s_client -connect %s -showcerts 2>/dev/null | openssl x509 -noout -text | grep Issuer", addr)
+			logDebug(true, "TLS diagnosis:   then obtain the PEM for: %s", leafIssuer)
+		}
+	}
 }
 
 // ─── ANSI colour helpers ──────────────────────────────────────────────────────
@@ -299,40 +445,55 @@ type cloudsYAML struct {
 	} `yaml:"clouds"`
 }
 
-// cloudsYAMLPath returns the default path to clouds.yaml.
-func cloudsYAMLPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "openstack", "clouds.yaml")
+// cloudsYAMLPath returns the resolved path to clouds.yaml.
+//
+// We use os/user.Current().HomeDir rather than os.Getenv("HOME") so that the
+// path matches what gophercloud/utils clientconfig.FindAndReadCloudsYAML uses
+// internally.  If $HOME and the real home directory differ (e.g. the process
+// was started with a modified environment), using os.Getenv("HOME") here would
+// let our readCloudsYAML succeed while clientconfig.AuthOptions would still
+// fail with "no clouds.yml file found" because its independent search never
+// finds the file.
+func cloudsYAMLPath() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine current user home directory: %w", err)
+	}
+	return filepath.Join(u.HomeDir, ".config", "openstack", "clouds.yaml"), nil
 }
 
 // readCloudsYAML parses clouds.yaml and returns the auth block for the named
-// cloud.  The second return value is the path to the CA certificate file
-// recorded in the cloud entry's "cacert" field (empty string when absent).
-func readCloudsYAML(cloud string) (cloudAuth, string, error) {
-	path := cloudsYAMLPath()
+// cloud, the resolved file path, and the CA cert path from the cloud entry's
+// "cacert" field (empty string when absent).
+func readCloudsYAML(cloud string) (auth cloudAuth, caCert string, resolvedPath string, err error) {
+	path, err := cloudsYAMLPath()
+	if err != nil {
+		return cloudAuth{}, "", "", err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cloudAuth{}, "", fmt.Errorf("cannot read %s: %w", path, err)
+		return cloudAuth{}, "", "", fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	var cy cloudsYAML
 	if err := yaml.Unmarshal(data, &cy); err != nil {
-		return cloudAuth{}, "", fmt.Errorf("cannot parse %s: %w", path, err)
+		return cloudAuth{}, "", "", fmt.Errorf("cannot parse %s: %w", path, err)
 	}
 	entry, ok := cy.Clouds[cloud]
 	if !ok {
-		return cloudAuth{}, "", fmt.Errorf("cloud %q not found in %s", cloud, path)
+		return cloudAuth{}, "", "", fmt.Errorf("cloud %q not found in %s", cloud, path)
 	}
 	a := entry.Auth
 	switch {
 	case a.AuthURL == "":
-		return cloudAuth{}, "", fmt.Errorf("auth_url missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", "", fmt.Errorf("auth_url missing for cloud %q in %s", cloud, path)
 	case a.Username == "":
-		return cloudAuth{}, "", fmt.Errorf("username missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", "", fmt.Errorf("username missing for cloud %q in %s", cloud, path)
 	case a.Password == "":
-		return cloudAuth{}, "", fmt.Errorf("password missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", "", fmt.Errorf("password missing for cloud %q in %s", cloud, path)
 	case a.ProjectID == "":
-		return cloudAuth{}, "", fmt.Errorf("project_id missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", "", fmt.Errorf("project_id missing for cloud %q in %s", cloud, path)
 	}
-	return a, entry.CACert, nil
+	return a, entry.CACert, path, nil
 }
 
 // powervcHost extracts the hostname from an auth_url such as
@@ -370,17 +531,103 @@ type serverExtAttrs struct {
 
 // getServerDetails queries the OpenStack compute API for the named server and
 // returns its hypervisor hostname and instance name.
-// httpClient is used by the gophercloud provider so that the same TLS
-// configuration (CA cert or InsecureSkipVerify) applies to all OpenStack calls.
-func getServerDetails(ctx context.Context, cloud, serverName string, hc *http.Client, debug bool) (serverDetails, error) {
+//
+// hc must be the client returned by newHTTPClient so that the CA certificate
+// (or InsecureSkipVerify fallback) is in effect for every outbound TLS
+// connection, including the very first GET to the Keystone identity endpoint.
+//
+// cloudsYAMLFile is the resolved absolute path to clouds.yaml as returned by
+// readCloudsYAML.  It is exported to the environment as OS_CLIENT_CONFIG_FILE
+// before calling clientconfig.AuthOptions so that the library's internal
+// FindAndReadCloudsYAML search uses the exact same file we already parsed.
+//
+// # Why OS_CLIENT_CONFIG_FILE must be set
+//
+// clientconfig.AuthOptions calls FindAndReadCloudsYAML, which searches:
+//
+//  1. $OS_CLIENT_CONFIG_FILE  (checked first — this is what we set)
+//  2. ./clouds.yaml  (current working directory)
+//  3. ~/.config/openstack/clouds.yaml  (via user.Current().HomeDir)
+//  4. /etc/openstack/clouds.yaml
+//
+// Our own readCloudsYAML uses user.Current().HomeDir, which matches search
+// path 3 above.  However, if the library reaches path 3 and still does not
+// find the file — for example because the CWD search (path 2) contains a
+// stale or misnamed file — it falls through to try clouds.yml, producing the
+// misleading error:
+//
+//	unable to load clouds.yaml: no clouds.yml file found: file does not exist
+//
+// Setting OS_CLIENT_CONFIG_FILE to the absolute path we already resolved
+// short-circuits the search at step 1 and guarantees both code paths read
+// identical files.
+//
+// # Why we do NOT use clientconfig.AuthenticatedClient
+//
+// The obvious call would be:
+//
+//	clientconfig.AuthenticatedClient(ctx, &clientconfig.ClientOpts{
+//	    Cloud:      cloud,
+//	    HTTPClient: hc,   // ← looks right, but is silently ignored
+//	})
+//
+// However, clientconfig.AuthenticatedClient is implemented as:
+//
+//	func AuthenticatedClient(ctx, opts) (*ProviderClient, error) {
+//	    ao, _ := AuthOptions(opts)
+//	    return openstack.AuthenticatedClient(ctx, *ao)  // opts dropped here
+//	}
+//
+// The ClientOpts (including HTTPClient) are discarded before
+// openstack.AuthenticatedClient is called, which constructs its own default
+// transport from scratch.  The result is that the private-CA cert we loaded
+// is never used for the Keystone GET, causing:
+//
+//	tls: failed to verify certificate: x509: certificate signed by unknown authority
+//
+// # Fix
+//
+// We replicate what clientconfig.NewServiceClient does internally — the steps
+// that keep opts alive all the way through authentication:
+//
+//  1. os.Setenv OS_CLIENT_CONFIG_FILE   — pin the file for clientconfig's search
+//  2. clientconfig.AuthOptions          — translate clouds.yaml into AuthOptions
+//  3. openstack.NewClient               — create a blank ProviderClient (no I/O yet)
+//  4. providerClient.HTTPClient = *hc   — inject our CA-cert client before any I/O
+//  5. openstack.Authenticate            — POST /v3/auth/tokens using our client
+func getServerDetails(ctx context.Context, cloud, serverName, cloudsYAMLFile string, hc *http.Client, debug bool) (serverDetails, error) {
 	logDebug(debug, "querying OpenStack cloud=%q server=%q", cloud, serverName)
 
-	opts := &clientconfig.ClientOpts{
-		Cloud:      cloud,
-		HTTPClient: hc,
+	// Pin the file path so clientconfig.AuthOptions uses exactly the same file
+	// as readCloudsYAML — see function doc for why this is necessary.
+	if err := os.Setenv("OS_CLIENT_CONFIG_FILE", cloudsYAMLFile); err != nil {
+		return serverDetails{}, fmt.Errorf("failed to set OS_CLIENT_CONFIG_FILE: %w", err)
 	}
-	providerClient, err := clientconfig.AuthenticatedClient(ctx, opts)
+
+	opts := &clientconfig.ClientOpts{Cloud: cloud}
+	ao, err := clientconfig.AuthOptions(opts)
 	if err != nil {
+		return serverDetails{}, fmt.Errorf("failed to build OpenStack auth options: %w", err)
+	}
+
+	// Create the provider client without triggering any network I/O, then
+	// inject hc so that the subsequent Authenticate call uses our transport.
+	providerClient, err := openstack.NewClient(ao.IdentityEndpoint)
+	if err != nil {
+		return serverDetails{}, fmt.Errorf("failed to create OpenStack provider client: %w", err)
+	}
+	providerClient.HTTPClient = *hc // must be set before Authenticate makes any TLS connections
+
+	// When debug is on, make a raw TLS dial to the identity endpoint before
+	// the real auth call so we can log exactly what certificate chain the
+	// server is presenting.  This lets us confirm whether the CA in the cert
+	// pool actually signs the leaf cert the server sends, or whether the chain
+	// is broken (missing intermediate, wrong CA, SNI mismatch, etc.).
+	if debug {
+		debugLogServerChain(ao.IdentityEndpoint, hc)
+	}
+
+	if err := openstack.Authenticate(ctx, providerClient, *ao); err != nil {
 		return serverDetails{}, fmt.Errorf("OpenStack authentication failed: %w", err)
 	}
 
@@ -893,11 +1140,12 @@ func main() {
 	logSuccess("target server: %s (cloud: %s)", serverName, args.Cloud)
 
 	// ── 2. Parse clouds.yaml for PowerVC credentials ─────────────────────────
-	auth, caCertFile, err := readCloudsYAML(args.Cloud)
+	auth, caCertFile, cloudsYAMLFile, err := readCloudsYAML(args.Cloud)
 	if err != nil {
 		logError("failed to read clouds.yaml: %v", err)
 		os.Exit(1)
 	}
+	logDebug(args.Debug, "clouds.yaml resolved path: %s", cloudsYAMLFile)
 	serverIP, err := powervcHost(auth.AuthURL)
 	if err != nil {
 		logError("failed to extract PowerVC host: %v", err)
@@ -917,7 +1165,7 @@ func main() {
 
 	// ── 3. Query OpenStack for hypervisor + instance name ────────────────────
 	ctx := context.Background()
-	srvDetails, err := getServerDetails(ctx, args.Cloud, serverName, hc, args.Debug)
+	srvDetails, err := getServerDetails(ctx, args.Cloud, serverName, cloudsYAMLFile, hc, args.Debug)
 	if err != nil {
 		logError("failed to query server: %v", err)
 		os.Exit(1)
