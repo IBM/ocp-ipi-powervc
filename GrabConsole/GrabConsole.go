@@ -76,6 +76,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -97,14 +98,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// httpClient is a shared http.Client that accepts self-signed TLS certificates,
-// matching the --insecure flag used in console.sh's curl calls.
-// A single instance is used throughout so that TCP connections are pooled.
-var httpClient = &http.Client{ //nolint:gosec // PowerVC uses self-signed certs
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-	},
-	Timeout: 30 * time.Second,
+// newHTTPClient builds an http.Client for PowerVC REST calls.
+// When caCertFile is non-empty the cert is loaded and TLS verification is
+// enabled; when it is empty a warning is emitted and InsecureSkipVerify is
+// used as a fallback (matching the original console.sh --insecure behaviour).
+func newHTTPClient(caCertFile string, debug bool) (*http.Client, error) {
+	tlsCfg := &tls.Config{}
+	if caCertFile != "" {
+		pem, err := os.ReadFile(caCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read CA cert %s: %w", caCertFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("no valid PEM certificates found in %s", caCertFile)
+		}
+		tlsCfg.RootCAs = pool
+		logDebug(debug, "TLS: using CA cert %s", caCertFile)
+	} else {
+		logWarning("no cacert found in clouds.yaml — falling back to InsecureSkipVerify")
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec // no CA cert available
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   30 * time.Second,
+	}, nil
 }
 
 // ─── ANSI colour helpers ──────────────────────────────────────────────────────
@@ -276,7 +294,8 @@ type cloudAuth struct {
 // cloudsYAML mirrors the top-level structure of ~/.config/openstack/clouds.yaml.
 type cloudsYAML struct {
 	Clouds map[string]struct {
-		Auth cloudAuth `yaml:"auth"`
+		Auth    cloudAuth `yaml:"auth"`
+		CACert  string    `yaml:"cacert"`
 	} `yaml:"clouds"`
 }
 
@@ -285,33 +304,35 @@ func cloudsYAMLPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".config", "openstack", "clouds.yaml")
 }
 
-// readCloudsYAML parses clouds.yaml and returns the auth block for the named cloud.
-func readCloudsYAML(cloud string) (cloudAuth, error) {
+// readCloudsYAML parses clouds.yaml and returns the auth block for the named
+// cloud.  The second return value is the path to the CA certificate file
+// recorded in the cloud entry's "cacert" field (empty string when absent).
+func readCloudsYAML(cloud string) (cloudAuth, string, error) {
 	path := cloudsYAMLPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cloudAuth{}, fmt.Errorf("cannot read %s: %w", path, err)
+		return cloudAuth{}, "", fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	var cy cloudsYAML
 	if err := yaml.Unmarshal(data, &cy); err != nil {
-		return cloudAuth{}, fmt.Errorf("cannot parse %s: %w", path, err)
+		return cloudAuth{}, "", fmt.Errorf("cannot parse %s: %w", path, err)
 	}
 	entry, ok := cy.Clouds[cloud]
 	if !ok {
-		return cloudAuth{}, fmt.Errorf("cloud %q not found in %s", cloud, path)
+		return cloudAuth{}, "", fmt.Errorf("cloud %q not found in %s", cloud, path)
 	}
 	a := entry.Auth
 	switch {
 	case a.AuthURL == "":
-		return cloudAuth{}, fmt.Errorf("auth_url missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", fmt.Errorf("auth_url missing for cloud %q in %s", cloud, path)
 	case a.Username == "":
-		return cloudAuth{}, fmt.Errorf("username missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", fmt.Errorf("username missing for cloud %q in %s", cloud, path)
 	case a.Password == "":
-		return cloudAuth{}, fmt.Errorf("password missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", fmt.Errorf("password missing for cloud %q in %s", cloud, path)
 	case a.ProjectID == "":
-		return cloudAuth{}, fmt.Errorf("project_id missing for cloud %q in %s", cloud, path)
+		return cloudAuth{}, "", fmt.Errorf("project_id missing for cloud %q in %s", cloud, path)
 	}
-	return a, nil
+	return a, entry.CACert, nil
 }
 
 // powervcHost extracts the hostname from an auth_url such as
@@ -349,10 +370,15 @@ type serverExtAttrs struct {
 
 // getServerDetails queries the OpenStack compute API for the named server and
 // returns its hypervisor hostname and instance name.
-func getServerDetails(ctx context.Context, cloud, serverName string, debug bool) (serverDetails, error) {
+// httpClient is used by the gophercloud provider so that the same TLS
+// configuration (CA cert or InsecureSkipVerify) applies to all OpenStack calls.
+func getServerDetails(ctx context.Context, cloud, serverName string, hc *http.Client, debug bool) (serverDetails, error) {
 	logDebug(debug, "querying OpenStack cloud=%q server=%q", cloud, serverName)
 
-	opts := &clientconfig.ClientOpts{Cloud: cloud}
+	opts := &clientconfig.ClientOpts{
+		Cloud:      cloud,
+		HTTPClient: hc,
+	}
 	providerClient, err := clientconfig.AuthenticatedClient(ctx, opts)
 	if err != nil {
 		return serverDetails{}, fmt.Errorf("OpenStack authentication failed: %w", err)
@@ -468,7 +494,7 @@ type tokenDomain struct {
 
 // getToken obtains a scoped Keystone token from PowerVC and returns it.
 // If the TOKEN_ID environment variable is already set, that value is reused.
-func getToken(serverIP, projectName, username, password string, debug bool) (string, error) {
+func getToken(hc *http.Client, serverIP, projectName, username, password string, debug bool) (string, error) {
 	if existing := strings.TrimSpace(os.Getenv("TOKEN_ID")); existing != "" {
 		logInfo("reusing existing TOKEN_ID from environment")
 		return existing, nil
@@ -519,7 +545,7 @@ func getToken(serverIP, projectName, username, password string, debug bool) (str
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
@@ -553,7 +579,7 @@ type hypervisorInfo struct {
 
 // getHypervisorInfo queries the PowerVC /os-hosts/<hypervisor> endpoint and
 // extracts registration details.
-func getHypervisorInfo(serverIP, projectID, token, hypervisor string, debug bool) (hypervisorInfo, error) {
+func getHypervisorInfo(hc *http.Client, serverIP, projectID, token, hypervisor string, debug bool) (hypervisorInfo, error) {
 	hvURL := fmt.Sprintf("https://%s:8774/v2.1/%s/os-hosts/%s", serverIP, projectID, hypervisor)
 	logDebug(debug, "GET %s", hvURL)
 
@@ -563,7 +589,7 @@ func getHypervisorInfo(serverIP, projectID, token, hypervisor string, debug bool
 	}
 	req.Header.Set("X-Auth-Token", token)
 
-	resp, err := httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return hypervisorInfo{}, fmt.Errorf("hypervisor query failed: %w", err)
 	}
@@ -631,7 +657,7 @@ func getHypervisorInfo(serverIP, projectID, token, hypervisor string, debug bool
 }
 
 // getHMCAccessIP queries /ibm-hmcs/<uuid> and returns the HMC's access IP.
-func getHMCAccessIP(serverIP, projectID, token, hmcUUID string, debug bool) (string, error) {
+func getHMCAccessIP(hc *http.Client, serverIP, projectID, token, hmcUUID string, debug bool) (string, error) {
 	hmcURL := fmt.Sprintf("https://%s:8774/v2.1/%s/ibm-hmcs/%s", serverIP, projectID, hmcUUID)
 	logDebug(debug, "GET %s", hmcURL)
 
@@ -641,7 +667,7 @@ func getHMCAccessIP(serverIP, projectID, token, hmcUUID string, debug bool) (str
 	}
 	req.Header.Set("X-Auth-Token", token)
 
-	resp, err := httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HMC query failed: %w", err)
 	}
@@ -867,7 +893,7 @@ func main() {
 	logSuccess("target server: %s (cloud: %s)", serverName, args.Cloud)
 
 	// ── 2. Parse clouds.yaml for PowerVC credentials ─────────────────────────
-	auth, err := readCloudsYAML(args.Cloud)
+	auth, caCertFile, err := readCloudsYAML(args.Cloud)
 	if err != nil {
 		logError("failed to read clouds.yaml: %v", err)
 		os.Exit(1)
@@ -879,9 +905,19 @@ func main() {
 	}
 	logSuccess("PowerVC host: %s", serverIP)
 
+	// ── 2b. Build HTTP client with CA cert (or insecure fallback) ────────────
+	hc, err := newHTTPClient(caCertFile, args.Debug)
+	if err != nil {
+		logError("failed to build HTTP client: %v", err)
+		os.Exit(1)
+	}
+	if caCertFile != "" {
+		logSuccess("TLS: using CA cert %s", caCertFile)
+	}
+
 	// ── 3. Query OpenStack for hypervisor + instance name ────────────────────
 	ctx := context.Background()
-	srvDetails, err := getServerDetails(ctx, args.Cloud, serverName, args.Debug)
+	srvDetails, err := getServerDetails(ctx, args.Cloud, serverName, hc, args.Debug)
 	if err != nil {
 		logError("failed to query server: %v", err)
 		os.Exit(1)
@@ -889,14 +925,14 @@ func main() {
 	logSuccess("hypervisor: %s  instance: %s", srvDetails.HypervisorHostname, srvDetails.InstanceName)
 
 	// ── 4. Obtain PowerVC token ───────────────────────────────────────────────
-	token, err := getToken(serverIP, auth.ProjectName, auth.Username, auth.Password, args.Debug)
+	token, err := getToken(hc, serverIP, auth.ProjectName, auth.Username, auth.Password, args.Debug)
 	if err != nil {
 		logError("failed to get PowerVC token: %v", err)
 		os.Exit(1)
 	}
 
 	// ── 5. Query hypervisor registration ─────────────────────────────────────
-	hvInfo, err := getHypervisorInfo(serverIP, auth.ProjectID, token, srvDetails.HypervisorHostname, args.Debug)
+	hvInfo, err := getHypervisorInfo(hc, serverIP, auth.ProjectID, token, srvDetails.HypervisorHostname, args.Debug)
 	if err != nil {
 		logError("failed to query hypervisor: %v", err)
 		os.Exit(1)
@@ -914,7 +950,7 @@ func main() {
 			logError("primary_hmc_uuid is empty for HMC-managed hypervisor")
 			os.Exit(1)
 		}
-		hmcIP, err := getHMCAccessIP(serverIP, auth.ProjectID, token, hvInfo.PrimaryHMCUUID, args.Debug)
+		hmcIP, err := getHMCAccessIP(hc, serverIP, auth.ProjectID, token, hvInfo.PrimaryHMCUUID, args.Debug)
 		if err != nil {
 			logError("failed to get HMC access IP: %v", err)
 			os.Exit(1)
