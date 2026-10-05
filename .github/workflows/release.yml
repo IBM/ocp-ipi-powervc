@@ -146,5 +146,7 @@ jobs:
           dist/upload-centos.sh.sha256
           dist/upload-rhcos.sh
           dist/upload-rhcos.sh.sha256
+          dist/fetch-cluster-artifacts.sh
+          dist/fetch-cluster-artifacts.sh.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided secret
