@@ -22,7 +22,7 @@
 # CI installation pod, including:
 #   - Extracting the INFRA ID from the pod logs
 #   - Copying the cluster artifact directory from the controller host via SCP
-#   - Extracting the kubeconfig from the pod via oc rsh
+#   - Extracting the kubeconfig from the pod via oc rsh (Running pods only)
 #
 # The script replicates the following manual workflow:
 #   oc logs -c <container> pod/<pod-name> | grep INFRAID=
@@ -80,8 +80,9 @@
 #   3. Extract INFRA ID from pod logs (skipped if INFRAID is already set)
 #   4. Copy artifact directory from controller host via SCP; prompts for
 #      confirmation if the destination directory already exists
-#   5. Retrieve kubeconfig from pod via oc rsh and write it atomically into
-#      <INFRAID>/auth/kubeconfig
+#   5. Retrieve kubeconfig via oc rsh (Running pod only); skipped with a
+#      warning when the pod has already finished, since the kubeconfig lives
+#      only inside the container and cannot be retrieved after it exits
 #
 ################################################################################
 
@@ -451,20 +452,20 @@ function check_required_programs() {
 }
 
 #------------------------------------------------------------------------------
-# detect_install_pod - Detect running install pod(s) via oc get pods
+# detect_install_pod - Detect running or completed install pod(s) via oc get pods
 #
 # Queries the current namespace for pods whose name ends in "-install" and
-# whose status is "Running". If exactly one such pod is found it is used
-# automatically. If multiple matches are found, the user is prompted to
-# choose. If none are found the function returns a non-zero exit code so the
-# caller can retry or fall back to a manual prompt.
+# whose status is "Running", "Completed", or "Succeeded". If exactly one such
+# pod is found it is used automatically. If multiple matches are found, the
+# user is prompted to choose. If none are found the function returns a non-zero
+# exit code so the caller can retry or fall back to a manual prompt.
 #
 # Arguments:
 #   None
 #
 # Returns:
 #   0 - POD_NAME set to the detected pod name
-#   1 - No running install pod found
+#   1 - No running or completed install pod found
 #   Never returns if an invalid pod selection is made (calls die)
 #
 # Globals Set:
@@ -477,7 +478,7 @@ function detect_install_pod() {
 	local -a candidates
 	mapfile -t candidates < <(
 		oc get pods --no-headers 2>/dev/null \
-		| awk '$2 ~ /^[0-9]+\/[0-9]+$/ && $3 == "Running" && $1 ~ /-install$/ { print $1 }'
+		| awk '$3 ~ /^(Running|Completed|Succeeded)$/ && $1 ~ /-install$/ { print $1 }'
 	) || true
 
 	if [[ ${#candidates[@]} -eq 0 ]]; then
@@ -544,7 +545,7 @@ function wait_for_install_pod() {
 	local elapsed=0
 	local dots_printed=false
 
-	log_info "Waiting for a running install pod (timeout: ${timeout}s, interval: ${interval}s)..."
+	log_info "Waiting for a running or completed install pod (timeout: ${timeout}s, interval: ${interval}s)..."
 
 	while [[ "${elapsed}" -lt "${timeout}" ]]; do
 		if detect_install_pod; then
@@ -558,7 +559,7 @@ function wait_for_install_pod() {
 	done
 
 	echo ""
-	die "Timed out after ${timeout}s waiting for a running install pod"
+	die "Timed out after ${timeout}s waiting for a running or completed install pod"
 }
 
 #------------------------------------------------------------------------------
@@ -784,24 +785,29 @@ function scp_artifacts() {
 }
 
 #------------------------------------------------------------------------------
-# fetch_kubeconfig - Retrieve kubeconfig from pod via oc rsh
+# fetch_kubeconfig - Retrieve kubeconfig from the pod via oc rsh
 #
 # Validates that the cluster directory (INFRAID/) exists, then creates the
-# auth/ sub-directory inside it. Uses oc rsh to cat the kubeconfig out of
-# the pod's /tmp/installer/auth/kubeconfig and writes it atomically via a
-# temporary file: the file is only moved into its final location once the
-# content has been verified non-empty, so a failed or empty rsh never leaves
-# a partial kubeconfig in place. This mirrors the manual command:
-#   oc rsh -c <container> pod/<pod> /bin/bash -c \
-#     "cat /tmp/installer/auth/kubeconfig" > "${INFRAID}/auth/kubeconfig"
+# auth/ sub-directory inside it.
+#
+# The kubeconfig lives only inside the pod container at
+# /tmp/installer/auth/kubeconfig. It is not written to the controller host,
+# so it can only be retrieved while the pod is still Running via oc rsh.
+# If the pod has already finished, the kubeconfig is no longer accessible;
+# a warning is emitted and the function returns successfully so the rest of
+# the artifacts (metadata, etc.) are still usable.
+#
+# The file is written atomically via a temporary file: it is only moved into
+# its final location once the content has been verified non-empty, so a failed
+# oc rsh never leaves a partial kubeconfig in place.
 #
 # Arguments:
 #   None
 #
 # Returns:
-#   0 - kubeconfig written successfully
-#   Never returns if the cluster dir is missing, rsh fails, or the retrieved
-#   content is empty (calls die)
+#   0 - kubeconfig written, or pod already finished (with warning)
+#   Never returns if the cluster dir is missing or oc rsh fails on a Running pod
+#   (calls die)
 #
 # Globals Read:
 #   INFRAID        - Local cluster directory name (must already exist)
@@ -823,9 +829,20 @@ function fetch_kubeconfig() {
 	log_info "Creating auth directory: ${auth_dir}"
 	mkdir -p "${auth_dir}"
 
-	log_info "Fetching kubeconfig from pod/${POD_NAME} (container: ${CONTAINER_NAME})..."
+	# The kubeconfig lives only inside the container; oc rsh requires a Running pod.
+	local pod_phase
+	pod_phase=$(oc get "pod/${POD_NAME}" --no-headers -o jsonpath='{.status.phase}' 2>/dev/null || true)
+	log_debug "pod_phase=${pod_phase}"
 
-	# Write to a temp file so a failed rsh does not leave an empty kubeconfig
+	if [[ "${pod_phase}" != "Running" ]]; then
+		log_warning "Pod phase is '${pod_phase}' — kubeconfig is only accessible while the pod is Running"
+		log_warning "Skipping kubeconfig retrieval; set KUBECONFIG manually if needed"
+		return 0
+	fi
+
+	log_info "Fetching kubeconfig from pod/${POD_NAME} via oc rsh (container: ${CONTAINER_NAME})..."
+
+	# Write to a temp file so a failed oc rsh does not leave an empty kubeconfig.
 	local tmp_kubeconfig
 	tmp_kubeconfig=$(mktemp)
 	# Ensure the temp file is always removed on any exit (normal, error, or signal).
@@ -839,7 +856,7 @@ function fetch_kubeconfig() {
 		/bin/bash -c "cat /tmp/installer/auth/kubeconfig" \
 		> "${tmp_kubeconfig}"; then
 		rm -f "${tmp_kubeconfig}"
-		die "Failed to fetch kubeconfig from pod/${POD_NAME}"
+		die "Failed to fetch kubeconfig from pod/${POD_NAME} via oc rsh"
 	fi
 
 	if [[ ! -s "${tmp_kubeconfig}" ]]; then
@@ -863,8 +880,8 @@ function fetch_kubeconfig() {
 # 2. Check required programs
 # 3. Collect inputs
 # 4. Extract INFRA ID from pod logs
-# 5. SCP artifact directory from controller host
-# 6. Fetch kubeconfig from pod via oc rsh
+#   5. SCP artifact directory from controller host
+#   6. Fetch kubeconfig via oc rsh (Running pod only; warns and skips if finished)
 #
 # Arguments:
 #   $@ - All command-line arguments (passed to parse_arguments)
@@ -906,7 +923,9 @@ function main() {
 
 	log_success "All artifacts fetched successfully"
 	log_info "Cluster directory: ./${INFRAID}/"
-	log_info "Kubeconfig:        ./${INFRAID}/auth/kubeconfig"
+	if [[ -s "${INFRAID}/auth/kubeconfig" ]]; then
+		log_info "Kubeconfig:        ./${INFRAID}/auth/kubeconfig"
+	fi
 }
 
 # Run main function
