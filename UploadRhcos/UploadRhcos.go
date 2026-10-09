@@ -762,6 +762,8 @@ func (c *config) callPvsadm(filename, url string) error {
 //   - url is the image source: either a remote HTTPS URL or an absolute local
 //     path (e.g. the .ova.gz produced by callPvsadm).
 //   - filename becomes the PowerVC image name (--name).
+//   - sha256 is the hex-encoded SHA-256 checksum of the image; when non-empty
+//     it is passed to pvcctl via --sha256 for integrity verification.
 //
 // When url is a local path (no http:// or https:// prefix) the file must
 // already exist; an error is returned if it is missing.
@@ -772,9 +774,13 @@ func (c *config) callPvsadm(filename, url string) error {
 // Fixed import parameters: --os-type coreos, --volume-size 120,
 // --config default-config.yaml, --log-file pwr1.log.
 // c.ProjectUpload, c.SvcHost, and c.Template supply the remaining flags.
-func (c *config) callPvcctl(url, filename string) error {
-	c.logInfo("Running: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s --config default-config.yaml --log-file pwr1.log",
-		url, filename, c.ProjectUpload, c.SvcHost, c.Template)
+func (c *config) callPvcctl(url, filename, sha256 string) error {
+	sha256Suffix := ""
+	if sha256 != "" {
+		sha256Suffix = " --sha256 " + sha256
+	}
+	c.logInfo("Running: pvcctl image import-linux --image %s --name %s --os-type coreos --volume-size 120 --projects %s --svc-host %s --template %s --config default-config.yaml --log-file pwr1.log%s",
+		url, filename, c.ProjectUpload, c.SvcHost, c.Template, sha256Suffix)
 
 	if c.DryRun {
 		c.logInfo("DRY RUN — skipping pvcctl execution")
@@ -788,7 +794,7 @@ func (c *config) callPvcctl(url, filename string) error {
 		}
 	}
 
-	cmd := exec.Command("pvcctl",
+	args := []string{
 		"image", "import-linux",
 		"--image", url,
 		"--name", filename,
@@ -799,7 +805,12 @@ func (c *config) callPvcctl(url, filename string) error {
 		"--template", c.Template,
 		"--config", "default-config.yaml",
 		"--log-file", "pwr1.log",
-	)
+	}
+	if sha256 != "" {
+		args = append(args, "--sha256", sha256)
+	}
+
+	cmd := exec.Command("pvcctl", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -914,7 +925,7 @@ func (c *config) processRelease(release string) error {
 		if c.usePvsadm {
 			importSource = filepath.Join(c.ScriptDir, info.Filename+".ova.gz")
 		}
-		if err := c.callPvcctl(importSource, info.Filename); err != nil {
+		if err := c.callPvcctl(importSource, info.Filename, info.SHA256); err != nil {
 			return err
 		}
 	} else {

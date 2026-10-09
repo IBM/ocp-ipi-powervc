@@ -878,7 +878,7 @@ function process_release() {
 		fi
 		# Use the locally converted OVA file for the import
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
-			if ! call_pvcctl_local "${image_info[filename]}"; then
+			if ! call_pvcctl_local "${image_info[filename]}" "${image_info[sha256]:-}"; then
 				log_error "pvcctl (local) failed for ${release}"
 				return 1
 			fi
@@ -891,7 +891,7 @@ function process_release() {
 	else
 		# No pvsadm — only pvcctl with a URL is possible
 		if [[ "${USE_PVCCTL}" == "true" ]]; then
-			if ! call_pvcctl "${image_info[download_url]}" "${image_info[filename]}"; then
+			if ! call_pvcctl "${image_info[download_url]}" "${image_info[filename]}" "${image_info[sha256]:-}"; then
 				log_error "pvcctl failed for ${release}"
 				return 1
 			fi
@@ -971,6 +971,7 @@ function call_pvsadm() {
 # Arguments:
 #   $1 - Download URL for the image
 #   $2 - Image name (used for --name and to locate the OVA file)
+#   $3 - SHA256 checksum of the image (optional; passed as --sha256 when non-empty)
 # Returns:
 #   0 - Command executed successfully or dry-run mode
 #   1 - OVA file not found or command execution failed
@@ -1002,9 +1003,14 @@ function call_pvsadm() {
 function call_pvcctl() {
 	local url="$1"
 	local filename="$2"
+	local sha256="${3:-}"
 
 	# Display the command we will execute (for logging and verification)
-	log_info "Running: pvcctl image import-linux --image ${url} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}"
+	local sha256_flag=""
+	if [[ -n "${sha256}" ]]; then
+		sha256_flag="--sha256 ${sha256}"
+	fi
+	log_info "Running: pvcctl image import-linux --image ${url} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}${sha256_flag:+ ${sha256_flag}}"
 
 	# Skip actual execution in dry-run mode
 	if [[ "${DRY_RUN}" == "true" ]]; then
@@ -1013,17 +1019,22 @@ function call_pvcctl() {
 	fi
 
 	# Execute the pvcctl image import-linux command
-	pvcctl \
-		image import-linux \
-		--image "${url}" \
-		--name "${filename}" \
-		--os-type "coreos" \
-		--volume-size "120" \
-		--projects "${PROJECT_UPLOAD}" \
-		--svc-host "${SVC_HOST}" \
-		--template "${TEMPLATE}" \
-		--config default-config.yaml \
+	local -a pvcctl_args=(
+		image import-linux
+		--image "${url}"
+		--name "${filename}"
+		--os-type "coreos"
+		--volume-size "120"
+		--projects "${PROJECT_UPLOAD}"
+		--svc-host "${SVC_HOST}"
+		--template "${TEMPLATE}"
+		--config default-config.yaml
 		--log-file pwr1.log
+	)
+	if [[ -n "${sha256}" ]]; then
+		pvcctl_args+=(--sha256 "${sha256}")
+	fi
+	pvcctl "${pvcctl_args[@]}"
 }
 
 #------------------------------------------------------------------------------
@@ -1031,15 +1042,17 @@ function call_pvcctl() {
 # Description: Execute pvcctl to import a locally converted OVA image into PowerVC
 # Arguments:
 #   $1 - Image filename (without extension); OVA expected at ${SCRIPT_DIR}/${filename}.ova.gz
+#   $2 - SHA256 checksum of the image (optional; passed as --sha256 when non-empty)
 # Returns:
 #   0 - Command executed successfully or dry-run mode
 #   1 - OVA file not found or command execution failed
 # Global Variables:
 #   PROJECT_UPLOAD, SVC_HOST, TEMPLATE, SCRIPT_DIR, DRY_RUN
-# Example: call_pvcctl_local "rhcos-4.21.0"
+# Example: call_pvcctl_local "rhcos-4.21.0" "77652bd0..."
 #------------------------------------------------------------------------------
 function call_pvcctl_local() {
 	local filename="$1"
+	local sha256="${2:-}"
 	local converted_filename="${SCRIPT_DIR}/${filename}.ova.gz"
 
 	if [[ ! -f "${converted_filename}" ]]; then
@@ -1048,7 +1061,11 @@ function call_pvcctl_local() {
 	fi
 
 	# Display the command we will execute (for logging and verification)
-	log_info "Running: pvcctl image import-linux --image ${converted_filename} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}"
+	local sha256_flag=""
+	if [[ -n "${sha256}" ]]; then
+		sha256_flag="--sha256 ${sha256}"
+	fi
+	log_info "Running: pvcctl image import-linux --image ${converted_filename} --name ${filename} --os-type coreos --volume-size 120 --projects ${PROJECT_UPLOAD} --svc-host ${SVC_HOST} --template ${TEMPLATE}${sha256_flag:+ ${sha256_flag}}"
 
 	# Skip actual execution in dry-run mode
 	if [[ "${DRY_RUN}" == "true" ]]; then
@@ -1057,17 +1074,22 @@ function call_pvcctl_local() {
 	fi
 
 	# Execute the pvcctl image import-linux command with the local OVA file
-	pvcctl \
-		image import-linux \
-		--image "${converted_filename}" \
-		--name "${filename}" \
-		--os-type "coreos" \
-		--volume-size "120" \
-		--projects "${PROJECT_UPLOAD}" \
-		--svc-host "${SVC_HOST}" \
-		--template "${TEMPLATE}" \
-		--config default-config.yaml \
+	local -a pvcctl_args=(
+		image import-linux
+		--image "${converted_filename}"
+		--name "${filename}"
+		--os-type "coreos"
+		--volume-size "120"
+		--projects "${PROJECT_UPLOAD}"
+		--svc-host "${SVC_HOST}"
+		--template "${TEMPLATE}"
+		--config default-config.yaml
 		--log-file pwr1.log
+	)
+	if [[ -n "${sha256}" ]]; then
+		pvcctl_args+=(--sha256 "${sha256}")
+	fi
+	pvcctl "${pvcctl_args[@]}"
 }
 
 #------------------------------------------------------------------------------
