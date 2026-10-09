@@ -59,7 +59,8 @@
 //	Options:
 //	  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD)
 //	  --cluster-dir <dir>  Directory containing metadata.json (env: CLUSTER_DIR, default: test)
-//	  --duration <dur>     Console capture duration (default: 30s)
+//	  --duration <dur>     Console capture duration (default: 30s; 0 disables timeout)
+//	  --interactive, -i    Connect interactively to console session without timeout (env: INTERACTIVE=true)
 //	  --debug              Enable verbose debug output (env: DEBUG=true)
 //	  -h, --help           Show this help message
 //
@@ -68,6 +69,7 @@
 //	CLOUD           OpenStack cloud name (overridden by --cloud)
 //	CLUSTER_DIR     Cluster directory    (overridden by --cluster-dir)
 //	DEBUG           Set to "true" to enable debug output
+//	INTERACTIVE     Set to "true" to connect interactively without timeout
 //	SSH_PASSWORDS   Space-separated list of passwords to try for HMC/PowerVM SSH
 //	TOKEN_ID        Existing PowerVC auth token (skips token acquisition if set)
 package main
@@ -87,9 +89,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -97,6 +102,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -303,12 +309,13 @@ func logDebug(debug bool, format string, a ...any) {
 
 // Args holds all command-line arguments after parsing.
 type Args struct {
-	ServerArg  string        // raw server argument (bootstrap, master-0, worker-1, or custom)
-	Cloud      string        // OpenStack cloud name from clouds.yaml
-	ClusterDir string        // directory containing metadata.json
-	Duration   time.Duration // how long to capture console output
-	Debug      bool          // verbose debug output
-	Nudge      bool          // send Enter to the console to elicit a prompt
+	ServerArg   string        // raw server argument (bootstrap, master-0, worker-1, or custom)
+	Cloud       string        // OpenStack cloud name from clouds.yaml
+	ClusterDir  string        // directory containing metadata.json
+	Duration    time.Duration // how long to capture console output
+	Interactive bool          // connect interactively without timeout (like SSH)
+	Debug       bool          // verbose debug output
+	Nudge       bool          // send Enter to the console to elicit a prompt
 }
 
 func showUsage() {
@@ -321,20 +328,27 @@ Arguments:
                 Custom server: any other name (requires --cloud)
 
 Options:
+  --interactive, -i    Connect interactively to the console without timeout (like SSH)
+  --duration <dur>     Capture duration                 (default: 30s; 0 disables timeout)
   --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD)
   --cluster-dir <dir>  Directory with metadata.json     (env: CLUSTER_DIR, default: test)
-  --duration <dur>     Capture duration                 (default: 30s)
   --nudge              Send Enter to the console after connecting to elicit a prompt
   --debug              Enable debug output              (env: DEBUG=true)
   -h, --help           Show this message
 
 Environment Variables:
+  CLOUD           OpenStack cloud name (overridden by --cloud)
+  CLUSTER_DIR     Cluster directory    (overridden by --cluster-dir)
+  DEBUG           Set to "true" to enable debug output
+  INTERACTIVE     Set to "true" to connect interactively without timeout
   SSH_PASSWORDS   Space-separated list of passwords to try for HMC/PowerVM SSH
                   e.g.: export SSH_PASSWORDS="pass1 2word example3"
   TOKEN_ID        Reuse an existing PowerVC auth token (skips token acquisition)
 
 Examples:
   GrabConsole bootstrap
+  GrabConsole --interactive master-0
+  GrabConsole -i worker-1
   GrabConsole --duration 60s master-0
   GrabConsole --cloud mycloud --cluster-dir prod worker-1
   CLOUD=mycloud GrabConsole my-custom-server
@@ -352,13 +366,17 @@ func parseArgs() (*Args, error) {
 	}
 	defaultCloud := os.Getenv("CLOUD")
 	defaultDebug := strings.EqualFold(os.Getenv("DEBUG"), "true")
+	defaultInteractive := strings.EqualFold(os.Getenv("INTERACTIVE"), "true")
 
-	cloud      := fs.String("cloud", defaultCloud, "OpenStack cloud name")
+	cloud := fs.String("cloud", defaultCloud, "OpenStack cloud name")
 	clusterDir := fs.String("cluster-dir", defaultClusterDir, "Cluster directory")
-	duration   := fs.Duration("duration", 30*time.Second, "Console capture duration")
-	nudge      := fs.Bool("nudge", false, "Send Enter to the console to elicit a prompt")
-	debug      := fs.Bool("debug", defaultDebug, "Enable debug output")
-	help       := fs.Bool("help", false, "Show usage")
+	duration := fs.Duration("duration", 30*time.Second, "Console capture duration")
+	var interactive bool
+	fs.BoolVar(&interactive, "interactive", defaultInteractive, "Connect interactively to console session without timeout")
+	fs.BoolVar(&interactive, "i", defaultInteractive, "Connect interactively (shorthand)")
+	nudge := fs.Bool("nudge", false, "Send Enter to the console to elicit a prompt")
+	debug := fs.Bool("debug", defaultDebug, "Enable debug output")
+	help := fs.Bool("help", false, "Show usage")
 
 	for _, a := range os.Args[1:] {
 		if a == "-h" {
@@ -379,13 +397,19 @@ func parseArgs() (*Args, error) {
 		return nil, errors.New("server-name argument is required")
 	}
 
+	// If --duration is set to 0 or negative, automatically treat as interactive (no timeout)
+	if *duration <= 0 {
+		interactive = true
+	}
+
 	return &Args{
-		ServerArg:  fs.Arg(0),
-		Cloud:      *cloud,
-		ClusterDir: *clusterDir,
-		Duration:   *duration,
-		Debug:      *debug,
-		Nudge:      *nudge,
+		ServerArg:   fs.Arg(0),
+		Cloud:       *cloud,
+		ClusterDir:  *clusterDir,
+		Duration:    *duration,
+		Interactive: interactive,
+		Debug:       *debug,
+		Nudge:       *nudge,
 	}, nil
 }
 
@@ -1100,8 +1124,8 @@ func main() {
 	}
 
 	logInfo("GrabConsole starting")
-	logDebug(args.Debug, "args: server=%q cloud=%q clusterDir=%q duration=%s",
-		args.ServerArg, args.Cloud, args.ClusterDir, args.Duration)
+	logDebug(args.Debug, "args: server=%q cloud=%q clusterDir=%q duration=%s interactive=%v",
+		args.ServerArg, args.Cloud, args.ClusterDir, args.Duration, args.Interactive)
 
 	// ── 0. Pre-flight: SSH_PASSWORDS must be set before doing any API work ────
 	passwords := sshPasswords()
@@ -1231,19 +1255,131 @@ func main() {
 	defer sshClient.Close()
 	logSuccess("SSH connection established to %s@%s", target.SSHUser, target.SSHHost)
 
-	// ── 8 & 9. Run mkvterm and capture output ─────────────────────────────────
+	// ── 8 & 9. Run mkvterm ────────────────────────────────────────────────────
 	remoteCmd := fmt.Sprintf("mkvterm -m %s -p %s",
 		shellQuote(target.HostDisplayName), shellQuote(target.InstanceName))
-	logInfo("running: %s  (capturing for %s)", remoteCmd, args.Duration)
-	fmt.Println()
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	if err := runMkvterm(sshClient, target.HostDisplayName, target.InstanceName, args.Duration, args.Nudge, args.Debug); err != nil {
-		logError("mkvterm failed: %v", err)
-		os.Exit(1)
+
+	if args.Interactive {
+		logInfo("running: %s (interactive session, press ~. to disconnect)", remoteCmd)
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		if err := runInteractiveMkvterm(sshClient, target.HostDisplayName, target.InstanceName, args.Debug); err != nil {
+			logError("interactive console session failed: %v", err)
+			os.Exit(1)
+		}
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+		logSuccess("console session ended")
+	} else {
+		logInfo("running: %s  (capturing for %s)", remoteCmd, args.Duration)
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		if err := runMkvterm(sshClient, target.HostDisplayName, target.InstanceName, args.Duration, args.Nudge, args.Debug); err != nil {
+			logError("mkvterm failed: %v", err)
+			os.Exit(1)
+		}
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+		logSuccess("console capture complete")
 	}
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println()
-	logSuccess("console capture complete")
+}
+
+// runInteractiveMkvterm opens an interactive SSH session on client, runs
+//
+//	mkvterm -m '<hostDisplayName>' -p '<instanceName>'
+//
+// puts the local terminal into raw mode, forwards window resize events, and
+// streams standard I/O interactively until the remote session terminates (e.g., via ~.).
+func runInteractiveMkvterm(client *ssh.Client, hostDisplayName, instanceName string, debug bool) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("cannot open SSH session: %w", err)
+	}
+	defer session.Close()
+
+	fd := int(os.Stdin.Fd())
+
+	// Interactive mode requires an interactive terminal for raw-mode I/O.
+	if !term.IsTerminal(fd) {
+		return fmt.Errorf("stdin is not a terminal — interactive mode requires an interactive terminal")
+	}
+
+	// Determine terminal dimensions for PTY allocation.
+	w, h, err := term.GetSize(fd)
+	if err != nil {
+		logDebug(debug, "cannot get terminal size: %v — using default", err)
+		w, h = 220, 50
+	}
+
+	// Allocate a PTY for interactive terminal use.
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1, // enable echo
+		ssh.TTY_OP_ISPEED: 38400,
+		ssh.TTY_OP_OSPEED: 38400,
+	}
+	if err := session.RequestPty("xterm", h, w, modes); err != nil {
+		return fmt.Errorf("cannot request PTY: %w", err)
+	}
+
+	// Put the local terminal in raw mode so control characters (Ctrl-C,
+	// Ctrl-D, Enter, escape codes, etc.) are forwarded byte-for-byte to the remote console.
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("failed to switch terminal to raw mode: %w", err)
+	}
+	defer term.Restore(fd, oldState)
+
+	// Wire up standard I/O.
+	session.Stdin = os.Stdin
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	// Forward terminal-resize events (SIGWINCH) until the session ends.
+	sigWinch := make(chan os.Signal, 1)
+	signal.Notify(sigWinch, syscall.SIGWINCH)
+	defer signal.Stop(sigWinch)
+	winchDone := make(chan struct{})
+	var winchWg sync.WaitGroup
+	winchWg.Add(1)
+	go func() {
+		defer winchWg.Done()
+		for {
+			select {
+			case <-sigWinch:
+				w, h, err := term.GetSize(fd)
+				if err == nil {
+					_ = session.WindowChange(h, w)
+				}
+			case <-winchDone:
+				return
+			}
+		}
+	}()
+
+	// Close winchDone only after the goroutine has exited to avoid a race
+	// between channel close and a concurrent send on sigWinch.
+	defer func() { close(winchDone); winchWg.Wait() }()
+
+	// Shell-quote the arguments so that names containing spaces, apostrophes,
+	// or other shell-special characters are passed to mkvterm verbatim.
+	remoteCmd := fmt.Sprintf("mkvterm -m %s -p %s", shellQuote(hostDisplayName), shellQuote(instanceName))
+	logDebug(debug, "remote command: %s", remoteCmd)
+
+	if err := session.Start(remoteCmd); err != nil {
+		return fmt.Errorf("cannot start mkvterm: %w", err)
+	}
+
+	// Wait for the remote command to exit. ExitError is expected for interactive
+	// sessions (user exits or disconnects with ~.), so we only surface genuine
+	// errors.
+	if err := session.Wait(); err != nil {
+		var exitErr *ssh.ExitError
+		if errors.As(err, &exitErr) {
+			return nil // normal exit
+		}
+		return fmt.Errorf("console session ended: %w", err)
+	}
+	return nil
 }
 
 // Made with Bob
