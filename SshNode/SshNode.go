@@ -62,13 +62,17 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -81,6 +85,7 @@ import (
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
 )
 
 // ─── ANSI colour helpers ──────────────────────────────────────────────────────
@@ -266,22 +271,104 @@ func readMetadata(clusterDir string) (infraID, cloud string, err error) {
 	return m.InfraID, m.OpenStack.Cloud, nil
 }
 
+// ─── TLS / clouds.yaml helpers ───────────────────────────────────────────────
+
+// cloudsYAML mirrors the minimal structure of ~/.config/openstack/clouds.yaml
+// that we need: just the cacert field per cloud entry.
+type cloudsYAML struct {
+	Clouds map[string]struct {
+		CACert string `yaml:"cacert"`
+	} `yaml:"clouds"`
+}
+
+// readCACert returns the cacert path configured for the named cloud in
+// ~/.config/openstack/clouds.yaml, or an empty string when the field is absent.
+// Errors reading or parsing the file are returned so the caller can decide
+// whether to abort or fall back.
+func readCACert(cloud string) (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	path := filepath.Join(u.HomeDir, ".config", "openstack", "clouds.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	var cy cloudsYAML
+	if err := yaml.Unmarshal(data, &cy); err != nil {
+		return "", fmt.Errorf("cannot parse %s: %w", path, err)
+	}
+	entry, ok := cy.Clouds[cloud]
+	if !ok {
+		return "", fmt.Errorf("cloud %q not found in %s", cloud, path)
+	}
+	return entry.CACert, nil
+}
+
+// newHTTPClient returns an *http.Client whose TLS transport either trusts the
+// CA certificate at caCertFile, or falls back to InsecureSkipVerify when
+// caCertFile is empty (matching the behaviour of the original curl --insecure
+// calls and keeping self-signed PowerVC deployments working).
+func newHTTPClient(caCertFile string, debug bool) (*http.Client, error) {
+	tlsCfg := &tls.Config{}
+	if caCertFile != "" {
+		pemBytes, err := os.ReadFile(caCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read CA cert %s: %w", caCertFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("no valid PEM certificates found in %s", caCertFile)
+		}
+		tlsCfg.RootCAs = pool
+		logDebugf(debug, "TLS: loaded CA cert pool from %s", caCertFile)
+	} else {
+		logWarning("no cacert found in clouds.yaml — falling back to InsecureSkipVerify")
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec // no CA cert available; mirrors original curl --insecure
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   30 * time.Second,
+	}, nil
+}
+
 // ─── OpenStack ────────────────────────────────────────────────────────────────
 
 // getServerIP queries OpenStack for the given server name and returns its first
 // fixed IP address.
-func getServerIP(ctx context.Context, cloud, serverName string, debug bool) (string, error) {
+//
+// # Why clientconfig.AuthenticatedClient is NOT used here
+//
+// clientconfig.AuthenticatedClient silently drops the HTTPClient field from
+// ClientOpts before calling openstack.AuthenticatedClient, so any custom TLS
+// transport (e.g. a private CA certificate) is never applied to the Keystone
+// GET, causing:
+//
+//	tls: failed to verify certificate: x509: certificate signed by unknown authority
+//
+// Instead we follow the same pattern used by GrabConsole: call
+// clientconfig.AuthOptions to build the auth parameters, create the provider
+// client with openstack.NewClient (no I/O yet), inject the custom HTTP client,
+// then call openstack.Authenticate so that all TLS connections use our transport.
+func getServerIP(ctx context.Context, cloud, serverName string, hc *http.Client, debug bool) (string, error) {
 	logDebugf(debug, "querying OpenStack cloud=%q server=%q", cloud, serverName)
 
 	opts := &clientconfig.ClientOpts{Cloud: cloud}
-	providerClient, err := clientconfig.AuthenticatedClient(ctx, opts)
+	ao, err := clientconfig.AuthOptions(opts)
 	if err != nil {
-		return "", fmt.Errorf("OpenStack authentication failed: %w", err)
+		return "", fmt.Errorf("failed to build OpenStack auth options: %w", err)
 	}
 
-	// Set a timeout on the provider client HTTP client to prevent
-	// indefinite hangs on unresponsive OpenStack API endpoints.
-	providerClient.HTTPClient.Timeout = 30 * time.Second
+	providerClient, err := openstack.NewClient(ao.IdentityEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("failed to create OpenStack provider client: %w", err)
+	}
+	providerClient.HTTPClient = *hc // inject before any TLS connection is made
+
+	if err := openstack.Authenticate(ctx, providerClient, *ao); err != nil {
+		return "", fmt.Errorf("OpenStack authentication failed: %w", err)
+	}
 
 	computeClient, err := openstack.NewComputeV2(providerClient, gophercloud.EndpointOpts{})
 	if err != nil {
@@ -534,10 +621,22 @@ func main() {
 
 	logSuccessf("target server: %s (cloud: %s)", serverName, args.Cloud)
 
+	// ── build TLS-aware HTTP client ──────────────────────────────────────────
+	caCert, err := readCACert(args.Cloud)
+	if err != nil {
+		logDebugf(args.Debug, "could not read cacert from clouds.yaml: %v — proceeding with InsecureSkipVerify fallback", err)
+		caCert = ""
+	}
+	hc, err := newHTTPClient(caCert, args.Debug)
+	if err != nil {
+		logErrorf("failed to build HTTP client: %v", err)
+		os.Exit(1)
+	}
+
 	// ── query OpenStack for the server IP ────────────────────────────────────
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	ip, err := getServerIP(ctx, args.Cloud, serverName, args.Debug)
+	ip, err := getServerIP(ctx, args.Cloud, serverName, hc, args.Debug)
 	if err != nil {
 		logErrorf("failed to get server IP: %v", err)
 		os.Exit(1)
