@@ -1081,8 +1081,6 @@ func ensureFirewalldOpenPort(ctx context.Context, cfg *sshConfig, port int) erro
 	} else {
 		return fmt.Errorf("Unknown response from firewall-cmd query-port: %v", err)
 	}
-
-	return nil
 }
 
 // ============================================================================
