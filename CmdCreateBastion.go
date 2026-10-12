@@ -1138,15 +1138,13 @@ func setupHAProxyOnServer(ctx context.Context, config *BastionConfig, ipAddress 
 }
 
 // getServerIPAddress extracts and validates the IP address from a server.
-// It returns an error if the IP address cannot be found or is empty.
-func getServerIPAddress(server servers.Server) (string, error) {
-	_, ipAddress, err := findIpAddress(server)
+// It delegates to findIpAddressFull which tries the Nova Addresses map first,
+// then falls back to the Neutron/Nova port APIs for environments such as
+// PowerVC where server.Addresses is not populated.
+func getServerIPAddress(ctx context.Context, cloudName string, server servers.Server) (string, error) {
+	_, ipAddress, err := findIpAddressFull(ctx, cloudName, server)
 	if err != nil {
 		return "", fmt.Errorf("failed to get IP address: %w", err)
-	}
-
-	if ipAddress == "" {
-		return "", fmt.Errorf("IP address is empty for server %s", server.Name)
 	}
 
 	return ipAddress, nil
@@ -1957,7 +1955,7 @@ func setupBastionServer(ctx context.Context, config *BastionConfig) error {
 	config.ResolvedImageName = image.Name
 
 	// Step 3: Get server IP address
-	ipAddress, err := getServerIPAddress(server)
+	ipAddress, err := getServerIPAddress(ctx, config.Clouds[0], server)
 	if err != nil {
 		return err
 	}
@@ -1994,7 +1992,7 @@ func writeBastionIP(ctx context.Context, config *BastionConfig, serverName strin
 	}
 	log.Debugf("writeBastionIP: server = %+v", server)
 
-	ipAddress, err := getServerIPAddress(server)
+	ipAddress, err := getServerIPAddress(ctx, config.Clouds[0], server)
 	if err != nil {
 		return fmt.Errorf("failed to get IP address: %w", err)
 	}
@@ -2046,7 +2044,7 @@ func dnsForServer(ctx context.Context, clouds cloudFlags, apiKey, bastionName, d
 		return fmt.Errorf("failed to find server %q: %w", bastionName, err)
 	}
 
-	ipAddress, err := getServerIPAddress(server)
+	ipAddress, err := getServerIPAddress(ctx, clouds[0], server)
 	if err != nil {
 		return fmt.Errorf("failed to get IP address: %w", err)
 	}

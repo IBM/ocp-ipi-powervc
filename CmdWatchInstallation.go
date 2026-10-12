@@ -1156,7 +1156,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 		}
 		log.Debugf("updateBastionInformations: bastionServer.Name = %s", bastionServer.Name)
 
-		_, bastionIpAddress, err = findIpAddress(bastionServer)
+		_, bastionIpAddress, err = findIpAddressFull(ctx, string(clouds[0]), bastionServer)
 		log.Debugf("updateBastionInformations: bastionIpAddress = %s", bastionIpAddress)
 		if err != nil {
 			// Failed to get IP address - network configuration issue
@@ -1341,6 +1341,28 @@ func findIpAddress(server servers.Server) (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf("no IP address found for server %s", server.Name)
+}
+
+// findIpAddressFull is like findIpAddress but falls back to querying the
+// Neutron/Nova APIs when server.Addresses is empty. This handles environments
+// such as PowerVC where the Nova list response does not populate Addresses.
+//
+// Use this in single-server lookup paths (e.g. updateBastionInformations).
+// Avoid it in bulk loops over allServers — the extra API call per server is
+// expensive and the bulk callers already skip servers that return an error.
+func findIpAddressFull(ctx context.Context, cloudName string, server servers.Server) (string, string, error) {
+	macAddr, ipAddress, err := findIpAddress(server)
+	if err == nil && ipAddress != "" {
+		return macAddr, ipAddress, nil
+	}
+
+	log.Debugf("findIpAddressFull: Nova Addresses empty for %s, falling back to port lookup", server.Name)
+	ipAddress, err = findServerIPByPort(ctx, cloudName, server.ID)
+	if err != nil {
+		return "", "", fmt.Errorf("no IP address found for server %s: %w", server.Name, err)
+	}
+
+	return "", ipAddress, nil
 }
 
 // dhcpdConf generates a DHCP server configuration file for all OpenStack servers.
