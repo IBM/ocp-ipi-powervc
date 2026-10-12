@@ -219,7 +219,21 @@ func (lbs *LoadBalancer) Run() error {
 // the program to exit.
 //
 // This method implements part of the RunnableObject interface.
+//
+// Any error is also printed to stdout under the load balancer section so that
+// the failure is visible next to the component rather than only in the final
+// summary of the calling command.
 func (lbs *LoadBalancer) ClusterStatus() error {
+	err := lbs.clusterStatus()
+	if err != nil {
+		fmt.Printf("%s is NOTOK.\n", LoadBalancerName)
+		fmt.Printf("  %s\n", strings.TrimSpace(err.Error()))
+	}
+	return err
+}
+
+// clusterStatus performs the checks for ClusterStatus and returns the first error found.
+func (lbs *LoadBalancer) clusterStatus() error {
 	var (
 		ctx         context.Context
 		cancel      context.CancelFunc
@@ -239,7 +253,6 @@ func (lbs *LoadBalancer) ClusterStatus() error {
 
 	ctx, cancel = lbs.services.GetContextWithTimeout()
 	if ctx == nil || cancel == nil {
-		fmt.Printf("%s is NOTOK. Failed to get context with timeout.\n", LoadBalancerName)
 		return fmt.Errorf("ClusterStatus: GetContextWithTimeout returned nil context or cancel function")
 	}
 	defer cancel()
