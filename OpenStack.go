@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/attachinterfaces"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
@@ -983,4 +984,69 @@ func deleteNetworkPort(ctx context.Context, cloudName string, createdPort *ports
 	}
 
 	return nil
+}
+
+// findServerIPByPort finds the IP address of a server in environments such as
+// PowerVC where server.Addresses is not populated by the Nova list/get API.
+//
+// It tries two approaches in order:
+//  1. Nova attach-interfaces (os-interface): lists network interfaces attached
+//     to the server via the compute API.
+//  2. Neutron ports filtered by device_id: lists Neutron ports whose device is
+//     the server.
+//
+// Returns the first non-empty IP address found, or an error if both approaches
+// yield no results.
+func findServerIPByPort(ctx context.Context, cloudName, serverID string) (string, error) {
+	connCompute, err := getServiceClient(ctx, "compute", cloudName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get compute client: %w", err)
+	}
+
+	// Approach 1: Nova attach-interfaces
+	allPages, err := attachinterfaces.List(connCompute, serverID).AllPages(ctx)
+	if err != nil {
+		log.Debugf("findServerIPByPort: attach-interfaces list failed for %s: %v", serverID, err)
+	} else {
+		ifaces, err := attachinterfaces.ExtractInterfaces(allPages)
+		if err != nil {
+			log.Debugf("findServerIPByPort: attach-interfaces extract failed for %s: %v", serverID, err)
+		} else {
+			for _, iface := range ifaces {
+				for _, fip := range iface.FixedIPs {
+					if fip.IPAddress != "" {
+						log.Debugf("findServerIPByPort: found IP %s via attach-interfaces for server %s", fip.IPAddress, serverID)
+						return fip.IPAddress, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Approach 2: Neutron ports filtered by device_id
+	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloudName))
+	if err != nil {
+		return "", fmt.Errorf("failed to create network client: %w", err)
+	}
+
+	portPages, err := ports.List(connNetwork, ports.ListOpts{DeviceID: serverID}).AllPages(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list ports for server %s: %w", serverID, err)
+	}
+
+	allPorts, err := ports.ExtractPorts(portPages)
+	if err != nil {
+		return "", fmt.Errorf("failed to extract ports for server %s: %w", serverID, err)
+	}
+
+	for _, port := range allPorts {
+		for _, fixedIP := range port.FixedIPs {
+			if fixedIP.IPAddress != "" {
+				log.Debugf("findServerIPByPort: found IP %s via Neutron port %s for server %s", fixedIP.IPAddress, port.ID, serverID)
+				return fixedIP.IPAddress, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IP address found for server %s via attach-interfaces or Neutron ports", serverID)
 }
