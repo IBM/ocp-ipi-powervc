@@ -57,7 +57,8 @@
 //	                any other name                    — used as-is (needs --cloud)
 //
 //	Options:
-//	  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD)
+//	  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD); only used for
+//	                       custom server names — metadata.json wins for cluster nodes
 //	  --cluster-dir <dir>  Directory containing metadata.json (env: CLUSTER_DIR, default: test)
 //	  --duration <dur>     Console capture duration (default: 30s; 0 disables timeout)
 //	  --interactive, -i    Connect interactively to console session without timeout (env: INTERACTIVE=true)
@@ -326,11 +327,13 @@ Connect to the serial console of an OpenShift cluster node via PowerVC HMC/Power
 Arguments:
   server-name   Infrastructure node: bootstrap, master-N, worker-N
                 Custom server: any other name (requires --cloud)
+                For infrastructure nodes the cloud is read from metadata.json
 
 Options:
   --interactive, -i    Connect interactively to the console without timeout (like SSH)
   --duration <dur>     Capture duration                 (default: 30s; 0 disables timeout)
-  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD)
+  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD; only used for
+                       custom server names, metadata.json wins for cluster nodes)
   --cluster-dir <dir>  Directory with metadata.json     (env: CLUSTER_DIR, default: test)
   --nudge              Send Enter to the console after connecting to elicit a prompt
   --debug              Enable debug output              (env: DEBUG=true)
@@ -1149,9 +1152,12 @@ func main() {
 			os.Exit(1)
 		}
 		logSuccess("metadata: infraID=%s cloud=%s", infraID, metaCloud)
-		if args.Cloud == "" {
-			args.Cloud = metaCloud
+		// The cluster's metadata.json is authoritative for the cloud; it
+		// overrides --cloud / the CLOUD environment variable.
+		if args.Cloud != "" && args.Cloud != metaCloud {
+			logWarning("ignoring cloud %q — using %q from %s/metadata.json", args.Cloud, metaCloud, args.ClusterDir)
 		}
+		args.Cloud = metaCloud
 		serverName = infraID + "-" + args.ServerArg
 	} else {
 		if args.Cloud == "" {

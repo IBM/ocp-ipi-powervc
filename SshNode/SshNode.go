@@ -35,7 +35,8 @@
 // # Options
 //
 //	--execute           Execute the SSH connection directly instead of printing it
-//	--cloud <name>        OpenStack cloud from clouds.yaml (env: CLOUD)
+//	--cloud <name>        OpenStack cloud from clouds.yaml (env: CLOUD); only used for
+//	                      custom server names — metadata.json wins for cluster nodes
 //	--cluster-dir <dir>   Directory with metadata.json (env: CLUSTER_DIR, default: test)
 //	--ssh-key <path>      Private key path (default: ~/.ssh/id_installer_rsa)
 //	--debug               Enable debug output (env: DEBUG=true)
@@ -149,7 +150,8 @@ Arguments:
 
 Options:
   --execute           Execute the SSH connection directly instead of printing it
-  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD)
+  --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD; only used for
+                       custom server names, metadata.json wins for cluster nodes)
   --cluster-dir <dir>  Directory with metadata.json     (env: CLUSTER_DIR, default: test)
   --ssh-key <path>     Private key path                 (default: ~/.ssh/id_installer_rsa)
   --debug              Enable debug output              (env: DEBUG=true)
@@ -604,10 +606,12 @@ func main() {
 		}
 		logSuccessf("metadata: infraID=%s cloud=%s", infraID, metaCloud)
 
-		// metadata.json's cloud takes precedence unless the user explicitly set --cloud.
-		if args.Cloud == "" {
-			args.Cloud = metaCloud
+		// The cluster's metadata.json is authoritative for the cloud; it
+		// overrides --cloud / the CLOUD environment variable.
+		if args.Cloud != "" && args.Cloud != metaCloud {
+			logWarningf("ignoring cloud %q \u2014 using %q from %s/metadata.json", args.Cloud, metaCloud, args.ClusterDir)
 		}
+		args.Cloud = metaCloud
 		serverName = infraID + "-" + args.ServerArg
 	} else {
 		// Custom server name — cloud must be supplied.
