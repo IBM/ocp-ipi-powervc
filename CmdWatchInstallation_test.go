@@ -1120,4 +1120,48 @@ func TestWatchInstallationCommand_InvalidCloudNames(t *testing.T) {
 	}
 }
 
-// Made with Bob
+// TestWatchInstallationCommand_LogFile verifies that specifying the --log flag
+// redirects logs (including pre-logs and validation logs) to the specified file.
+func TestWatchInstallationCommand_LogFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "watch-installation-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logFile := filepath.Join(tempDir, "test.log")
+
+	flagSet := flag.NewFlagSet("test-log-file", flag.ContinueOnError)
+	args := []string{
+		"--cloud", "mycloud",
+		"--log", logFile,
+		// Omit domainName to trigger validation error after logger initialization
+	}
+
+	err = watchInstallationCommand(flagSet, args)
+	if err == nil {
+		t.Fatal("Expected validation error (missing domainName), got nil")
+	}
+
+	// Verify that the log file was created
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		t.Fatalf("Expected log file to be created, but it does not exist: %v", err)
+	}
+
+	// Verify the contents of the log file
+	content, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+
+	logContent := string(content)
+	t.Logf("Generated log content:\n%s", logContent)
+
+	if !strings.Contains(logContent, "Starting watch-installation command") {
+		t.Error("Expected log file to contain the starting prelog message")
+	}
+
+	if !strings.Contains(logContent, "Validating configuration") {
+		t.Error("Expected log file to contain the configuration validation message")
+	}
+}

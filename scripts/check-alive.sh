@@ -632,7 +632,7 @@ function build_powervc_command() {
 	fi
 	POWERVC_CMD=$(echo "${POWERVC_CMD}"; cat <<-EOF
 		  --shouldDebug true
-		  2>&1 | tee "${output_file}"
+		  --log "${output_file}"
 	EOF
 	)
 	POWERVC_CMD=$(echo "${POWERVC_CMD}" | tr -d '\r\n')

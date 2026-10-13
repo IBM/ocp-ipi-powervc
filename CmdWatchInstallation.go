@@ -78,6 +78,8 @@ import (
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -94,6 +96,7 @@ const (
 	flagWatchInstallationDhcpDnsServers   = "dhcpDnsServers"
 	flagWatchInstallationDhcpServerId     = "dhcpServerId"
 	flagWatchInstallationShouldDebug      = "shouldDebug"
+	flagWatchInstallationLog              = "log"
 
 	// Flag default values
 	defaultWatchInstallationDomainName       = ""
@@ -107,6 +110,7 @@ const (
 	defaultWatchInstallationDhcpDnsServers   = ""
 	defaultWatchInstallationDhcpServerId     = ""
 	defaultWatchInstallationShouldDebug      = "false"
+	defaultWatchInstallationLog              = ""
 
 	// Usage messages
 	usageWatchInstallationCloud            = "The cloud name to use in clouds.yaml (can be specified multiple times)"
@@ -121,6 +125,7 @@ const (
 	usageWatchInstallationDhcpDnsServers   = "The DNS servers for a DHCP request"
 	usageWatchInstallationDhcpServerId     = "The DNS server identifier for a DHCP request"
 	usageWatchInstallationShouldDebug      = "Should output debug output"
+	usageWatchInstallationLog              = "The filename to log all output to"
 
 	// Error message prefix
 	errPrefixWatchInstallation = "Error: "
@@ -204,7 +209,8 @@ type WatchInstallationConfig struct {
 	StatsPassword string // HAProxy statistics password
 
 	// Operational configuration
-	ShouldDebug bool // Whether to enable debug output
+	ShouldDebug bool   // Whether to enable debug output
+	LogFile     string // Filename to log all output to
 
 	// Runtime configuration (not from flags)
 	APIKey string // IBM Cloud API key from environment
@@ -573,6 +579,30 @@ func validateInterfaceName(iface string) error {
 	return nil
 }
 
+// stdoutHook is a custom logrus Hook that writes warnings, errors, fatals, and panics to stdout.
+type stdoutHook struct {
+	formatter logrus.Formatter
+}
+
+func (h *stdoutHook) Levels() []logrus.Level {
+	return []logrus.Level{
+		logrus.WarnLevel,
+		logrus.ErrorLevel,
+		logrus.FatalLevel,
+		logrus.PanicLevel,
+	}
+}
+
+func (h *stdoutHook) Fire(entry *logrus.Entry) error {
+	serialized, err := h.formatter.Format(entry)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(serialized)
+	return err
+}
+
+
 // watchInstallationCommand executes the watch-installation command with the given flags and arguments.
 //
 // This function continuously monitors OpenShift cluster installations and manages associated
@@ -645,7 +675,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	fmt.Fprintf(os.Stderr, "Program version is %v, release = %v\n", version, release)
 
 	// Create a pre-debug log before we know that debugging is enabled
-	fmt.Fprintf(&preLog, "[INFO] Starting watch-installation command\n")
+	fmt.Fprintf(&preLog, "Starting watch-installation command\n")
 
 	// Create configuration structure
 	config := &WatchInstallationConfig{
@@ -665,6 +695,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	ptrDhcpDnsServers := watchInstallationFlags.String(flagWatchInstallationDhcpDnsServers, defaultWatchInstallationDhcpDnsServers, usageWatchInstallationDhcpDnsServers)
 	ptrDhcpServerId := watchInstallationFlags.String(flagWatchInstallationDhcpServerId, defaultWatchInstallationDhcpServerId, usageWatchInstallationDhcpServerId)
 	ptrShouldDebug := watchInstallationFlags.String(flagWatchInstallationShouldDebug, defaultWatchInstallationShouldDebug, usageWatchInstallationShouldDebug)
+	ptrLogFile := watchInstallationFlags.String(flagWatchInstallationLog, defaultWatchInstallationLog, usageWatchInstallationLog)
 	ptrStatsUser := watchInstallationFlags.String("statsUser", "", "HAProxy stats username (leave empty to disable stats)")
 	ptrStatsPassword := watchInstallationFlags.String("statsPassword", "", "HAProxy stats password")
 
@@ -687,16 +718,17 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	config.DhcpServerId = *ptrDhcpServerId
 	config.StatsUser = *ptrStatsUser
 	config.StatsPassword = *ptrStatsPassword
+	config.LogFile = *ptrLogFile
 
 	// Parse enableDhcpd flag
-	fmt.Fprintf(&preLog, "[INFO] Parsing DHCP configuration\n")
+	fmt.Fprintf(&preLog, "Parsing DHCP configuration\n")
 	switch strings.ToLower(*ptrEnableDhcpd) {
 	case boolTrue:
 		config.EnableDhcpd = true
-		fmt.Fprintf(&preLog, "[INFO] DHCP server enabled\n")
+		fmt.Fprintf(&preLog, "DHCP server enabled\n")
 	case boolFalse:
 		config.EnableDhcpd = false
-		fmt.Fprintf(&preLog, "[INFO] DHCP server disabled\n")
+		fmt.Fprintf(&preLog, "DHCP server disabled\n")
 	default:
 		return fmt.Errorf("%s%s must be 'true' or 'false', got '%s'", errPrefixWatchInstallation, flagWatchInstallationEnableDhcpd, *ptrEnableDhcpd)
 	}
@@ -710,6 +742,18 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 
 	// Initialize logger
 	log = initLogger(config.ShouldDebug)
+	if config.LogFile != "" {
+		if log.Hooks == nil {
+			log.Hooks = make(logrus.LevelHooks)
+		}
+		file, err := os.OpenFile(config.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			return fmt.Errorf("%sfailed to open log file %q: %w", errPrefixWatchInstallation, config.LogFile, err)
+		}
+		defer file.Close()
+		log.Out = file
+		log.AddHook(&stdoutHook{formatter: log.Formatter})
+	}
 	if config.ShouldDebug {
 		log.Debugf("Debug mode enabled")
 	}
@@ -722,33 +766,33 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	}
 
 	// Validate configuration using the config's Validate method
-	log.Printf("[INFO] Validating configuration")
+	log.Infof("Validating configuration")
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("%s%w", errPrefixWatchInstallation, err)
 	}
-	log.Printf("[INFO] Configuration validated successfully")
+	log.Infof("Configuration validated successfully")
 
 	// Log configuration details
 	for i, cloud := range config.Clouds {
-		log.Debugf("[INFO] Cloud[%d]: %s", i, cloud)
+		log.Debugf("Cloud[%d]: %s", i, cloud)
 	}
-	log.Debugf("[INFO] Domain name: %s", config.DomainName)
-	log.Debugf("[INFO] Bastion metadata dir: %s", config.BastionMetadataDir)
-	log.Debugf("[INFO] Bastion RSA: %s", config.BastionRsa)
+	log.Debugf("Domain name: %s", config.DomainName)
+	log.Debugf("Bastion metadata dir: %s", config.BastionMetadataDir)
+	log.Debugf("Bastion RSA: %s", config.BastionRsa)
 
 	if config.EnableDhcpd {
-		log.Debugf("[INFO] DHCP interface: %s", config.DhcpInterface)
-		log.Debugf("[INFO] DHCP subnet: %s", config.DhcpSubnet)
-		log.Debugf("[INFO] DHCP netmask: %s", config.DhcpNetmask)
-		log.Debugf("[INFO] DHCP router: %s", config.DhcpRouter)
-		log.Debugf("[INFO] DHCP DNS servers: %s", config.DhcpDnsServers)
-		log.Debugf("[INFO] DHCP server ID: %s", config.DhcpServerId)
+		log.Debugf("DHCP interface: %s", config.DhcpInterface)
+		log.Debugf("DHCP subnet: %s", config.DhcpSubnet)
+		log.Debugf("DHCP netmask: %s", config.DhcpNetmask)
+		log.Debugf("DHCP router: %s", config.DhcpRouter)
+		log.Debugf("DHCP DNS servers: %s", config.DhcpDnsServers)
+		log.Debugf("DHCP server ID: %s", config.DhcpServerId)
 	}
 
 	if config.StatsUser != "" && config.StatsPassword != "" {
-		log.Printf("[INFO] HAProxy stats enabled with username: %s", config.StatsUser)
+		log.Infof("HAProxy stats enabled with username: %s", config.StatsUser)
 	} else {
-		log.Printf("[INFO] HAProxy stats disabled (no credentials provided)")
+		log.Infof("HAProxy stats disabled (no credentials provided)")
 	}
 
 	// Set up signal handling for graceful shutdown
@@ -759,7 +803,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	listenerErrChan := make(chan error, 1)
 
 	// Spawn metadata listener goroutine
-	log.Printf("[INFO] Starting metadata listener on port %s", listenPort)
+	log.Infof("Starting metadata listener on port %s", listenPort)
 	go func() {
 		if err := listenForCommands(ctx, config); err != nil {
 			log.Errorf("Command listener failed: %v", err)
@@ -768,7 +812,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	}()
 
 	// Enter monitoring loop with graceful shutdown support
-	log.Printf("[INFO] Entering monitoring loop")
+	log.Infof("Entering monitoring loop")
 	ticker := time.NewTicker(watchSleepDuration)
 	defer ticker.Stop()
 
@@ -781,7 +825,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[INFO] Received shutdown signal, cleaning up...")
+			log.Infof("Received shutdown signal, cleaning up...")
 			return performGracefulShutdown()
 
 		case err := <-listenerErrChan:
@@ -789,7 +833,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 			return fmt.Errorf("command listener failed: %w", err)
 
 		case <-ticker.C:
-			log.Printf("[INFO] Waking up to check for changes")
+			log.Infof("Waking up to check for changes")
 
 			if knownBastions, err = performMonitoringIteration(ctx, config, &knownServers, knownBastions); err != nil {
 				log.Errorf("[ERROR] Monitoring iteration failed: %v", err)
@@ -835,21 +879,21 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	clouds := cloudFlags(config.Clouds)
 
 	// Gather bastion information from metadata directories
-	log.Printf("[INFO] Gathering bastion information from: %s", config.BastionMetadataDir)
+	log.Infof("Gathering bastion information from: %s", config.BastionMetadataDir)
 	bastionInformations, err := gatherBastionInformations(config.BastionMetadataDir, config.BastionRsa)
 	if err != nil {
 		return nil, fmt.Errorf("failed to gather bastion information: %w", err)
 	}
 	log.Debugf("bastionInformations [%d] = %+v", len(bastionInformations), bastionInformations)
-	log.Printf("[INFO] Found %d bastion(s)", len(bastionInformations))
+	log.Infof("Found %d bastion(s)", len(bastionInformations))
 
 	// Retrieve all servers from OpenStack
-	log.Printf("[INFO] Retrieving all servers from clouds: %+v", clouds)
+	log.Infof("Retrieving all servers from clouds: %+v", clouds)
 	allServers, err := getAllServers(iterCtx, clouds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all servers: %w", err)
 	}
-	log.Printf("[INFO] Retrieved %d server(s)", len(allServers))
+	log.Infof("Retrieved %d server(s)", len(allServers))
 
 	// Detect changes in server set
 	newServerSet := getServerSet(allServers)
@@ -862,26 +906,26 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 
 	// If no changes detected, return early
 	if addedServersSet.Len() == 0 && deletedServerSet.Len() == 0 {
-		log.Printf("[INFO] No server changes detected")
+		log.Infof("No server changes detected")
 		return bastionInformations, nil
 	}
 
 	// Update known servers set
-	log.Printf("[INFO] Server changes detected: %d added, %d deleted", addedServersSet.Len(), deletedServerSet.Len())
+	log.Infof("Server changes detected: %d added, %d deleted", addedServersSet.Len(), deletedServerSet.Len())
 	*knownServers = newServerSet
 
 	// Update bastion configurations
-	log.Printf("[INFO] Updating bastion configurations")
+	log.Infof("Updating bastion configurations")
 	err = updateBastionInformations(iterCtx, clouds, bastionInformations, knownBastions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update bastion information: %w", err)
 	}
-	log.Printf("[INFO] Bastion configurations updated successfully")
+	log.Infof("Bastion configurations updated successfully")
 
 	// Update DHCP configuration if enabled
 	log.Debugf("enableDhcpd = %v", config.EnableDhcpd)
 	if config.EnableDhcpd {
-		log.Printf("[INFO] Updating DHCP configuration")
+		log.Infof("Updating DHCP configuration")
 		filename := "/tmp/dhcpd.conf"
 		err = dhcpdConf(iterCtx,
 			filename,
@@ -897,9 +941,9 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate DHCP configuration: %w", err)
 		}
-		log.Printf("[INFO] DHCP configuration generated: %s", filename)
+		log.Infof("DHCP configuration generated: %s", filename)
 
-		log.Printf("[INFO] Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
+		log.Infof("Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
 		err = runSplitCommand([]string{
 			"sudo",
 			"/usr/bin/cp",
@@ -910,7 +954,7 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 			return nil, fmt.Errorf("failed to copy DHCP configuration: %w", err)
 		}
 
-		log.Printf("[INFO] Restarting DHCP service")
+		log.Infof("Restarting DHCP service")
 		err = runSplitCommand([]string{
 			"sudo",
 			"systemctl",
@@ -920,20 +964,20 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 		if err != nil {
 			return nil, fmt.Errorf("failed to restart DHCP service: %w", err)
 		}
-		log.Printf("[INFO] DHCP service restarted successfully")
+		log.Infof("DHCP service restarted successfully")
 	}
 
 	// Update HAProxy configuration
-	log.Printf("[INFO] Updating HAProxy configuration")
+	log.Infof("Updating HAProxy configuration")
 	err = haproxyCfg(iterCtx, clouds, bastionInformations, config.StatsUser, config.StatsPassword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update HAProxy configuration: %w", err)
 	}
-	log.Printf("[INFO] HAProxy configuration updated successfully")
+	log.Infof("HAProxy configuration updated successfully")
 
 	// Update DNS records if API key is available
 	if config.APIKey != "" {
-		log.Printf("[INFO] Updating DNS records")
+		log.Infof("Updating DNS records")
 		err = dnsRecords(iterCtx,
 			clouds,
 			config.APIKey,
@@ -946,12 +990,12 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 		if err != nil {
 			return nil, fmt.Errorf("failed to update DNS records: %w", err)
 		}
-		log.Printf("[INFO] DNS records updated successfully")
+		log.Infof("DNS records updated successfully")
 	} else {
-		log.Printf("[INFO] Skipping DNS updates (no API key provided)")
+		log.Infof("Skipping DNS updates (no API key provided)")
 	}
 
-	log.Printf("[INFO] Iteration complete")
+	log.Infof("Iteration complete")
 	return bastionInformations, nil
 }
 
@@ -963,13 +1007,13 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 // Returns:
 //   - error: Any error encountered during shutdown (currently always returns nil)
 func performGracefulShutdown() error {
-	log.Printf("[INFO] Performing graceful shutdown...")
+	log.Infof("Performing graceful shutdown...")
 	// Add any cleanup operations here:
 	// - Close connections
 	// - Flush logs
 	// - Save state
 	// - Clean up temporary files
-	log.Printf("[INFO] Shutdown complete")
+	log.Infof("Shutdown complete")
 	return nil
 }
 
@@ -1142,7 +1186,7 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 				return fmt.Errorf("failed to read metadata from %s: %w", bastionInformation.Metadata, err)
 			}
 			// Metadata file doesn't exist - cluster may have been deleted
-			log.Debugf("[INFO] Metadata file not found (cluster may be deleted): %s", bastionInformation.Metadata)
+			log.Debugf("Metadata file not found (cluster may be deleted): %s", bastionInformation.Metadata)
 			err = nil
 			continue
 		}
@@ -1225,22 +1269,22 @@ func updateBastionInformations(ctx context.Context, clouds cloudFlags, bastionIn
 
 		if previousVMs == 0 && currentVMs > 0 {
 			// First time for this bastion - cluster is being created
-			log.Printf("[INFO] Cluster %s (InfraID: %s) is initializing with %d VMs on bastion %s",
+			log.Infof("Cluster %s (InfraID: %s) is initializing with %d VMs on bastion %s",
 				bastionInformations[i].ClusterName,
 				bastionInformations[i].InfraID,
 				currentVMs,
 				bastionIpAddress)
-			log.Printf("[INFO] Bastion server: %s at %s", bastionServer.Name, bastionIpAddress)
+			log.Infof("Bastion server: %s at %s", bastionServer.Name, bastionIpAddress)
 		}
 
 		if currentVMs == 0 && previousVMs > 0 {
 			// Last time for this bastion - cluster is being deleted
-			log.Printf("[INFO] Cluster %s (InfraID: %s) is being deleted (had %d VMs) from bastion %s",
+			log.Infof("Cluster %s (InfraID: %s) is being deleted (had %d VMs) from bastion %s",
 				bastionInformations[i].ClusterName,
 				bastionInformations[i].InfraID,
 				previousVMs,
 				bastionIpAddress)
-			log.Printf("[INFO] All cluster VMs have been removed")
+			log.Infof("All cluster VMs have been removed")
 		}
 	}
 
@@ -1398,7 +1442,7 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 		return err
 	}
 
-	fmt.Printf("Writing %s\n\n", filename)
+	log.Infof("Writing %s", filename)
 
 	err = os.Remove(filename)
 	if err != nil {
@@ -1495,7 +1539,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 
 	log.Debugf("haproxyCfg: len(bastionInformations) = %d", len(bastionInformations))
 	if len(bastionInformations) == 0 {
-		fmt.Println("Warning: no bastion servers found!")
+		log.Warnln("Warning: no bastion servers found!")
 		return nil
 	}
 
@@ -1516,7 +1560,7 @@ func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []ba
 		}
 
 		filename = "/tmp/haproxy.cfg"
-		fmt.Printf("Writing %s\n\n", filename)
+		log.Infof("Writing %s", filename)
 
 		err = os.Remove(filename)
 		if err != nil {
@@ -2345,7 +2389,7 @@ func listenForCommands(ctx context.Context, config *WatchInstallationConfig) err
 	// Ensure listener is closed exactly once
 	closeListener := func() {
 		closeOnce.Do(func() {
-			log.Printf("[INFO] Closing listener...")
+			log.Infof("Closing listener...")
 			closeErr = ln.Close()
 			if closeErr != nil {
 				log.Errorf("[ERROR] Failed to close listener: %v", closeErr)
@@ -2357,7 +2401,7 @@ func listenForCommands(ctx context.Context, config *WatchInstallationConfig) err
 	// Close listener when context is cancelled
 	go func() {
 		<-ctx.Done()
-		log.Printf("[INFO] Context cancelled, initiating listener shutdown...")
+		log.Infof("Context cancelled, initiating listener shutdown...")
 		closeListener()
 	}()
 
@@ -2368,7 +2412,7 @@ func listenForCommands(ctx context.Context, config *WatchInstallationConfig) err
 			// Check if error is due to context cancellation
 			select {
 			case <-ctx.Done():
-				log.Printf("[INFO] Listener shutting down gracefully")
+				log.Infof("Listener shutting down gracefully")
 				return nil
 			default:
 				// Unexpected error during Accept
@@ -3037,7 +3081,7 @@ func handleEraseMetadata(config *WatchInstallationConfig, data string, errChan c
 		return
 	}
 
-	log.Printf("[INFO] handleEraseMetadata: successfully deleted %d metadata entries matching pattern '%s'", deletedCount, cmd.MetadataPattern)
+	log.Infof("handleEraseMetadata: successfully deleted %d metadata entries matching pattern '%s'", deletedCount, cmd.MetadataPattern)
 	errChan <- nil
 }
 
