@@ -91,11 +91,11 @@ func runCommand(kubeconfig string, cmdline string) error {
 	log.Debugf("runCommand: Executing command: %s", cmdline)
 	log.Debugf("runCommand: KUBECONFIG=%s", kubeconfig)
 
-	fmt.Println(separatorLine)
-	fmt.Println(cmdline)
+	log.Debugf("%s", separatorLine)
+	log.Debugf("%s", cmdline)
 
 	out, err := cmd.CombinedOutput()
-	fmt.Println(string(out))
+	log.Debugf("%s", string(out))
 
 	if err != nil {
 		log.Debugf("runCommand: Command failed: %v", err)
@@ -125,7 +125,7 @@ func runSplitCommand(acmdline []string) error {
 	log.Debugf("runSplitCommand: Executing command: %v", acmdline)
 
 	out, err := runSplitCommand2(acmdline)
-	fmt.Println(string(out))
+	log.Debugf("%s", string(out))
 
 	if err != nil {
 		log.Debugf("runSplitCommand: Command failed: %v", err)
@@ -163,8 +163,8 @@ func runSplitCommand2(acmdline []string) ([]byte, error) {
 
 	log.Debugf("runSplitCommand2: Executing command: %v", acmdline)
 
-	fmt.Println(separatorLine)
-	fmt.Println(strings.Join(acmdline, " "))
+	log.Debugf("%s", separatorLine)
+	log.Debugf("%s", strings.Join(acmdline, " "))
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -231,8 +231,8 @@ func runSplitCommandNoErrWithContext(ctx context.Context, acmdline []string, sil
 
 	if !silent {
 		log.Debugf("runSplitCommandNoErr: Executing command: %v", acmdline)
-		fmt.Println(separatorLine)
-		fmt.Println(strings.Join(acmdline, " "))
+		log.Debugf("%s", separatorLine)
+		log.Debugf("%s", strings.Join(acmdline, " "))
 	} else {
 		log.Debugf("runSplitCommandNoErr: Executing command (silent): %v", acmdline)
 	}
@@ -280,8 +280,8 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	fmt.Println(separatorLine)
-	fmt.Printf("%s | %s\n", cmdline1, cmdline2)
+	log.Debugf("%s", separatorLine)
+	log.Debugf("%s | %s", cmdline1, cmdline2)
 
 	log.Debugf("runTwoCommands: cmdline1 = %s", cmdline1)
 	log.Debugf("runTwoCommands: cmdline2 = %s", cmdline2)
@@ -362,7 +362,7 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	}
 
 	out := buffer.Bytes()
-	fmt.Println(string(out))
+	log.Debugf("%s", string(out))
 
 	log.Debugf("runTwoCommands: Pipeline completed successfully, output size: %d bytes", len(out))
 	return nil
