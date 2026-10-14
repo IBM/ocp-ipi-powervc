@@ -39,12 +39,32 @@ go build -o JobHistory *.go
 
 **Important**: All command-line options must be specified BEFORE the URL(s). Flags placed after URLs will trigger an error.
 
+### Bucket Options and Authentication
+
+JobHistory supports both public and private GCS bucket URLs depending on the URL provided:
+
+1. **Public Buckets** (no credentials required):
+   - Dynamic detection for any bucket ending with `-public` (e.g. `test-platform-results-public`) or `origin-ci-test`
+   - URL format: `https://prow.ci.openshift.org/job-history/gs/<bucket-name>/logs/<job-name>`
+   - Artifacts are fetched anonymously from `gcs.ci.openshift.org`
+
+2. **Private Buckets** (credentials required):
+   - Non-public buckets (e.g. `test-platform-results`)
+   - URL format: `https://prow.ci.openshift.org/job-history/gs/<bucket-name>/logs/<job-name>`
+   - Requires OpenShift CI token (`OCP_CI_TOKEN` or `OCP_CI_TOKEN_FILE` from `oc whoami -t`)
+   - Requires Google ADC credentials (`gcloud auth application-default login`)
+   - Artifacts are fetched from `storage.googleapis.com`
+
 ```bash
-# Basic usage (all jobs, no date filter)
+# Basic usage with public bucket (no auth required)
+./JobHistory https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
+
+# Basic usage with private bucket (auth required)
+export OCP_CI_TOKEN=$(oc whoami -t)
 ./JobHistory https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Query today's runs (note: --today comes BEFORE URL)
-./JobHistory --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
+./JobHistory --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Query yesterday's runs
 ./JobHistory --yesterday <URL>

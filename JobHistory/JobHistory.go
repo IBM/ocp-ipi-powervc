@@ -78,14 +78,26 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+)
+
+// Precompiled regular expressions for parsing logs, HTML, and job strings.
+var (
+	rePodFailed     = regexp.MustCompile(`pod "([^"]+)" failed:`)
+	reImageNotFound = regexp.MustCompile(`ERROR: RHCOS image '(.*)' not found in PowerVC cloud`)
+	reCreateCluster = regexp.MustCompile(`(?s)8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n(.*?)8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n`)
+	reTestFailures  = regexp.MustCompile(`test-failures-summary_[^.]*\.json`)
+	reCIInfo        = regexp.MustCompile(`([^0-9].*)-([0-9]+\.[0-9]+)-(.*)`)
+	reAllBuilds     = regexp.MustCompile(`var allBuilds = (\[[^\]]+\]);`)
 )
 
 var (
@@ -100,10 +112,10 @@ var (
 
 // HTTP client and concurrency configuration constants
 const (
-	defaultHTTPTimeout = 30 * time.Second
-	maxRetries         = 3
-	retryDelay         = 1 * time.Second
-	maxConcurrentJobs  = 8
+	defaultHTTPTimeout     = 30 * time.Second
+	maxRetries             = 3
+	retryDelay             = 1 * time.Second
+	defaultMaxConcurrency = 8
 )
 
 // Artifact endpoints
@@ -427,6 +439,19 @@ func getArtifactBaseURL(urlStr string) string {
 	return privateArtifactBase
 }
 
+// getArtifactPath converts a Spyglass link into the relative artifact GCS path.
+// It strips leading '/view/gs' or similar prefixes and ensures a leading slash.
+func getArtifactPath(spyglassLink string) string {
+	s := strings.TrimPrefix(spyglassLink, "/view/gs")
+	s = strings.TrimPrefix(s, "view/gs")
+	s = strings.TrimPrefix(s, "/gs")
+	s = strings.TrimPrefix(s, "gs")
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	return s
+}
+
 // getURLString fetches content from the specified URL and returns it as a string.
 // It handles HTTP compression (gzip, deflate) and sanitizes invalid UTF-8 characters
 // that may appear in CI logs.
@@ -456,12 +481,7 @@ func getURLString(ctx context.Context, client *HTTPClient, urlStr string) (strin
 	}
 
 	// Handle potential encoding issues - sanitize invalid UTF-8 characters
-	str := string(data)
-	replacements := []string{"\x80", "\x81", "\x82", "\x83"}
-	for _, r := range replacements {
-		str = strings.ReplaceAll(str, r, " ")
-	}
-
+	str := strings.ToValidUTF8(string(data), " ")
 	return str, nil
 }
 
@@ -549,7 +569,7 @@ func getData(resp *http.Response) ([]byte, error) {
 //   - []string: deduplicated list of pod names that are reported as failed
 //   - error:    error if the build log cannot be fetched
 func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, artifactBaseURL string) (bool, []string, error) {
-	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
+	buildLogURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return false, nil, err
@@ -560,8 +580,7 @@ func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLin
 	}
 
 	// Extract every pod name from 'pod "pod-name" failed:' occurrences.
-	podRe := regexp.MustCompile(`pod "([^"]+)" failed:`)
-	rawMatches := podRe.FindAllStringSubmatch(buildLogStr, -1)
+	rawMatches := rePodFailed.FindAllStringSubmatch(buildLogStr, -1)
 
 	// Deduplicate while preserving first-seen order.
 	seen := make(map[string]bool)
@@ -576,88 +595,54 @@ func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLin
 	return true, pods, nil
 }
 
-// getZone extracts the PowerVS zone identifier from a CI job's build log.
-// It parses the build-log.txt file to find the lease acquisition message that
-// indicates which PowerVS zone was allocated for the test run.
-//
-// Parameters:
-//   - ctx:             Context for cancellation and timeout control
-//   - client:          HTTP client to use for fetching the build log
-//   - spyglassLink:    Job metadata containing the Spyglass link path
-//   - ciTypeStr:       CI type identifier
-//   - artifactBaseURL: Base URL for artifact retrieval
-//
-// Returns:
-//   - string: The zone identifier (e.g., "dal-10", "lon-06") if found, empty string if not found
-//   - error: Error if the build log cannot be fetched or HTTP request fails
-func getZone(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string) (string, error) {
-	zoneLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
-	zoneLogStr, err := getURLString(ctx, client, zoneLogURL)
-	if err != nil {
-		return "", err
-	}
-
-	zoneLogRe := regexp.MustCompile(`Acquired 1 lease\(s\) for powervs-[1-9]-quota-slice: \[([^\]]+)\]`)
-	matches := zoneLogRe.FindStringSubmatch(zoneLogStr)
-	if matches == nil {
-		return "", nil
-	}
-
-	return matches[1], nil
-}
-
-// includeWithDate checks if a CI job should be included based on date range filtering.
-// It first attempts to use the Started field present in the SpyglassLink metadata.
-// If the Started field is not present or cannot be parsed, it falls back to fetching
-// the job's started.json file.
-//
-// Parameters:
-//   - ctx:             Context for cancellation and timeout control
-//   - client:          HTTP client to use for fetching metadata
-//   - afterDt:         Start of date range (inclusive)
-//   - beforeDt:        End of date range (inclusive)
-//   - spyglassLink:    Job metadata containing the Spyglass link path and optional Started time
-//   - artifactBaseURL: Base URL for artifact retrieval
-//
-// Returns:
-//   - bool: true if job falls within date range, false otherwise
-//   - error: Error if date cannot be determined or parsed
-func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt time.Time, spyglassLink SpyglassLink, artifactBaseURL string) (bool, error) {
+// getJobStartTime extracts the start timestamp of a CI job from metadata or started.json.
+func getJobStartTime(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, artifactBaseURL string) (time.Time, error) {
 	if spyglassLink.Started != "" {
 		if startedDt, err := time.Parse(time.RFC3339, spyglassLink.Started); err == nil {
-			startedDt = startedDt.UTC()
-			return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+			return startedDt.UTC(), nil
 		}
 		if startedDt, err := fromISOFormat(spyglassLink.Started); err == nil {
-			return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+			return startedDt, nil
 		}
 	}
 
 	if spyglassLink.SpyglassLink == "" {
-		return false, fmt.Errorf("empty spyglass link")
+		return time.Time{}, fmt.Errorf("empty spyglass link")
 	}
 
-	if len(spyglassLink.SpyglassLink) < 8 {
-		return false, fmt.Errorf("invalid spyglass link format")
-	}
-
-	startedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/started.json"
+	startedURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/started.json"
 	startedStr, err := getURLString(ctx, client, startedURL)
 	if err != nil {
-		return false, fmt.Errorf("failed to fetch started.json: %w", err)
+		return time.Time{}, fmt.Errorf("failed to fetch started.json: %w", err)
 	}
 
 	var startedJSON StartedJSON
 	if err := json.Unmarshal([]byte(startedStr), &startedJSON); err != nil {
-		return false, fmt.Errorf("%w: %v", ErrParseJSON, err)
+		return time.Time{}, fmt.Errorf("%w: %v", ErrParseJSON, err)
 	}
 
 	if startedJSON.Timestamp <= 0 {
-		return false, fmt.Errorf("invalid timestamp: %d", startedJSON.Timestamp)
+		return time.Time{}, fmt.Errorf("invalid timestamp: %d", startedJSON.Timestamp)
 	}
 
-	startedDt := time.Unix(startedJSON.Timestamp, 0).UTC()
-	return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+	return time.Unix(startedJSON.Timestamp, 0).UTC(), nil
+}
+
+// includeWithDate checks if a CI job should be included based on date range filtering.
+// It returns:
+//   - bool: true if the job is included in the date range
+//   - bool: true if the job started strictly before afterDt (indicating pagination can stop)
+//   - error: Error if start date cannot be determined
+func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt time.Time, spyglassLink SpyglassLink, artifactBaseURL string) (bool, bool, error) {
+	startedDt, err := getJobStartTime(ctx, client, spyglassLink, artifactBaseURL)
+	if err != nil {
+		return false, false, err
+	}
+
+	isOlderThanAfter := !afterDt.IsZero() && startedDt.Before(afterDt)
+	included := (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt)
+
+	return included, isOlderThanAfter, nil
 }
 
 // CiType represents the type of CI (Continuous Integration) environment being used.
@@ -682,9 +667,9 @@ const (
 //   - CI_TYPE_POWERVS if the string contains "-powervs-"
 //   - CI_TYPE_UNKNOWN if no recognized platform marker is found
 func getCiType(ciTypeStr string) CiType {
-	if strings.Contains(ciTypeStr, "-powervc-") {
+	if strings.Contains(ciTypeStr, "-powervc-") || strings.Contains(ciTypeStr, "-powervc") {
 		return CI_TYPE_POWERVC
-	} else if strings.Contains(ciTypeStr, "-powervs-") {
+	} else if strings.Contains(ciTypeStr, "-powervs-") || strings.Contains(ciTypeStr, "-powervs") {
 		return CI_TYPE_POWERVS
 	} else {
 		return CI_TYPE_UNKNOWN
@@ -717,7 +702,7 @@ func getCiStepName(ciType CiType, stepPhase int) (string, error) {
 			},
 			CI_TYPE_POWERVS: {
 				"/ipi-conf-powervs",
-				"/ipi-install-powervc-install",
+				"/ipi-install-powervs-install",
 				"/openshift-e2e-libvirt-test",
 			},
 		}
@@ -769,7 +754,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf name: %w", err)
 	}
 
-	finishedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
+	finishedURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &confFinished); err != nil {
@@ -782,14 +767,13 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, nil
 	}
 
-	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
+	buildLogURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf log: %w", err)
 	}
 
-	imageExistsRe := regexp.MustCompile(`ERROR: RHCOS image '(.*)' not found in PowerVC cloud`)
-	matches := imageExistsRe.FindStringSubmatch(buildLogStr)
+	matches := reImageNotFound.FindStringSubmatch(buildLogStr)
 
 	if len(matches) >= 2 {
 		confSummaryStr = "FAILURE: conf failed!"
@@ -836,7 +820,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch install name: %w", err)
 	}
 
-	finishedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
+	finishedURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &buildFinished); err != nil {
@@ -849,14 +833,13 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, nil
 	}
 
-	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
+	buildLogURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch build log: %w", err)
 	}
 
-	createClusterRe := regexp.MustCompile(`(?s)8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n(.*?)8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n`)
-	matches := createClusterRe.FindStringSubmatch(buildLogStr)
+	matches := reCreateCluster.FindStringSubmatch(buildLogStr)
 	if len(matches) >= 2 {
 		buildSummaryStr = "FAILURE: create cluster failed!"
 		buildDetailsStr = matches[1]
@@ -900,21 +883,20 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test name: %w", err)
 	}
 
-	junitDirURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/"
+	junitDirURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/"
 	junitDirStr, err := getURLString(ctx, client, junitDirURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch junit directory: %w", err)
 	}
 
-	filenameRe := regexp.MustCompile(`test-failures-summary_[^.]*\.json`)
-	matches := filenameRe.FindStringSubmatch(junitDirStr)
+	matches := reTestFailures.FindStringSubmatch(junitDirStr)
 	if len(matches) == 0 {
 		testSummaryStr = "INFO: No test failure summary found (test suite may have been skipped or aborted)"
 		return testSummaryStr, testDetailsStr, nil
 	}
 
 	testFailureFilename := matches[0]
-	junitURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/" + testFailureFilename
+	junitURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/" + testFailureFilename
 	junitStr, err := getURLString(ctx, client, junitURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test failures: %w", err)
@@ -930,9 +912,12 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		ciStats.GreenRuns++
 	} else {
 		testSummaryStr = "FAILURE: Failing tests:"
+		var sb strings.Builder
 		for _, test := range testFailureSummary.Tests {
-			testDetailsStr += test.Test.Name + "\n"
+			sb.WriteString(test.Test.Name)
+			sb.WriteByte('\n')
 		}
+		testDetailsStr = sb.String()
 	}
 
 	return testSummaryStr, testDetailsStr, nil
@@ -978,6 +963,7 @@ func encodeString(input string) string {
 type jobRunData struct {
 	jobURL           string
 	included         bool
+	isOlderThanAfter bool
 	confFinished     ConfFinished
 	confSummaryStr   string
 	confDetailsStr   string
@@ -998,7 +984,8 @@ func processSingleJob(ctx context.Context, client *HTTPClient, args *Args, spygl
 		jobURL: "https://prow.ci.openshift.org" + spyglassLink.SpyglassLink,
 	}
 
-	include, err := includeWithDate(ctx, client, afterDt, beforeDt, spyglassLink, artifactBaseURL)
+	include, isOlder, err := includeWithDate(ctx, client, afterDt, beforeDt, spyglassLink, artifactBaseURL)
+	data.isOlderThanAfter = isOlder
 	if err != nil {
 		errStr := err.Error()
 		if !strings.Contains(errStr, "status code 404") &&
@@ -1105,8 +1092,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 	ciStr := urlStr[idx+1:]
 
 	// Extract CI version (e.g., "4.12", "5.0") and type (e.g., "powervc-1") from job name
-	ciInfoRe := regexp.MustCompile(`([^0-9].*)-([0-9]+\.[0-9]+)-(.*)`)
-	matches := ciInfoRe.FindStringSubmatch(ciStr)
+	matches := reCIInfo.FindStringSubmatch(ciStr)
 	if len(matches) < 4 {
 		return fmt.Errorf("failed to parse CI string: %s", ciStr)
 	}
@@ -1130,6 +1116,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 		}
 
 		processedAny := false // Track if we processed any jobs on this page
+		reachedOlderJobs := false // Track if we encountered jobs older than afterDt
 
 		resp, err := client.Get(ctx, urlStr)
 		if err != nil {
@@ -1161,8 +1148,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 				return
 			}
 
-			tableRe := regexp.MustCompile(`var allBuilds = (\[[^\]]+\]);`)
-			matches := tableRe.FindStringSubmatch(scriptText)
+			matches := reAllBuilds.FindStringSubmatch(scriptText)
 			if len(matches) < 2 {
 				return
 			}
@@ -1175,7 +1161,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 
 			// Process jobs concurrently with bounded concurrency worker pool
 			results := make([]jobRunData, len(spyglassLinks))
-			sem := make(chan struct{}, maxConcurrentJobs)
+			sem := make(chan struct{}, args.Concurrency)
 			var wg sync.WaitGroup
 
 			for i, link := range spyglassLinks {
@@ -1201,6 +1187,10 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 				default:
 				}
 
+				if res.isOlderThanAfter {
+					reachedOlderJobs = true
+				}
+
 				if res.err != nil {
 					fmt.Fprintf(infoFp, "WARN: %v\n", res.err)
 					continue
@@ -1213,9 +1203,9 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 				processedAny = true
 				ciStats.NumDeploys++
 
-				// Print job header
+				// Print job header with progress counter
 				fmt.Fprintf(infoFp, "INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
-				fmt.Fprintf(infoFp, "INFO: URL:  %s\n", res.jobURL)
+				fmt.Fprintf(infoFp, "INFO: [Job %d] URL:  %s\n", ciStats.NumDeploys, res.jobURL)
 
 				// Output conf results unless user only wants test status
 				if !args.TestStatusOnly && !args.CSV {
@@ -1273,6 +1263,11 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 			}
 		})
 
+		// Early termination: stop pagination if all remaining jobs are older than afterDt
+		if reachedOlderJobs {
+			break
+		}
+
 		// Stop pagination if no "Older Runs" link exists
 		if olderHref == "" {
 			break
@@ -1298,6 +1293,7 @@ type Args struct {
 	BeforeStr        string    // End date for filtering jobs (ISO 8601 format)
 	AfterDt          time.Time // Parsed start date (set by parseAndValidateArgs)
 	BeforeDt         time.Time // Parsed end date (set by parseAndValidateArgs)
+	Concurrency      int       // Number of concurrent workers (default: 8)
 	CSV              bool      // Enable CSV output format
 	DeployStatusOnly bool      // Only report deployment status (skip test results)
 	LastNDays        int       // Filter to last N days (alternative to AfterStr/BeforeStr)
@@ -1343,8 +1339,8 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (private bucket)\n")
 		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-...\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output\n")
-		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 --csv --output results.csv <URL>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output and 12 workers\n")
+		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 -j 12 --csv --output results.csv <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Note: All options must be specified before the URL(s).\n")
 	}
 
@@ -1353,6 +1349,8 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	flag.StringVar(&args.AfterStr, "a", "", "Only queries after this date (shorthand)")
 	flag.StringVar(&args.BeforeStr, "before-date", "", "Only queries before this date (ISO 8601 format)")
 	flag.StringVar(&args.BeforeStr, "b", "", "Only queries before this date (shorthand)")
+	flag.IntVar(&args.Concurrency, "concurrency", defaultMaxConcurrency, "Number of concurrent workers for artifact fetching (1-32)")
+	flag.IntVar(&args.Concurrency, "j", defaultMaxConcurrency, "Number of concurrent workers for artifact fetching (shorthand)")
 	flag.BoolVar(&args.CSV, "csv", false, "Output in CSV format")
 	flag.BoolVar(&args.CSV, "c", false, "Output in CSV format (shorthand)")
 	flag.BoolVar(&args.DeployStatusOnly, "deploy-status-only", false, "Only show deploy failures")
@@ -1375,6 +1373,13 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	if *showVersion {
 		fmt.Printf("Program version is %v, release = %v\n", version, release)
 		os.Exit(0)
+	}
+
+	// Validate concurrency
+	if args.Concurrency <= 0 {
+		args.Concurrency = defaultMaxConcurrency
+	} else if args.Concurrency > 32 {
+		args.Concurrency = 32
 	}
 
 	// Collect positional arguments as URLs
@@ -1475,6 +1480,7 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 //   - Date range filtering (--after-date, --before-date, --today, --yesterday, --last-n-days)
 //   - Output format options (--csv, --output)
 //   - Result filtering (--deploy-status-only, --test-status-only)
+//   - Concurrency control (-j, --concurrency)
 //
 // Exit codes:
 //   - 0: Success
@@ -1506,7 +1512,12 @@ func main() {
 	var csvWriter *csv.Writer
 	if args.CSV {
 		csvWriter = csv.NewWriter(outputFp)
-		defer csvWriter.Flush()
+		defer func() {
+			csvWriter.Flush()
+			if err := csvWriter.Error(); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: Failed to flush CSV output: %v\n", err)
+			}
+		}()
 		// Write CSV header (removed Zone column)
 		if err := csvWriter.Write([]string{
 			"Job URL",
@@ -1523,25 +1534,43 @@ func main() {
 	// Initialize statistics tracker
 	ciStats := &CIStats{}
 
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Create context with graceful signal handling (Ctrl+C / SIGINT / SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Process each URL
 	for _, urlStr := range args.URLs {
+		if ctx.Err() != nil {
+			break
+		}
 		// Process this URL
 		if err := processURL(ctx, args, ciStats, urlStr, afterDt, beforeDt, csvWriter); err != nil {
+			if errors.Is(err, context.Canceled) {
+				fmt.Fprintln(infoFp, "\nINFO: Operation canceled by user.")
+				break
+			}
 			fmt.Fprintf(infoFp, "ERROR: Failed to process URL %s: %v\n", urlStr, err)
 		}
 	}
 
-	// Print final summary statistics
+	// Print final summary statistics with percentages
 	fmt.Fprintln(infoFp, "Finished")
-	if !args.TestStatusOnly {
-		fmt.Fprintf(infoFp, "%d/%d deploys succeeded\n", ciStats.DeploysSucceeded, ciStats.NumDeploys)
-	}
-	if !args.DeployStatusOnly {
-		fmt.Fprintf(infoFp, "%d/%d e2e green runs\n", ciStats.GreenRuns, ciStats.NumDeploys)
+	if ciStats.NumDeploys > 0 {
+		if !args.TestStatusOnly {
+			pct := float64(ciStats.DeploysSucceeded) / float64(ciStats.NumDeploys) * 100.0
+			fmt.Fprintf(infoFp, "%d/%d deploys succeeded (%.1f%%)\n", ciStats.DeploysSucceeded, ciStats.NumDeploys, pct)
+		}
+		if !args.DeployStatusOnly {
+			pct := float64(ciStats.GreenRuns) / float64(ciStats.NumDeploys) * 100.0
+			fmt.Fprintf(infoFp, "%d/%d e2e green runs (%.1f%%)\n", ciStats.GreenRuns, ciStats.NumDeploys, pct)
+		}
+	} else {
+		if !args.TestStatusOnly {
+			fmt.Fprintf(infoFp, "%d/%d deploys succeeded\n", ciStats.DeploysSucceeded, ciStats.NumDeploys)
+		}
+		if !args.DeployStatusOnly {
+			fmt.Fprintf(infoFp, "%d/%d e2e green runs\n", ciStats.GreenRuns, ciStats.NumDeploys)
+		}
 	}
 }
 
