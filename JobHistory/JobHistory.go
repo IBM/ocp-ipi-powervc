@@ -1062,12 +1062,12 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 		fmt.Fprintf(os.Stderr, "Analyze OpenShift CI job history from Prow for PowerVC deployments.\n\n")
 		fmt.Fprintf(os.Stderr, "Required Arguments:\n")
 		fmt.Fprintf(os.Stderr, "  URL    One or more Prow job history URLs to analyze\n")
-		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>\n\n")
+		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/<job-name>\n\n")
 		fmt.Fprintf(os.Stderr, "Options (must be specified BEFORE URLs):\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs\n")
-		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output\n")
 		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 --csv --output results.csv <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Note: All options must be specified before the URL(s).\n")
@@ -1123,8 +1123,8 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 		}
 
 		// Validate URL format
-		if !strings.Contains(url, "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/") {
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("ERROR: Invalid CI URL format: %s\nExpected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>", url)
+		if !strings.Contains(url, "https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/") {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("ERROR: Invalid CI URL format: %s\nExpected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/<job-name>", url)
 		}
 
 		if ciType := getCiType(url); ciType == CI_TYPE_UNKNOWN {
