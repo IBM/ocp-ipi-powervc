@@ -15,6 +15,53 @@
 // Package main provides a tool for analyzing OpenShift CI job history from Prow.
 // It fetches job data, parses build logs, and generates reports on deployment
 // success rates and test failures for PowerVC-based CI runs.
+//
+// # Bucket Options and Authentication
+//
+// The tool supports both public and private GCS bucket URLs dynamically:
+//
+//  1. Public buckets (no authentication required):
+//     - Any bucket ending in "-public" (e.g. test-platform-results-public) or origin-ci-test
+//     - Format: https://prow.ci.openshift.org/job-history/gs/<bucket>/logs/<job-name>
+//     - Artifacts are fetched anonymously from gcs.ci.openshift.org.
+//
+//  2. Private buckets (authentication required):
+//     - Other buckets (e.g. test-platform-results)
+//     - Format: https://prow.ci.openshift.org/job-history/gs/<bucket>/logs/<job-name>
+//     - Artifacts are fetched from storage.googleapis.com.
+//
+//     Two separate credentials are required for private buckets:
+//
+//     a. OCP Bearer token — for prow.ci.openshift.org (job history pages).
+//        Obtain with:  oc whoami -t
+//        Export as:    OCP_CI_TOKEN=<token>  or  OCP_CI_TOKEN_FILE=<path>
+//
+//     b. Google ADC credential — for storage.googleapis.com (CI build artifacts).
+//        Uses Application Default Credentials (ADC) loaded by newGCSTokenSource.
+//        One-time setup:
+//          gcloud auth application-default login \
+//            --scopes=https://www.googleapis.com/auth/devstorage.read_only,\
+//                    https://www.googleapis.com/auth/cloud-platform
+//
+// # GCS access: known IAM restriction
+//
+// The GCS bucket "test-platform-results" is owned by the OpenShift CI team and
+// is NOT publicly readable. Access requires the IAM role
+// "roles/storage.objectViewer" on the bucket for your Google account.
+//
+// As of the time of writing, personal Red Hat Google accounts (@redhat.com) do
+// NOT have this permission and receive HTTP 403 from storage.googleapis.com.
+//
+// To gain access, ask the OpenShift CI team (Slack: #forum-ocp-testplatform) to
+// grant storage.objectViewer on the test-platform-results bucket to either:
+//   - your individual account (e.g. mhamzy@redhat.com), or
+//   - the group/domain redhat.com (grants all Red Hat employees read access).
+//
+// The IAM binding they need to add is:
+//
+//	gcloud storage buckets add-iam-policy-binding gs://test-platform-results \
+//	  --member=user:mhamzy@redhat.com \
+//	  --role=roles/storage.objectViewer
 package main
 
 import (
@@ -33,9 +80,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 var (
@@ -48,12 +98,27 @@ var (
 	release = "undefined"
 )
 
-// HTTP client configuration constants
+// HTTP client and concurrency configuration constants
 const (
 	defaultHTTPTimeout = 30 * time.Second
 	maxRetries         = 3
-	retryDelay         = 2 * time.Second
+	retryDelay         = 1 * time.Second
+	maxConcurrentJobs  = 8
 )
+
+// Artifact endpoints
+const (
+	publicArtifactBase  = "https://gcs.ci.openshift.org/gcs"
+	privateArtifactBase = "https://storage.googleapis.com"
+
+	gcsHost    = "storage.googleapis.com"
+	gcswebHost = "gcs.ci.openshift.org"
+)
+
+// prowHosts are hosts that receive the OCP Bearer token if configured.
+var prowHosts = map[string]struct{}{
+	"prow.ci.openshift.org": {},
+}
 
 // Global file handles for output streams
 var (
@@ -83,7 +148,7 @@ type CIStats struct {
 type SpyglassLink struct {
 	SpyglassLink string      `json:"SpyglassLink"` // Relative URL path to the Spyglass job viewer
 	ID           string      `json:"ID"`           // Unique job identifier
-	Started      string      `json:"Started"`      // Human-readable start time
+	Started      string      `json:"Started"`      // Human-readable start time (RFC3339)
 	Duration     int64       `json:"Duration"`     // Job duration in seconds
 	Result       string      `json:"Result"`       // Overall job result (SUCCESS, FAILURE, etc.)
 	Refs         interface{} `json:"Refs"`         // Git references (branch, PR info)
@@ -117,37 +182,123 @@ type TestFailureSummary struct {
 	} `json:"Tests"` // Array of failed test entries
 }
 
-// HTTPClient wraps http.Client with context support and retry logic
+// HTTPClient wraps http.Client with context support, credentials, and retry logic
 type HTTPClient struct {
-	client *http.Client
+	client         *http.Client
+	bearerToken    string             // OCP Bearer token for prow.ci.openshift.org (if required)
+	gcsTokenSource oauth2.TokenSource // ADC token source for storage.googleapis.com (if required)
+}
+
+// readCIToken reads the OpenShift CI bearer token from the environment variable
+// OCP_CI_TOKEN or from the file specified by OCP_CI_TOKEN_FILE.
+func readCIToken() (string, error) {
+	if path := strings.TrimSpace(os.Getenv("OCP_CI_TOKEN_FILE")); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read OCP_CI_TOKEN_FILE: %w", err)
+		}
+		if token := strings.TrimSpace(string(b)); token != "" {
+			return token, nil
+		}
+	}
+
+	if token := strings.TrimSpace(os.Getenv("OCP_CI_TOKEN")); token != "" {
+		return token, nil
+	}
+
+	return "", errors.New("set OCP_CI_TOKEN_FILE or OCP_CI_TOKEN")
+}
+
+// newGCSTokenSource returns a Google OAuth2 token source using Application
+// Default Credentials (ADC). The credentials are read from the file written by:
+//
+//	gcloud auth application-default login \
+//	  --scopes=https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/cloud-platform
+//
+// Returns an error with the exact gcloud command to run if credentials are
+// not found or have expired.
+func newGCSTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
+	creds, err := google.FindDefaultCredentials(ctx,
+		"https://www.googleapis.com/auth/devstorage.read_only")
+	if err != nil {
+		return nil, fmt.Errorf(
+			"GCS credentials not found — run: gcloud auth application-default login "+
+				"--scopes=https://www.googleapis.com/auth/devstorage.read_only,"+
+				"https://www.googleapis.com/auth/cloud-platform: %w", err)
+	}
+	return creds.TokenSource, nil
 }
 
 // NewHTTPClient creates a new HTTP client configured for Prow CI interactions.
-// It initializes a cookie jar for session management and sets a default timeout
-// to prevent hanging requests. The client is suitable for making multiple
-// sequential requests to the same domain with session persistence.
+// It initializes a cookie jar for session management and sets a default timeout.
+// If isPrivate is true, it loads the OCP bearer token and Google ADC credentials
+// required for accessing private bucket artifacts.
+//
+// Parameters:
+//   - ctx: Context for credential initialization
+//   - isPrivate: Whether private bucket authentication is required
 //
 // Returns:
 //   - *HTTPClient: Configured HTTP client wrapper
-//   - error: Error if cookie jar creation fails
-func NewHTTPClient() (*HTTPClient, error) {
+//   - error: Error if credentials cannot be loaded for private access
+func NewHTTPClient(ctx context.Context, isPrivate bool) (*HTTPClient, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
+	}
+
+	var token string
+	var ts oauth2.TokenSource
+
+	if isPrivate {
+		token, err = readCIToken()
+		if err != nil {
+			return nil, err
+		}
+
+		ts, err = newGCSTokenSource(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &HTTPClient{
 		client: &http.Client{
 			Jar:     jar,
 			Timeout: defaultHTTPTimeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
+				// Prevent forwarding Authorization headers across different hosts.
+				if len(via) > 0 && req.URL.Host != via[len(via)-1].URL.Host {
+					if req.Header.Get("Authorization") != "" {
+						return http.ErrUseLastResponse
+					}
+				}
+				return nil
+			},
 		},
+		bearerToken:    token,
+		gcsTokenSource: ts,
 	}, nil
 }
 
-// Get performs an HTTP GET request with context support and timeout handling.
-// It creates a new request with the provided context, allowing for cancellation
-// and deadline enforcement. The method validates the response status code and
-// automatically closes the response body on error.
+// isRetryableStatusCode returns true if the HTTP response status code indicates
+// a transient error suitable for automatic retry.
+func isRetryableStatusCode(code int) bool {
+	return code == http.StatusTooManyRequests || // 429
+		code == http.StatusBadGateway || // 502
+		code == http.StatusServiceUnavailable || // 503
+		code == http.StatusGatewayTimeout // 504
+}
+
+// Get performs an HTTP GET request with context support, transient error retry,
+// and timeout handling.
+// It sets authorization headers when appropriate:
+//   - For prow.ci.openshift.org: sends Bearer token if configured
+//   - For storage.googleapis.com: fetches short-lived ADC access token and sends Bearer token
+//   - For gcsweb proxy or public endpoints: makes unauthenticated request
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -157,28 +308,128 @@ func NewHTTPClient() (*HTTPClient, error) {
 //   - *http.Response: HTTP response (caller must close Body)
 //   - error: ErrHTTPRequest if request fails or status is not 200 OK
 func (c *HTTPClient) Get(ctx context.Context, urlStr string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	parsed, err := url.Parse(urlStr)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
 	}
 
-	resp, err := c.client.Do(req)
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, fmt.Errorf("%w: invalid scheme %s", ErrHTTPRequest, parsed.Scheme)
+	}
+
+	host := parsed.Hostname()
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
+		}
+
+		if _, ok := prowHosts[host]; ok {
+			if c.bearerToken != "" {
+				if parsed.Scheme != "https" {
+					return nil, fmt.Errorf("%w: refusing to send credentials over %s", ErrHTTPRequest, parsed.Scheme)
+				}
+				req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+			}
+		} else if host == gcsHost {
+			if parsed.Scheme != "https" {
+				return nil, fmt.Errorf("%w: refusing to send credentials over %s", ErrHTTPRequest, parsed.Scheme)
+			}
+			if c.gcsTokenSource == nil {
+				return nil, fmt.Errorf("%w: GCS token source not initialized for %s", ErrHTTPRequest, host)
+			}
+			tok, err := c.gcsTokenSource.Token()
+			if err != nil {
+				return nil, fmt.Errorf("%w: failed to get GCS token: %v", ErrHTTPRequest, err)
+			}
+			req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+		}
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			if attempt < maxRetries-1 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(retryDelay * time.Duration(1<<attempt)):
+					continue
+				}
+			}
+			return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
+		}
+
+		if isRetryableStatusCode(resp.StatusCode) && attempt < maxRetries-1 {
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelay * time.Duration(1<<attempt)):
+				continue
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("%w: status code %d", ErrHTTPRequest, resp.StatusCode)
+		}
+
+		return resp, nil
+	}
+
+	return nil, ErrHTTPRequest
+}
+
+// parseJobHistoryURL parses a Prow job history URL and extracts the bucket name and job name.
+// Expected path format: /job-history/gs/<bucket-name>/logs/<job-name>
+func parseJobHistoryURL(urlStr string) (bucket string, jobName string, err error) {
+	urlStr = strings.TrimSuffix(urlStr, "/")
+	parsed, err := url.Parse(urlStr)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrHTTPRequest, err)
+		return "", "", fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("%w: status code %d", ErrHTTPRequest, resp.StatusCode)
+	parts := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
+	if len(parts) >= 4 && parts[0] == "job-history" && parts[1] == "gs" && parts[3] == "logs" {
+		bucket = parts[2]
+		jobName = strings.Join(parts[4:], "/")
+		return bucket, jobName, nil
 	}
 
-	return resp, nil
+	return "", "", fmt.Errorf("invalid CI URL path: %s (expected /job-history/gs/<bucket>/logs/<job-name>)", parsed.Path)
+}
+
+// isPublicBucket dynamically determines if a GCS bucket is public based on its name.
+// Any bucket ending in "-public" or named "origin-ci-test" is treated as public.
+func isPublicBucket(bucket string) bool {
+	return strings.HasSuffix(bucket, "-public") || bucket == "origin-ci-test"
+}
+
+// isPrivateURL checks whether the URL points to a private GCS bucket requiring authentication.
+func isPrivateURL(urlStr string) bool {
+	bucket, _, err := parseJobHistoryURL(urlStr)
+	if err != nil {
+		return false
+	}
+	return !isPublicBucket(bucket)
+}
+
+// getArtifactBaseURL returns the base artifact URL for the given job history URL.
+func getArtifactBaseURL(urlStr string) string {
+	bucket, _, err := parseJobHistoryURL(urlStr)
+	if err != nil || isPublicBucket(bucket) {
+		return publicArtifactBase
+	}
+	return privateArtifactBase
 }
 
 // getURLString fetches content from the specified URL and returns it as a string.
 // It handles HTTP compression (gzip, deflate) and sanitizes invalid UTF-8 characters
-// that may appear in CI logs. The function validates the URL before making the request
-// and properly handles compressed response bodies.
+// that may appear in CI logs.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -188,9 +439,6 @@ func (c *HTTPClient) Get(ctx context.Context, urlStr string) (*http.Response, er
 // Returns:
 //   - string: Response body as a sanitized UTF-8 string
 //   - error: ErrInvalidURL if URL is malformed, or HTTP/decompression errors
-//
-// The function replaces invalid UTF-8 characters (\x80-\x83) with spaces to
-// prevent encoding issues when parsing CI logs.
 func getURLString(ctx context.Context, client *HTTPClient, urlStr string) (string, error) {
 	if err := validateURL(urlStr); err != nil {
 		return "", err
@@ -219,7 +467,6 @@ func getURLString(ctx context.Context, client *HTTPClient, urlStr string) (strin
 
 // validateURL checks if the URL is valid and properly formatted.
 // It ensures the URL is not empty, can be parsed, and uses HTTP/HTTPS scheme.
-// This validation helps catch configuration errors early before making requests.
 //
 // Parameters:
 //   - urlStr: URL string to validate
@@ -253,8 +500,6 @@ func validateURL(urlStr string) error {
 // Returns:
 //   - []byte: Decompressed response body
 //   - error: Error if decompression fails or encoding is unknown
-//
-// Supported encodings: gzip, x-gzip, deflate, or uncompressed (empty encoding)
 func getData(resp *http.Response) ([]byte, error) {
 	encoding := resp.Header.Get("Content-Encoding")
 
@@ -293,23 +538,18 @@ func getData(resp *http.Response) ([]byte, error) {
 // error is present it extracts the names of every pod that is reported as
 // failed inside the error message.
 //
-// The error block in the log looks like:
-//
-//	ERRO Some steps failed:
-//	ERRO
-//	  * could not run steps: step <step> failed: ["..." pod "pod-name" failed: ...]
-//
 // Parameters:
-//   - ctx:          Context for cancellation and timeout control
-//   - client:       HTTP client to use for fetching the build log
-//   - spyglassLink: Job metadata containing the Spyglass link path
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching the build log
+//   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - bool:     true if the "could not run steps" error was detected
 //   - []string: deduplicated list of pod names that are reported as failed
 //   - error:    error if the build log cannot be fetched
-func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink) (bool, []string, error) {
-	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
+func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, artifactBaseURL string) (bool, []string, error) {
+	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return false, nil, err
@@ -338,32 +578,20 @@ func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLin
 
 // getZone extracts the PowerVS zone identifier from a CI job's build log.
 // It parses the build-log.txt file to find the lease acquisition message that
-// indicates which PowerVS zone was allocated for the test run. This information
-// is useful for tracking which zones are being used and correlating failures
-// with specific infrastructure locations.
-//
-// The function searches for a log line matching the pattern:
-//   "Acquired 1 lease(s) for powervs-[1-9]-quota-slice: [zone-name]"
-//
-// For example, if the log contains:
-//   "Acquired 1 lease(s) for powervs-1-quota-slice: [dal-10]"
-// The function will return "dal-10".
+// indicates which PowerVS zone was allocated for the test run.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - client: HTTP client to use for fetching the build log
-//   - spyglassLink: Job metadata containing the Spyglass link path to construct the log URL
-//   - ciTypeStr: CI type identifier (currently unused, reserved for future use)
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching the build log
+//   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - ciTypeStr:       CI type identifier
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - string: The zone identifier (e.g., "dal-10", "lon-06") if found, empty string if not found
 //   - error: Error if the build log cannot be fetched or HTTP request fails
-//
-// Note: This function returns an empty string (not an error) if the lease acquisition
-// pattern is not found in the log, which may occur for jobs that failed before
-// acquiring a zone lease or for non-PowerVS CI jobs.
-func getZone(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (string, error) {
-	zoneLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
+func getZone(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string) (string, error) {
+	zoneLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/build-log.txt"
 	zoneLogStr, err := getURLString(ctx, client, zoneLogURL)
 	if err != nil {
 		return "", err
@@ -379,21 +607,32 @@ func getZone(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink,
 }
 
 // includeWithDate checks if a CI job should be included based on date range filtering.
-// It fetches the job's started.json file to determine when the job began, then compares
-// this timestamp against the specified date range. Jobs without valid started.json files
-// (incomplete or failed jobs) will return an error.
+// It first attempts to use the Started field present in the SpyglassLink metadata.
+// If the Started field is not present or cannot be parsed, it falls back to fetching
+// the job's started.json file.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - client: HTTP client to use for fetching metadata
-//   - afterDt: Start of date range (inclusive)
-//   - beforeDt: End of date range (inclusive)
-//   - spyglassLink: Job metadata containing the Spyglass link path
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching metadata
+//   - afterDt:         Start of date range (inclusive)
+//   - beforeDt:        End of date range (inclusive)
+//   - spyglassLink:    Job metadata containing the Spyglass link path and optional Started time
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - bool: true if job falls within date range, false otherwise
-//   - error: Error if started.json cannot be fetched or parsed, or if link is invalid
-func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt time.Time, spyglassLink SpyglassLink) (bool, error) {
+//   - error: Error if date cannot be determined or parsed
+func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt time.Time, spyglassLink SpyglassLink, artifactBaseURL string) (bool, error) {
+	if spyglassLink.Started != "" {
+		if startedDt, err := time.Parse(time.RFC3339, spyglassLink.Started); err == nil {
+			startedDt = startedDt.UTC()
+			return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+		}
+		if startedDt, err := fromISOFormat(spyglassLink.Started); err == nil {
+			return (startedDt.After(afterDt) && startedDt.Before(beforeDt)) || startedDt.Equal(afterDt) || startedDt.Equal(beforeDt), nil
+		}
+	}
+
 	if spyglassLink.SpyglassLink == "" {
 		return false, fmt.Errorf("empty spyglass link")
 	}
@@ -402,7 +641,7 @@ func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt 
 		return false, fmt.Errorf("invalid spyglass link format")
 	}
 
-	startedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/started.json"
+	startedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/started.json"
 	startedStr, err := getURLString(ctx, client, startedURL)
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch started.json: %w", err)
@@ -427,8 +666,6 @@ func includeWithDate(ctx context.Context, client *HTTPClient, afterDt, beforeDt 
 type CiType int
 
 // CI type constants define the supported cloud infrastructure platforms.
-// These values are used to identify which platform-specific logic should be applied
-// during CI pipeline execution.
 const (
 	CI_TYPE_UNKNOWN CiType = iota // Unknown or unsupported CI type (value: 0)
 	CI_TYPE_POWERVC               // PowerVC cloud infrastructure platform (value: 1)
@@ -436,12 +673,9 @@ const (
 )
 
 // getCiType determines the CI type from a string identifier.
-// It examines the input string for platform-specific markers to identify
-// which cloud infrastructure platform is being used.
 //
 // Parameters:
 //   - ciTypeStr: A string containing the CI type identifier, typically from a job name
-//     or configuration that includes platform markers like "-powervc-" or "-powervs-"
 //
 // Returns:
 //   - CI_TYPE_POWERVC if the string contains "-powervc-"
@@ -458,8 +692,6 @@ func getCiType(ciTypeStr string) CiType {
 }
 
 // CI step phase constants define the different phases of a CI pipeline execution.
-// These constants are used with getCiStepName to retrieve the appropriate step name
-// for a given CI type and phase.
 const (
 	CI_STEP_CONF    = iota // Configuration phase (value: 0) - cluster configuration setup
 	CI_STEP_INSTALL        // Installation phase (value: 1) - OpenShift installation
@@ -467,20 +699,9 @@ const (
 )
 
 // getCiStepName returns the CI step name for a given CI type and step phase.
-// It maps CI types (PowerVC or PowerVS) to their corresponding step names
-// for different phases of the CI pipeline (configuration, installation, testing).
-//
-// The function supports two CI types:
-//   - PowerVC: Identified by "-powervc-" in the CI type string
-//   - PowerVS: Identified by "-powervs-" in the CI type string
-//
-// Step phases are defined as constants:
-//   - CI_STEP_CONF (0): Configuration phase ("/ipi-conf-powervc" or "/ipi-conf-powervs")
-//   - CI_STEP_INSTALL (1): Installation phase ("/ipi-install-powervc-install")
-//   - CI_STEP_TEST (2): Testing phase ("/openshift-e2e-libvirt-test")
 //
 // Parameters:
-//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
+//   - ciType: CI type enum value (PowerVC or PowerVS)
 //   - stepPhase: Phase constant (CI_STEP_CONF, CI_STEP_INSTALL, or CI_STEP_TEST)
 //
 // Returns:
@@ -488,7 +709,7 @@ const (
 //   - error: Error if stepPhase is out of range or CI type is not recognized
 func getCiStepName(ciType CiType, stepPhase int) (string, error) {
 	var (
-		ciStepName = map[CiType][]string {
+		ciStepName = map[CiType][]string{
 			CI_TYPE_POWERVC: {
 				"/ipi-conf-powervc",
 				"/ipi-install-powervc-install",
@@ -503,33 +724,33 @@ func getCiStepName(ciType CiType, stepPhase int) (string, error) {
 	)
 
 	if stepPhase < CI_STEP_CONF || stepPhase > CI_STEP_TEST {
-		return "", fmt.Errorf("Unknown step phase %d", stepPhase)
+		return "", fmt.Errorf("unknown step phase %d", stepPhase)
 	}
 
 	if ciType <= CI_TYPE_UNKNOWN || ciType > CI_TYPE_POWERVS {
-		return "", fmt.Errorf("Unknown CI type %d", ciType)
+		return "", fmt.Errorf("unknown CI type %d", ciType)
 	}
 
 	return ciStepName[ciType][stepPhase], nil
 }
 
 // gatherConfRun gathers build/conf information for a CI job.
-// It fetches the finished.json file to determine if the cluster configuration succeeded,
-// and if it failed, extracts the failure details from the build log. The function
-// looks for specific markers in the build log to extract the relevant error section.
+// It fetches finished.json to determine if cluster configuration succeeded,
+// and extracts failure details from the build log if it failed.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - client: HTTP client to use for fetching artifacts
-//   - spyglassLink: Job metadata containing the Spyglass link path
-//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching artifacts
+//   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - ciTypeStr:       CI type identifier
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - ConfFinished: Parsed finished.json with result status
 //   - string: Conf summary message (SUCCESS/FAILURE with description)
 //   - string: Detailed error output from build log (empty if successful)
 //   - error: Error if artifacts cannot be fetched or CI type is invalid
-func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (ConfFinished, string, string, error) {
+func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string) (ConfFinished, string, string, error) {
 	confFinished := ConfFinished{Result: "FAILURE"}
 	confSummaryStr := ""
 	confDetailsStr := ""
@@ -540,7 +761,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 
 	ciType := getCiType(ciTypeStr)
 	if ciType == CI_TYPE_UNKNOWN {
-		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("unknown CI type %d", ciType)
 	}
 
 	ciStepName, err := getCiStepName(ciType, CI_STEP_CONF)
@@ -548,7 +769,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf name: %w", err)
 	}
 
-	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
+	finishedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &confFinished); err != nil {
@@ -561,14 +782,12 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return confFinished, confSummaryStr, confDetailsStr, nil
 	}
 
-	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
-
+	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return confFinished, confSummaryStr, confDetailsStr, fmt.Errorf("failed to fetch conf log: %w", err)
 	}
 
-	//imageExistsRe := regexp.MustCompile(`Checking if (.*) exists in PowerVC`)
 	imageExistsRe := regexp.MustCompile(`ERROR: RHCOS image '(.*)' not found in PowerVC cloud`)
 	matches := imageExistsRe.FindStringSubmatch(buildLogStr)
 
@@ -583,22 +802,22 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 }
 
 // gatherBuildRun gathers build/deployment information for a CI job.
-// It fetches the finished.json file to determine if the cluster deployment succeeded,
-// and if it failed, extracts the failure details from the build log. The function
-// looks for specific markers in the build log to extract the relevant error section.
+// It fetches finished.json to determine if cluster deployment succeeded,
+// and extracts failure details from the build log if it failed.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - client: HTTP client to use for fetching artifacts
-//   - spyglassLink: Job metadata containing the Spyglass link path
-//   - ciTypeStr: CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching artifacts
+//   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - ciTypeStr:       CI type identifier
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - BuildFinished: Parsed finished.json with result status
 //   - string: Build summary message (SUCCESS/FAILURE with description)
 //   - string: Detailed error output from build log (empty if successful)
 //   - error: Error if artifacts cannot be fetched or CI type is invalid
-func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string) (BuildFinished, string, string, error) {
+func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string) (BuildFinished, string, string, error) {
 	buildFinished := BuildFinished{Result: "FAILURE"}
 	buildSummaryStr := ""
 	buildDetailsStr := ""
@@ -609,7 +828,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 
 	ciType := getCiType(ciTypeStr)
 	if ciType == CI_TYPE_UNKNOWN {
-		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("unknown CI type %d", ciType)
 	}
 
 	ciStepName, err := getCiStepName(ciType, CI_STEP_INSTALL)
@@ -617,7 +836,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch install name: %w", err)
 	}
 
-	finishedURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
+	finishedURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/finished.json"
 	finishedStr, err := getURLString(ctx, client, finishedURL)
 	if err == nil && !strings.Contains(finishedStr, "<!doctype html>") {
 		if err := json.Unmarshal([]byte(finishedStr), &buildFinished); err != nil {
@@ -630,7 +849,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 		return buildFinished, buildSummaryStr, buildDetailsStr, nil
 	}
 
-	buildLogURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
+	buildLogURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
 		return buildFinished, buildSummaryStr, buildDetailsStr, fmt.Errorf("failed to fetch build log: %w", err)
@@ -649,23 +868,21 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 }
 
 // gatherTestRun gathers test execution results for a CI job.
-// It fetches the test-failures-summary JSON file from the junit artifacts directory
-// to determine which tests failed. If all tests passed, it increments the green runs
-// counter in the statistics. The function searches for the summary file using a regex
-// pattern since the filename includes a timestamp.
+// It fetches test-failures-summary JSON from the junit artifacts directory.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - client: HTTP client to use for fetching artifacts
-//   - spyglassLink: Job metadata containing the Spyglass link path
-//   - ciTypeStr: CI type identifier for constructing artifact paths
-//   - ciStats: Statistics tracker to update (increments GreenRuns on success)
+//   - ctx:             Context for cancellation and timeout control
+//   - client:          HTTP client to use for fetching artifacts
+//   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - ciTypeStr:       CI type identifier
+//   - ciStats:         Statistics tracker to update
+//   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
-//   - string: Test summary message (SUCCESS/FAILURE/ERROR with description)
-//   - string: Detailed list of failed test names (empty if all passed)
+//   - string: Test summary message (SUCCESS/FAILURE/INFO with description)
+//   - string: Detailed list of failed test names (empty if all passed or skipped)
 //   - error: Error if artifacts cannot be fetched or CI type is invalid
-func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, ciStats *CIStats) (string, string, error) {
+func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, ciStats *CIStats, artifactBaseURL string) (string, string, error) {
 	testSummaryStr := ""
 	testDetailsStr := ""
 
@@ -675,7 +892,7 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 
 	ciType := getCiType(ciTypeStr)
 	if ciType == CI_TYPE_UNKNOWN {
-		return testSummaryStr, testDetailsStr, fmt.Errorf("Unknown CI type %d", ciType)
+		return testSummaryStr, testDetailsStr, fmt.Errorf("unknown CI type %d", ciType)
 	}
 
 	ciStepName, err := getCiStepName(ciType, CI_STEP_TEST)
@@ -683,7 +900,7 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test name: %w", err)
 	}
 
-	junitDirURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/"
+	junitDirURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/"
 	junitDirStr, err := getURLString(ctx, client, junitDirURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch junit directory: %w", err)
@@ -692,12 +909,12 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 	filenameRe := regexp.MustCompile(`test-failures-summary_[^.]*\.json`)
 	matches := filenameRe.FindStringSubmatch(junitDirStr)
 	if len(matches) == 0 {
-		testSummaryStr = "ERROR: Could not find test-failures-summary_*.json?"
+		testSummaryStr = "INFO: No test failure summary found (test suite may have been skipped or aborted)"
 		return testSummaryStr, testDetailsStr, nil
 	}
 
 	testFailureFilename := matches[0]
-	junitURL := "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/" + testFailureFilename
+	junitURL := artifactBaseURL + spyglassLink.SpyglassLink[8:] + "/artifacts/" + ciTypeStr + ciStepName + "/artifacts/junit/" + testFailureFilename
 	junitStr, err := getURLString(ctx, client, junitURL)
 	if err != nil {
 		return testSummaryStr, testDetailsStr, fmt.Errorf("failed to fetch test failures: %w", err)
@@ -722,9 +939,6 @@ func gatherTestRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 }
 
 // fromISOFormat attempts to parse a date string using multiple ISO 8601 formats.
-// It tries formats with varying precision (microseconds, seconds, date-only) to
-// accommodate different input styles from command-line arguments.
-// This flexibility allows users to specify dates as "2023-07-20" or "2023-07-20T15:04:05Z".
 // Returns the parsed time in UTC, or an error if no format matches.
 func fromISOFormat(dateStr string) (time.Time, error) {
 	if dateStr == "" {
@@ -750,9 +964,6 @@ func fromISOFormat(dateStr string) (time.Time, error) {
 }
 
 // encodeString prepares a string for CSV output by escaping newline characters.
-// CSV format doesn't handle multi-line cell content well, so newlines are converted
-// to the literal string "\n" to keep each record on a single line.
-// This ensures proper CSV parsing by spreadsheet applications like Excel and Google Sheets.
 //
 // Parameters:
 //   - input: String to encode (may contain newlines)
@@ -763,26 +974,104 @@ func encodeString(input string) string {
 	return strings.ReplaceAll(input, "\n", "\\n")
 }
 
+// jobRunData stores the gathered data for a single CI run.
+type jobRunData struct {
+	jobURL           string
+	included         bool
+	confFinished     ConfFinished
+	confSummaryStr   string
+	confDetailsStr   string
+	buildFinished    BuildFinished
+	buildSummaryStr  string
+	buildDetailsStr  string
+	testSummaryStr   string
+	testDetailsStr   string
+	isGreenTestRun   bool
+	couldNotRunSteps bool
+	failedPods       []string
+	err              error
+}
+
+// processSingleJob fetches and parses artifact data for a single CI run.
+func processSingleJob(ctx context.Context, client *HTTPClient, args *Args, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string, afterDt, beforeDt time.Time) jobRunData {
+	data := jobRunData{
+		jobURL: "https://prow.ci.openshift.org" + spyglassLink.SpyglassLink,
+	}
+
+	include, err := includeWithDate(ctx, client, afterDt, beforeDt, spyglassLink, artifactBaseURL)
+	if err != nil {
+		errStr := err.Error()
+		if !strings.Contains(errStr, "status code 404") &&
+			!strings.Contains(errStr, "failed to fetch started.json") &&
+			!strings.Contains(errStr, "failed to parse JSON") &&
+			!strings.Contains(errStr, "invalid character '<'") {
+			data.err = fmt.Errorf("failed to check date for job %s: %w", data.jobURL, err)
+		}
+		return data
+	}
+	if !include {
+		return data
+	}
+	data.included = true
+
+	// Gather deployment/conf results
+	confFinished, confSummaryStr, confDetailsStr, err := gatherConfRun(ctx, client, spyglassLink, ciTypeStr, artifactBaseURL)
+	if err != nil {
+		data.err = fmt.Errorf("failed to gather conf run: %w", err)
+		return data
+	}
+	data.confFinished = confFinished
+	data.confSummaryStr = confSummaryStr
+	data.confDetailsStr = confDetailsStr
+
+	// Gather deployment/build results
+	buildFinished, buildSummaryStr, buildDetailsStr, err := gatherBuildRun(ctx, client, spyglassLink, ciTypeStr, artifactBaseURL)
+	if err != nil {
+		data.err = fmt.Errorf("failed to gather build run: %w", err)
+		return data
+	}
+	data.buildFinished = buildFinished
+	data.buildSummaryStr = buildSummaryStr
+	data.buildDetailsStr = buildDetailsStr
+
+	// If deployment succeeded, gather test results
+	if buildFinished.Result == "SUCCESS" {
+		if !args.DeployStatusOnly {
+			var tempStats CIStats
+			testSummaryStr, testDetailsStr, err := gatherTestRun(ctx, client, spyglassLink, ciTypeStr, &tempStats, artifactBaseURL)
+			if err != nil {
+				data.testSummaryStr = fmt.Sprintf("WARN: Failed to gather test run: %v", err)
+			} else {
+				data.testSummaryStr = testSummaryStr
+				data.testDetailsStr = testDetailsStr
+				if tempStats.GreenRuns > 0 {
+					data.isGreenTestRun = true
+				}
+			}
+		}
+	}
+
+	// Detect "could not run steps" error and list failed pods
+	if detected, failedPods, err := detectCouldNotRunSteps(ctx, client, spyglassLink, artifactBaseURL); err == nil && detected {
+		data.couldNotRunSteps = true
+		data.failedPods = failedPods
+	}
+
+	return data
+}
+
 // processURL processes a single Prow CI job history URL and extracts job data.
-// This is the main processing function that orchestrates the entire data collection workflow:
-// 1. Validates and parses the URL to extract CI version and type information
-// 2. Iterates through job history pages (following "Older Runs" pagination links)
-// 3. Filters jobs by date range using started.json timestamps
-// 4. Collects build and test results for each matching job
-// 5. Outputs results in either human-readable or CSV format
-// 6. Updates aggregate statistics (deploys succeeded, green runs)
-//
-// The function continues pagination until no more jobs match the date criteria or
-// no "Older Runs" link is found. It handles context cancellation gracefully and
-// silently skips jobs with missing metadata (incomplete/failed jobs).
+// It determines whether the URL uses a public or private bucket, sets up the
+// appropriate authentication and artifact endpoints, iterates through job history
+// pages, filters jobs by date concurrently, and outputs results in order.
 //
 // Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - args: Command-line arguments controlling output format and filtering
-//   - ciStats: Statistics tracker to update with job results
-//   - urlStr: Prow job history URL to process
-//   - afterDt: Start of date range filter (inclusive)
-//   - beforeDt: End of date range filter (inclusive)
+//   - ctx:       Context for cancellation and timeout control
+//   - args:      Command-line arguments controlling output format and filtering
+//   - ciStats:   Statistics tracker to update with job results
+//   - urlStr:    Prow job history URL to process
+//   - afterDt:   Start of date range filter (inclusive)
+//   - beforeDt:  End of date range filter (inclusive)
 //   - csvWriter: CSV writer for output (nil if not in CSV mode)
 //
 // Returns:
@@ -796,6 +1085,10 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 	if err := validateURL(urlStr); err != nil {
 		return err
 	}
+
+	// Determine bucket type and artifact base URL dynamically
+	isPrivate := isPrivateURL(urlStr)
+	artifactBaseURL := getArtifactBaseURL(urlStr)
 
 	// Remove trailing slash if present
 	urlStr = strings.TrimSuffix(urlStr, "/")
@@ -822,8 +1115,8 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 	ciVersionStr := matches[2] // OpenShift version (e.g., "4.21", "4.22")
 	ciTypeStr := matches[3]    // CI type/platform (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 
-	// Create HTTP client
-	client, err := NewHTTPClient()
+	// Create HTTP client (authenticated if private bucket)
+	client, err := NewHTTPClient(ctx, isPrivate)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP client: %w", err)
 	}
@@ -880,123 +1173,97 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 				return
 			}
 
-			// Process each job entry
-			for _, spyglassLink := range spyglassLinks {
+			// Process jobs concurrently with bounded concurrency worker pool
+			results := make([]jobRunData, len(spyglassLinks))
+			sem := make(chan struct{}, maxConcurrentJobs)
+			var wg sync.WaitGroup
+
+			for i, link := range spyglassLinks {
+				wg.Add(1)
+				go func(idx int, spLink SpyglassLink) {
+					defer wg.Done()
+					select {
+					case sem <- struct{}{}:
+						defer func() { <-sem }()
+					case <-ctx.Done():
+						return
+					}
+					results[idx] = processSingleJob(ctx, client, args, spLink, ciTypeStr, artifactBaseURL, afterDt, beforeDt)
+				}(i, link)
+			}
+			wg.Wait()
+
+			// Output results in exact chronological page order
+			for _, res := range results {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
 
-				buildSummaryStr := ""
-				buildDetailsStr := ""
-				testSummaryStr := ""
-				testDetailsStr := ""
-
-				// Construct full Spyglass URL
-				jobURL := "https://prow.ci.openshift.org" + spyglassLink.SpyglassLink
-
-				// Filter by date range
-				include, err := includeWithDate(ctx, client, afterDt, beforeDt, spyglassLink)
-				if err != nil {
-					// Silently skip jobs that don't have started.json or return HTML errors (incomplete/failed jobs)
-					// These are expected for jobs that haven't completed or failed early
-					errStr := err.Error()
-					if !strings.Contains(errStr, "status code 404") &&
-					   !strings.Contains(errStr, "failed to fetch started.json") &&
-					   !strings.Contains(errStr, "failed to parse JSON") &&
-					   !strings.Contains(errStr, "invalid character '<'") {
-						fmt.Fprintf(infoFp, "WARN: Failed to check date for job %s: %v\n", jobURL, err)
-					}
-					continue
-				}
-				if !include {
+				if res.err != nil {
+					fmt.Fprintf(infoFp, "WARN: %v\n", res.err)
 					continue
 				}
 
-				// Job passed all filters - process it
+				if !res.included {
+					continue
+				}
+
 				processedAny = true
 				ciStats.NumDeploys++
 
 				// Print job header
 				fmt.Fprintf(infoFp, "INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
-				fmt.Fprintf(infoFp, "INFO: URL:  %s\n", jobURL)
+				fmt.Fprintf(infoFp, "INFO: URL:  %s\n", res.jobURL)
 
-				// Gather deployment/conf results
-				confFinished, confSummaryStr, confDetailsStr, err := gatherConfRun(ctx, client, spyglassLink, ciTypeStr)
-				if err != nil {
-					fmt.Fprintf(infoFp, "WARN: Failed to gather conf run: %v\n", err)
-					continue
+				// Output conf results unless user only wants test status
+				if !args.TestStatusOnly && !args.CSV {
+					fmt.Fprintf(outputFp, "%s\n%s\n", res.confSummaryStr, res.confDetailsStr)
 				}
 
 				// Output build results unless user only wants test status
-				if !args.TestStatusOnly {
-					if !args.CSV {
-						fmt.Fprintf(outputFp, "%s\n%s\n", confSummaryStr, confDetailsStr)
-					}
+				if !args.TestStatusOnly && !args.CSV {
+					fmt.Fprintf(outputFp, "%s\n%s", res.buildSummaryStr, res.buildDetailsStr)
 				}
 
-				// If conf succeeded,
-				if confFinished.Result == "SUCCESS" {
-				} else {
-				}
-
-				// Gather deployment/build results
-				buildFinished, buildSummaryStr, buildDetailsStr, err := gatherBuildRun(ctx, client, spyglassLink, ciTypeStr)
-				if err != nil {
-					fmt.Fprintf(infoFp, "WARN: Failed to gather build run: %v\n", err)
-					continue
-				}
-
-				// Output build results unless user only wants test status
-				if !args.TestStatusOnly {
-					if !args.CSV {
-						fmt.Fprintf(outputFp, "%s\n%s", buildSummaryStr, buildDetailsStr)
-					}
-				}
-
-				// If deployment succeeded, gather test results
-				if buildFinished.Result == "SUCCESS" {
+				// If deployment succeeded, handle test results
+				if res.buildFinished.Result == "SUCCESS" {
 					ciStats.DeploysSucceeded++
 
+					if res.isGreenTestRun {
+						ciStats.GreenRuns++
+					}
+
 					if !args.DeployStatusOnly {
-						testSummaryStr, testDetailsStr, err = gatherTestRun(ctx, client, spyglassLink, ciTypeStr, ciStats)
-						if err != nil {
-							fmt.Fprintf(infoFp, "WARN: Failed to gather test run: %v\n", err)
-						} else if !args.CSV {
-							fmt.Fprintf(outputFp, "%s\n%s\n", testSummaryStr, testDetailsStr)
+						if !args.CSV && res.testSummaryStr != "" {
+							fmt.Fprintf(outputFp, "%s\n%s\n", res.testSummaryStr, res.testDetailsStr)
 						}
-					} else {
+					} else if !args.CSV {
 						fmt.Fprintln(outputFp)
 					}
-				} else {
-					if !args.CSV {
-						fmt.Fprintln(outputFp)
-					}
+				} else if !args.CSV {
+					fmt.Fprintln(outputFp)
 				}
 
-				// Detect "could not run steps" error and list failed pods
-				if detected, failedPods, err := detectCouldNotRunSteps(ctx, client, spyglassLink); err != nil {
-					fmt.Fprintf(infoFp, "WARN: Failed to detect could-not-run-steps: %v\n", err)
-				} else if detected {
-					if !args.CSV {
-						fmt.Fprintf(outputFp, "FAILURE: could not run steps\n")
-						for _, pod := range failedPods {
-							fmt.Fprintf(outputFp, "  failed pod: %s\n", pod)
-						}
-						fmt.Fprintln(outputFp)
+				// Output could-not-run-steps error
+				if res.couldNotRunSteps && !args.CSV {
+					fmt.Fprintf(outputFp, "FAILURE: could not run steps\n")
+					for _, pod := range res.failedPods {
+						fmt.Fprintf(outputFp, "  failed pod: %s\n", pod)
 					}
+					fmt.Fprintln(outputFp)
 				}
 
 				// Write CSV row if CSV output is enabled
 				if args.CSV {
-					testDetailsStr = strings.TrimSuffix(testDetailsStr, "\n")
+					details := strings.TrimSuffix(res.testDetailsStr, "\n")
 					csvRow := []string{
-						encodeString(jobURL),
-						encodeString(buildSummaryStr),
-						encodeString(buildDetailsStr),
-						encodeString(testSummaryStr),
-						encodeString(testDetailsStr),
+						encodeString(res.jobURL),
+						encodeString(res.buildSummaryStr),
+						encodeString(res.buildDetailsStr),
+						encodeString(res.testSummaryStr),
+						encodeString(details),
 					}
 					if err := csvWriter.Write(csvRow); err != nil {
 						fmt.Fprintf(infoFp, "WARN: Failed to write CSV row: %v\n", err)
@@ -1041,9 +1308,6 @@ type Args struct {
 	Yesterday        bool      // Filter to yesterday's jobs only
 }
 
-// main is the entry point for the JobHistory tool.
-// It parses command-line arguments, validates date ranges, processes each CI URL,
-// and outputs aggregated statistics about deployment success and test pass rates.
 // parseAndValidateArgs parses command-line arguments and validates them.
 // It sets up flag definitions, parses the command line, validates the arguments,
 // and calculates the date range based on the provided options.
@@ -1060,14 +1324,25 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] URL [URL...]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Analyze OpenShift CI job history from Prow for PowerVC deployments.\n\n")
+		fmt.Fprintf(os.Stderr, "Environment Variables (for private bucket URLs):\n")
+		fmt.Fprintf(os.Stderr, "  OCP_CI_TOKEN       OCP Bearer token for prow.ci.openshift.org\n")
+		fmt.Fprintf(os.Stderr, "                     (obtain with: oc whoami -t)\n")
+		fmt.Fprintf(os.Stderr, "  OCP_CI_TOKEN_FILE  Path to file containing the OCP Bearer token\n\n")
+		fmt.Fprintf(os.Stderr, "GCS credentials (for private bucket URLs, one-time setup):\n")
+		fmt.Fprintf(os.Stderr, "  gcloud auth application-default login \\\n")
+		fmt.Fprintf(os.Stderr, "    --scopes=https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/cloud-platform\n\n")
 		fmt.Fprintf(os.Stderr, "Required Arguments:\n")
 		fmt.Fprintf(os.Stderr, "  URL    One or more Prow job history URLs to analyze\n")
-		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/<job-name>\n\n")
+		fmt.Fprintf(os.Stderr, "         Format: https://prow.ci.openshift.org/job-history/gs/<bucket>/logs/<job-name>\n")
+		fmt.Fprintf(os.Stderr, "         Public:  gs/test-platform-results-public/logs/...\n")
+		fmt.Fprintf(os.Stderr, "         Private: gs/test-platform-results/logs/...\n\n")
 		fmt.Fprintf(os.Stderr, "Options (must be specified BEFORE URLs):\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs\n")
+		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (public bucket)\n")
 		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (private bucket)\n")
+		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output\n")
 		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 --csv --output results.csv <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Note: All options must be specified before the URL(s).\n")
@@ -1122,13 +1397,13 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 			return nil, time.Time{}, time.Time{}, err
 		}
 
-		// Validate URL format
-		if !strings.Contains(url, "https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/") {
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("ERROR: Invalid CI URL format: %s\nExpected format: https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/<job-name>", url)
+		bucket, _, err := parseJobHistoryURL(url)
+		if err != nil || bucket == "" {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("ERROR: Invalid CI URL format: %s\nExpected format: https://prow.ci.openshift.org/job-history/gs/<bucket>/logs/<job-name>", url)
 		}
 
 		if ciType := getCiType(url); ciType == CI_TYPE_UNKNOWN {
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("Unknown CI type")
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("unknown CI type")
 		}
 	}
 
