@@ -33,15 +33,15 @@
 //     Two separate credentials are required for private buckets:
 //
 //     a. OCP Bearer token — for prow.ci.openshift.org (job history pages).
-//        Obtain with:  oc whoami -t
-//        Export as:    OCP_CI_TOKEN=<token>  or  OCP_CI_TOKEN_FILE=<path>
+//     Obtain with:  oc whoami -t
+//     Export as:    OCP_CI_TOKEN=<token>  or  OCP_CI_TOKEN_FILE=<path>
 //
 //     b. Google ADC credential — for storage.googleapis.com (CI build artifacts).
-//        Uses Application Default Credentials (ADC) loaded by newGCSTokenSource.
-//        One-time setup:
-//          gcloud auth application-default login \
-//            --scopes=https://www.googleapis.com/auth/devstorage.read_only,\
-//                    https://www.googleapis.com/auth/cloud-platform
+//     Uses Application Default Credentials (ADC) loaded by newGCSTokenSource.
+//     One-time setup:
+//     gcloud auth application-default login \
+//     --scopes=https://www.googleapis.com/auth/devstorage.read_only,\
+//     https://www.googleapis.com/auth/cloud-platform
 //
 // # GCS access: known IAM restriction
 //
@@ -112,9 +112,9 @@ var (
 
 // HTTP client and concurrency configuration constants
 const (
-	defaultHTTPTimeout     = 30 * time.Second
-	maxRetries             = 3
-	retryDelay             = 1 * time.Second
+	defaultHTTPTimeout    = 30 * time.Second
+	maxRetries            = 3
+	retryDelay            = 1 * time.Second
 	defaultMaxConcurrency = 8
 )
 
@@ -1115,7 +1115,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 		default:
 		}
 
-		processedAny := false // Track if we processed any jobs on this page
+		processedAny := false     // Track if we processed any jobs on this page
 		reachedOlderJobs := false // Track if we encountered jobs older than afterDt
 
 		resp, err := client.Get(ctx, urlStr)
@@ -1157,6 +1157,11 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 			if err := json.Unmarshal([]byte(matches[1]), &spyglassLinks); err != nil {
 				fmt.Fprintf(infoFp, "WARN: Failed to parse allBuilds: %v\n", err)
 				return
+			}
+
+			// --latest: only consider the first (most recent) entry in the page
+			if args.Latest && len(spyglassLinks) > 0 {
+				spyglassLinks = spyglassLinks[:1]
 			}
 
 			// Process jobs concurrently with bounded concurrency worker pool
@@ -1263,6 +1268,11 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 			}
 		})
 
+		// --latest: stop after the first page that yielded a job
+		if args.Latest && processedAny {
+			break
+		}
+
 		// Early termination: stop pagination if all remaining jobs are older than afterDt
 		if reachedOlderJobs {
 			break
@@ -1297,6 +1307,7 @@ type Args struct {
 	CSV              bool      // Enable CSV output format
 	DeployStatusOnly bool      // Only report deployment status (skip test results)
 	LastNDays        int       // Filter to last N days (alternative to AfterStr/BeforeStr)
+	Latest           bool      // Only process the single most recent CI run
 	Output           string    // Output file path (empty = stdout)
 	TestStatusOnly   bool      // Only report test status (skip deployment details)
 	Today            bool      // Filter to today's jobs only
@@ -1359,6 +1370,7 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	flag.IntVar(&args.LastNDays, "l", 0, "Only queries for the last n days (shorthand)")
 	flag.StringVar(&args.Output, "output", "", "The filename for output")
 	flag.StringVar(&args.Output, "o", "", "The filename for output (shorthand)")
+	flag.BoolVar(&args.Latest, "latest", false, "Only process the single most recent CI run")
 	flag.BoolVar(&args.TestStatusOnly, "test-status-only", false, "Only show test failures")
 	flag.BoolVar(&args.TestStatusOnly, "t", false, "Only show test failures (shorthand)")
 	flag.BoolVar(&args.Today, "today", false, "Only queries for today")
@@ -1417,7 +1429,13 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	var err error
 
-	if args.Today {
+	if args.Latest {
+		if args.AfterStr != "" || args.BeforeStr != "" || args.Today || args.Yesterday || args.LastNDays > 0 {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --latest with other date options")
+		}
+		// Leave AfterDt zero and BeforeDt = now; processURL will stop after the first job.
+		args.BeforeDt = now
+	} else if args.Today {
 		if args.AfterStr != "" || args.BeforeStr != "" || args.Yesterday || args.LastNDays > 0 {
 			return nil, time.Time{}, time.Time{}, fmt.Errorf("cannot combine --today with other date options")
 		}
