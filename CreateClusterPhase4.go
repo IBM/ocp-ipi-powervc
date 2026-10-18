@@ -25,9 +25,7 @@ import (
 
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
 
-//
 // Upload the bootstrap ignition file to Swift.
-//
 func createClusterPhase4(directory string) error {
 	var (
 		metadata      *Metadata

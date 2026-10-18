@@ -73,9 +73,7 @@ func replacePlatformMap(node map[string]any) error {
 	return nil
 }
 
-//
 // Replace powervc platform with openstack platform
-//
 func createClusterPhase2(directory string) error {
 	var (
 		abyteYamlOld []byte
@@ -123,17 +121,17 @@ func createClusterPhase2(directory string) error {
 		return err
 	}
 
-if testSubnet {
-	err = runSplitCommand([]string{
-		"sed",
-		"-i",
-		"s,subnet: null,subnet:,",
-		fmt.Sprintf("%s/%s", directory, "install-config.yaml"),
-	})
-	if err != nil {
-		return err
+	if testSubnet {
+		err = runSplitCommand([]string{
+			"sed",
+			"-i",
+			"s,subnet: null,subnet:,",
+			fmt.Sprintf("%s/%s", directory, "install-config.yaml"),
+		})
+		if err != nil {
+			return err
+		}
 	}
-}
 
 	return nil
 }

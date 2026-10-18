@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 
@@ -96,7 +96,7 @@ func initLogger(debug bool) *logrus.Logger {
 	}
 
 	return &logrus.Logger{
-		Out:   out,
+		Out: out,
 		Formatter: &logrus.TextFormatter{
 			FullTimestamp:   true,
 			TimestampFormat: "2006-01-02 15:04:05",
@@ -233,15 +233,16 @@ func createServerWaitBackoff(ctx context.Context) wait.Backoff {
 // Parameters:
 //   - ctx: Context for the operation
 //   - clouds: List of cloud names to retrieve servers from
+//
 // Returns:
 //   - allServers: Slice of all servers retrieved from all clouds
 //   - err: Error if any operation fails
 func getAllServers(ctx context.Context, clouds []string) (allServers []servers.Server, err error) {
 	log.Debugf("getAllServers: clouds = %+v", clouds)
-	
+
 	// Map to track unique servers by ID
 	serverMap := make(map[string]servers.Server)
-	
+
 	for _, cloud := range clouds {
 		log.Debugf("getAllServers: cloud = %s", cloud)
 

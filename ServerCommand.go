@@ -42,7 +42,7 @@ import (
 const (
 	// Server communication constants
 	serverPort = "8080"
-	
+
 	// Timeout constants
 	dialTimeout            = 10 * time.Second
 	writeTimeout           = 30 * time.Second
@@ -50,11 +50,11 @@ const (
 	bastionCreationTimeout = 15 * time.Minute
 
 	// Command name constants
-	serverCmdCheckAlive      = "check-alive"
-	serverCmdCreateBastion   = "create-bastion"
-	serverCmdCreateMetadata  = "create-metadata"
-	serverCmdDeleteMetadata  = "delete-metadata"
-	serverCmdEraseMetadata   = "erase-metadata"
+	serverCmdCheckAlive     = "check-alive"
+	serverCmdCreateBastion  = "create-bastion"
+	serverCmdCreateMetadata = "create-metadata"
+	serverCmdDeleteMetadata = "delete-metadata"
+	serverCmdEraseMetadata  = "erase-metadata"
 )
 
 // CommandHeader represents the base command structure with just the command name.

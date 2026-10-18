@@ -859,10 +859,10 @@ func TestValidateMetadataFile(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name         string
-		setupFile    func() string
-		expectError  bool
-		errorMsg     string
+		name        string
+		setupFile   func() string
+		expectError bool
+		errorMsg    string
 	}{
 		{
 			name: "valid file",
@@ -930,16 +930,16 @@ func TestBuildComponentList(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		config        *watchCreateConfig
-		expectedCount int
+		name            string
+		config          *watchCreateConfig
+		expectedCount   int
 		checkComponents func(*testing.T, []NewRunnableObjectsEntry)
 	}{
 		{
 			name: "minimal components (VMs and LB only)",
 			config: &watchCreateConfig{
-				cloud:    "mycloud",
-				metadata: "/tmp/meta.json",
+				cloud:      "mycloud",
+				metadata:   "/tmp/meta.json",
 				bastionRsa: "/tmp/key",
 			},
 			expectedCount: 2,

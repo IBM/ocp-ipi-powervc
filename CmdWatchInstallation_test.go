@@ -15,7 +15,7 @@
 package main
 
 import (
-//	"context"
+	//	"context"
 	"encoding/json"
 	"flag"
 	"os"
@@ -508,10 +508,10 @@ func TestGetMetadataClusterName_InvalidJSON(t *testing.T) {
 // TestGetServerSet tests the getServerSet function
 func TestGetServerSet(t *testing.T) {
 	tests := []struct {
-		name           string
-		servers        []servers.Server
-		expectedCount  int
-		expectedNames  []string
+		name          string
+		servers       []servers.Server
+		expectedCount int
+		expectedNames []string
 	}{
 		{
 			name:          "empty server list",
@@ -623,12 +623,12 @@ func TestGetServerSet(t *testing.T) {
 // TestFindIpAddress tests the findIpAddress function
 func TestFindIpAddress(t *testing.T) {
 	tests := []struct {
-		name           string
-		server         servers.Server
-		expectedMAC    string
-		expectedIP     string
-		expectError    bool
-		errorMsg       string
+		name        string
+		server      servers.Server
+		expectedMAC string
+		expectedIP  string
+		expectError bool
+		errorMsg    string
 	}{
 		{
 			name: "valid server with IP",
@@ -658,31 +658,31 @@ func TestFindIpAddress(t *testing.T) {
 			expectError: true,
 			errorMsg:    "no IP address found for server test-server",
 		},
-// @TODO need a well defined way to test this.  Go will randomize how map keys are returned
-// fix findIpAddress()
-//		{
-//			name: "server with multiple networks",
-//			server: servers.Server{
-//				Name: "test-server",
-//				Addresses: map[string]interface{}{
-//					"network1": []interface{}{
-//						map[string]interface{}{
-//							"OS-EXT-IPS-MAC:mac_addr": "fa:16:3e:00:00:01",
-//							"addr":                    "192.168.1.10",
-//						},
-//					},
-//					"network2": []interface{}{
-//						map[string]interface{}{
-//							"OS-EXT-IPS-MAC:mac_addr": "fa:16:3e:00:00:02",
-//							"addr":                    "10.0.0.10",
-//						},
-//					},
-//				},
-//			},
-//			expectedMAC: "fa:16:3e:00:00:01",
-//			expectedIP:  "192.168.1.10",
-//			expectError: false,
-//		},
+		// @TODO need a well defined way to test this.  Go will randomize how map keys are returned
+		// fix findIpAddress()
+		//		{
+		//			name: "server with multiple networks",
+		//			server: servers.Server{
+		//				Name: "test-server",
+		//				Addresses: map[string]interface{}{
+		//					"network1": []interface{}{
+		//						map[string]interface{}{
+		//							"OS-EXT-IPS-MAC:mac_addr": "fa:16:3e:00:00:01",
+		//							"addr":                    "192.168.1.10",
+		//						},
+		//					},
+		//					"network2": []interface{}{
+		//						map[string]interface{}{
+		//							"OS-EXT-IPS-MAC:mac_addr": "fa:16:3e:00:00:02",
+		//							"addr":                    "10.0.0.10",
+		//						},
+		//					},
+		//				},
+		//			},
+		//			expectedMAC: "fa:16:3e:00:00:01",
+		//			expectedIP:  "192.168.1.10",
+		//			expectError: false,
+		//		},
 	}
 
 	for _, tt := range tests {
@@ -715,9 +715,9 @@ func TestFindIpAddress(t *testing.T) {
 // TestGetClusterName tests the atLeastOneClusterName function
 func TestGetClusterName(t *testing.T) {
 	tests := []struct {
-		name        string
-		servers     []servers.Server
-		expected    string
+		name     string
+		servers  []servers.Server
+		expected string
 	}{
 		{
 			name:     "empty server list",
@@ -957,7 +957,7 @@ func TestMinimalMetadata(t *testing.T) {
 //
 //	// This should not fail with empty list
 //	err := updateBastionInformations(ctx, "test-cloud", bastionInfos)
-//	
+//
 //	// We expect this to fail because getAllServers will fail with invalid cloud
 //	// but we're testing that empty list doesn't cause panic
 //	if err == nil {
@@ -1038,6 +1038,7 @@ func TestGetServerSet_DifferenceOperations(t *testing.T) {
 		t.Errorf("Expected 1 deleted server, got %d", deleted.Len())
 	}
 }
+
 // TestWatchInstallationCommand_InvalidCloudNames tests that invalid cloud names are rejected
 func TestWatchInstallationCommand_InvalidCloudNames(t *testing.T) {
 	tests := []struct {

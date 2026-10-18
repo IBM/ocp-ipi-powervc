@@ -467,8 +467,8 @@ type cloudAuth struct {
 // cloudsYAML mirrors the top-level structure of ~/.config/openstack/clouds.yaml.
 type cloudsYAML struct {
 	Clouds map[string]struct {
-		Auth    cloudAuth `yaml:"auth"`
-		CACert  string    `yaml:"cacert"`
+		Auth   cloudAuth `yaml:"auth"`
+		CACert string    `yaml:"cacert"`
 	} `yaml:"clouds"`
 }
 
@@ -748,9 +748,9 @@ type tokenPasswordAuth struct {
 }
 
 type tokenUser struct {
-	Name     string       `json:"name"`
-	Password string       `json:"password"`
-	Domain   tokenDomain  `json:"domain"`
+	Name     string      `json:"name"`
+	Password string      `json:"password"`
+	Domain   tokenDomain `json:"domain"`
 }
 
 type tokenScope struct {
@@ -1097,8 +1097,8 @@ func runMkvterm(client *ssh.Client, hostDisplayName, instanceName string, durati
 
 	// Stream both pipes to stdout concurrently.
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(os.Stdout, stdoutPipe); done <- struct{}{} }()  //nolint:errcheck
-	go func() { io.Copy(os.Stdout, stderrPipe); done <- struct{}{} }()  //nolint:errcheck
+	go func() { io.Copy(os.Stdout, stdoutPipe); done <- struct{}{} }() //nolint:errcheck
+	go func() { io.Copy(os.Stdout, stderrPipe); done <- struct{}{} }() //nolint:errcheck
 
 	// Wait for the capture window, then stop the remote process.
 	timer := time.NewTimer(duration)

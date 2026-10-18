@@ -27,7 +27,7 @@ import (
 // Note: This file uses the global 'log' variable declared in PowerVC-Tool.go
 
 const (
-//	rhcosImage = "hamzy2-419-96-20250402-0-ppc64le"
+	//	rhcosImage = "hamzy2-419-96-20250402-0-ppc64le"
 	rhcosImage = "hamzy3-rhcos-9.6.20250826-1-openstack-ppc64le"
 )
 
@@ -35,12 +35,10 @@ var (
 	errImageChanged = errors.New("image changed")
 )
 
-//
 // Change the image used by the VMs.
-//
 func createClusterPhase6(directory string) error {
 	var (
-		err           error
+		err error
 	)
 
 	err = processManifestsImage(directory)
@@ -115,7 +113,7 @@ func changeImagesManifest(filename string) error {
 	if err != nil {
 		return fmt.Errorf("Error: could not convert yaml to json: %v", err)
 	}
-//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
+	//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
 
 	err = json.Unmarshal(abyteJsonOld, &jsonOld)
 	if err != nil {
@@ -160,8 +158,8 @@ func changeImages(node map[string]any) error {
 			log.Debugf("ok = %v", ok)
 			if ok {
 				delete(node, "image")
-				node["image"] = map[string]any {
-					"filter":  map[string]string{
+				node["image"] = map[string]any{
+					"filter": map[string]string{
 						"name": rhcosImage,
 					},
 				}

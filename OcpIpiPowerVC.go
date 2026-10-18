@@ -165,9 +165,9 @@ import (
 
 const (
 	// Command name constants
-	cmdCheckAlive        = "check-alive"
-	cmdCreateBastion     = "create-bastion"
-//	cmdCreateCluster     = "broken-create-cluster"
+	cmdCheckAlive    = "check-alive"
+	cmdCreateBastion = "create-bastion"
+	//	cmdCreateCluster     = "broken-create-cluster"
 	cmdCreateRhcos       = "create-rhcos"
 	cmdDeleteBastion     = "delete-bastion"
 	cmdEraseMetadata     = "erase-metadata"
@@ -202,10 +202,11 @@ const (
 //   - Description: A brief description of what the command does, shown in help output
 //
 // Example:
-//   cmd := Command{
-//       Name:        "check-alive",
-//       Description: "Check if cluster nodes are alive",
-//   }
+//
+//	cmd := Command{
+//	    Name:        "check-alive",
+//	    Description: "Check if cluster nodes are alive",
+//	}
 type Command struct {
 	Name        string
 	Description string
@@ -235,25 +236,25 @@ var (
 	// commands is the registry of all available commands.
 	// This serves as the single source of truth for command information.
 	commands = []Command{
-		{cmdCheckAlive,        "Check if cluster nodes are alive"},
-		{cmdCreateBastion,     "Create bastion host"},
-//		{cmdCreateCluster,     "Create OpenShift cluster"},
-		{cmdCreateRhcos,       "Create RHCOS image"},
-		{cmdDeleteBastion,     "Delete bastion host"},
-		{cmdEraseMetadata,     "Erase metadata matching pattern from server"},
-		{cmdRhcosExists,       "Verifies RHCOS image exists"},
-		{cmdSendMetadata,      "Send metadata to cluster"},
+		{cmdCheckAlive, "Check if cluster nodes are alive"},
+		{cmdCreateBastion, "Create bastion host"},
+		//		{cmdCreateCluster,     "Create OpenShift cluster"},
+		{cmdCreateRhcos, "Create RHCOS image"},
+		{cmdDeleteBastion, "Delete bastion host"},
+		{cmdEraseMetadata, "Erase metadata matching pattern from server"},
+		{cmdRhcosExists, "Verifies RHCOS image exists"},
+		{cmdSendMetadata, "Send metadata to cluster"},
 		{cmdWatchInstallation, "Watch cluster installation progress"},
-		{cmdWatchCreate,       "Watch cluster creation process"},
+		{cmdWatchCreate, "Watch cluster creation process"},
 	}
 
 	// commandHandlers maps command names to their handler functions.
 	// This registry pattern allows for easy addition of new commands without
 	// modifying the dispatch logic, following the Open/Closed Principle.
 	commandHandlers = map[string]CommandHandler{
-		cmdCheckAlive:        checkAliveCommand,
-		cmdCreateBastion:     createBastionCommand,
-//		cmdCreateCluster:     createClusterCommand,
+		cmdCheckAlive:    checkAliveCommand,
+		cmdCreateBastion: createBastionCommand,
+		//		cmdCreateCluster:     createClusterCommand,
 		cmdDeleteBastion:     deleteBastionCommand,
 		cmdCreateRhcos:       createRhcosCommand,
 		cmdEraseMetadata:     eraseMetadataCommand,

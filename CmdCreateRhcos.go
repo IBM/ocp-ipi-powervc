@@ -24,16 +24,17 @@
 //   - Comprehensive input validation
 //
 // Usage Example:
-//   ./ocp-ipi-powervc create-rhcos \
-//     --cloud mycloud \
-//     --rhcosName my-rhcos-server \
-//     --flavorName medium \
-//     --imageName rhcos-4.12 \
-//     --networkName private-net \
-//     --passwdHash '$6$rounds=4096$...' \
-//     --sshPublicKey 'ssh-rsa AAAA...' \
-//     --domainName example.com \
-//     --shouldDebug true
+//
+//	./ocp-ipi-powervc create-rhcos \
+//	  --cloud mycloud \
+//	  --rhcosName my-rhcos-server \
+//	  --flavorName medium \
+//	  --imageName rhcos-4.12 \
+//	  --networkName private-net \
+//	  --passwdHash '$6$rounds=4096$...' \
+//	  --sshPublicKey 'ssh-rsa AAAA...' \
+//	  --domainName example.com \
+//	  --shouldDebug true
 package main
 
 import (
@@ -73,21 +74,21 @@ const (
 	sshDirPerms               = 0700
 
 	// SSH key validation
-	minPasswordHashLength = 13  // Minimum crypt hash length
+	minPasswordHashLength = 13 // Minimum crypt hash length
 
 	// Retry configuration
-	maxRetryAttempts     = 3
-	retryInitialDelay    = 2 * time.Second
-	retryMaxDelay        = 30 * time.Second
+	maxRetryAttempts       = 3
+	retryInitialDelay      = 2 * time.Second
+	retryMaxDelay          = 30 * time.Second
 	retryBackoffMultiplier = 2.0
 
 	// Progress tracking
-	progressStepParsing    = "Parsing configuration"
-	progressStepIgnition   = "Generating Ignition config"
-	progressStepFinding    = "Finding or creating server"
-	progressStepSetup      = "Setting up server"
-	progressStepDNS        = "Configuring DNS"
-	progressStepComplete   = "Complete"
+	progressStepParsing  = "Parsing configuration"
+	progressStepIgnition = "Generating Ignition config"
+	progressStepFinding  = "Finding or creating server"
+	progressStepSetup    = "Setting up server"
+	progressStepDNS      = "Configuring DNS"
+	progressStepComplete = "Complete"
 
 	// File locking
 	fileLockTimeout = 30 * time.Second
@@ -283,13 +284,13 @@ func (c *rhcosConfig) validateSSHKey() error {
 
 	// Validate key type
 	validKeyTypes := map[string]bool{
-		"ssh-rsa":             true,
-		"ssh-dss":             true,
-		"ssh-ed25519":         true,
-		"ecdsa-sha2-nistp256": true,
-		"ecdsa-sha2-nistp384": true,
-		"ecdsa-sha2-nistp521": true,
-		"sk-ssh-ed25519@openssh.com":      true,
+		"ssh-rsa":                            true,
+		"ssh-dss":                            true,
+		"ssh-ed25519":                        true,
+		"ecdsa-sha2-nistp256":                true,
+		"ecdsa-sha2-nistp384":                true,
+		"ecdsa-sha2-nistp521":                true,
+		"sk-ssh-ed25519@openssh.com":         true,
 		"sk-ecdsa-sha2-nistp256@openssh.com": true,
 	}
 
@@ -561,7 +562,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 	}
 
 	// Populate config from parsed flags
-	config.Clouds = []string{ *ptrCloud }
+	config.Clouds = []string{*ptrCloud}
 	config.RhcosName = *ptrRhcosName
 	config.AvailabilityZone = *availabilityZone
 	config.FlavorName = *ptrFlavorName
@@ -604,7 +605,7 @@ func parseRhcosFlags(createRhcosFlags *flag.FlagSet, args []string) (*rhcosConfi
 func createRhcosCommand(createRhcosFlags *flag.FlagSet, args []string) error {
 	err := innerCreateRhcosCommand(createRhcosFlags, args)
 	if err != nil {
-		fmt.Printf("%+v\n",err)
+		fmt.Printf("%+v\n", err)
 		if createRhcosFlags != nil {
 			createRhcosFlags.Usage()
 		}
@@ -839,15 +840,15 @@ func findOrCreateRhcosServer(ctx context.Context, config *rhcosConfig) (servers.
 		log.Debugf("Ignition configuration generated successfully (%d bytes)", len(userData))
 
 		bc := BastionConfig{
-			Clouds:            config.Clouds,
-			BastionName:       config.RhcosName,
-			AvailabilityZone:  config.AvailabilityZone,
-			FlavorName:        config.FlavorName,
-			ImageName:         config.ImageName,
-			BastionRsaPub:     config.SshPublicKey,
-			PasswdHash:        config.PasswdHash,
+			Clouds:           config.Clouds,
+			BastionName:      config.RhcosName,
+			AvailabilityZone: config.AvailabilityZone,
+			FlavorName:       config.FlavorName,
+			ImageName:        config.ImageName,
+			BastionRsaPub:    config.SshPublicKey,
+			PasswdHash:       config.PasswdHash,
 		}
-		if err := createServer(ctx, &bc, port,subnet, userData); err != nil {
+		if err := createServer(ctx, &bc, port, subnet, userData); err != nil {
 			cleanupPort(port)
 
 			return servers.Server{}, fmt.Errorf("failed to create server: %w", err)
@@ -932,6 +933,7 @@ func configureDNS(ctx context.Context, config *rhcosConfig) error {
 //     or unparseable, and logs a warning for IPv6 addresses).
 //  2. Ensures the server's SSH host key is present in ~/.ssh/known_hosts via
 //     ensureSSHHostKey, to enable passwordless SSH access on first connection.
+//
 // Context cancellation is checked before each major step.
 //
 // Parameters:
@@ -1314,9 +1316,9 @@ func ensureSSHDirectory(sshDir string) error {
 //   - Configures the 'core' user with the provided password hash and SSH public key
 //   - When port and subnet information is provided (non-nil port, non-empty CIDR,
 //     GatewayIP, and at least one DNS nameserver), also embeds:
-//     * A NetworkManager keyfile at /etc/NetworkManager/system-connections/static.nmconnection
-//       that configures a static IPv4 address, gateway, and DNS servers (mode 0600)
-//     * A /etc/resolv.conf file populated from the subnet's DNS nameservers (mode 0644)
+//   - A NetworkManager keyfile at /etc/NetworkManager/system-connections/static.nmconnection
+//     that configures a static IPv4 address, gateway, and DNS servers (mode 0600)
+//   - A /etc/resolv.conf file populated from the subnet's DNS nameservers (mode 0644)
 //   - Is validated against the OpenStack nova user data base64-encoded size limit (64 KB)
 //
 // Parameters:
@@ -1402,7 +1404,7 @@ func createBootstrapIgnition(passwdHash string, sshPublicKey string, kernelArgs 
 		ignConfig.Passwd = igntypes.Passwd{
 			Users: []igntypes.PasswdUser{
 				{
-					Name:              "core",
+					Name: "core",
 					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
 						igntypes.SSHAuthorizedKey(sshPublicKey),
 					},

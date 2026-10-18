@@ -31,9 +31,7 @@ var (
 	errAddedLoadBalancer = errors.New("added LoadBalancer configuration")
 )
 
-//
 // Adds a LoadBalancer block with enabled=false to the cloud provider config if missing.
-//
 func createClusterPhase7(directory string) error {
 	var (
 		filename = filepath.Join(directory, "manifests", "cloud-provider-config.yaml")
@@ -67,16 +65,16 @@ func processCloudProviderConfig(filename string) error {
 	if err != nil {
 		return fmt.Errorf("Error: could not convert yaml to json: %v", err)
 	}
-//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
+	//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
 
 	err = json.Unmarshal(abyteJsonOld, &jsonOld)
 	if err != nil {
 		return fmt.Errorf("Error: could not unmarshal the json: %v", err)
 	}
-//	log.Debugf("jsonOld = %+v", jsonOld)
+	//	log.Debugf("jsonOld = %+v", jsonOld)
 
 	err = changeCloudProviderConfig(jsonOld)
-//	log.Debugf("jsonOld = %+v", jsonOld)
+	//	log.Debugf("jsonOld = %+v", jsonOld)
 	if err != nil {
 		if !errors.Is(err, errAddedLoadBalancer) {
 			return err
@@ -114,7 +112,7 @@ func changeCloudProviderConfig(jsonOld map[string]any) error {
 		config  string
 	)
 
-//	log.Debugf("jsonOld = %+v", jsonOld)
+	//	log.Debugf("jsonOld = %+v", jsonOld)
 
 	v, ok := jsonOld["data"]
 	if !ok {

@@ -249,8 +249,8 @@ func TestCheckAliveCommand_FlagParsing(t *testing.T) {
 			errorMsg:    "check-alive command failed",
 		},
 		{
-			name: "localhost",
-			args: []string{"--serverIP", "127.0.0.1"},
+			name:        "localhost",
+			args:        []string{"--serverIP", "127.0.0.1"},
 			expectError: true,
 			errorMsg:    "check-alive command failed",
 		},

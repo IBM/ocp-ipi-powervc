@@ -81,7 +81,8 @@ const (
 //  6. Returns error if any phase fails
 //
 // Example usage:
-//   err := createClusterCommand(flagSet, []string{"-directory", "/path/to/install", "-shouldDebug", "true"})
+//
+//	err := createClusterCommand(flagSet, []string{"-directory", "/path/to/install", "-shouldDebug", "true"})
 func createClusterCommand(createClusterFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrDirectory   *string

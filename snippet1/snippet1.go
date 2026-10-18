@@ -53,7 +53,7 @@ func createCommand(ctx context.Context, acmdline []string) (*exec.Cmd, error) {
 
 func main() {
 	log := &logrus.Logger{
-		Out:   os.Stderr,
+		Out: os.Stderr,
 		Formatter: &logrus.TextFormatter{
 			FullTimestamp:   true,
 			TimestampFormat: "2006-01-02 15:04:05",
@@ -64,9 +64,9 @@ func main() {
 	ptrKubeConfig := flag.String("kubeconfig", "", "The KUBECONFIG file")
 	flag.Parse()
 
-//	cmdline1 := "cat /tmp/test_file"
+	//	cmdline1 := "cat /tmp/test_file"
 	cmdline1 := "oc --request-timeout=5s get pods -A -o=wide"
-//	cmdline2 := "grep line"
+	//	cmdline2 := "grep line"
 	cmdline2 := "sed -e /\\(Running\\|Completed\\)/d"
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -104,7 +104,7 @@ func main() {
 	defer readPipe.Close()
 
 	// Connect first command's stdout to pipe
-	cmd1.Stdin  = os.Stdin
+	cmd1.Stdin = os.Stdin
 	cmd1.Stdout = writePipe
 	cmd1.Stderr = os.Stderr
 

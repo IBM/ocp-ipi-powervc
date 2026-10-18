@@ -37,8 +37,8 @@
 package main
 
 import (
-	"context"
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -48,31 +48,31 @@ import (
 
 const (
 	// Flag names for watch-create command
-	flagWatchCreateCloud           = "cloud"
-	flagWatchCreateMetadata        = "metadata"
-	flagWatchCreateKubeConfig      = "kubeconfig"
-	flagWatchCreateBastionRsa      = "bastionRsa"
-	flagWatchCreateBaseDomain      = "baseDomain"
-	flagWatchCreateShouldDebug     = "shouldDebug"
+	flagWatchCreateCloud       = "cloud"
+	flagWatchCreateMetadata    = "metadata"
+	flagWatchCreateKubeConfig  = "kubeconfig"
+	flagWatchCreateBastionRsa  = "bastionRsa"
+	flagWatchCreateBaseDomain  = "baseDomain"
+	flagWatchCreateShouldDebug = "shouldDebug"
 
 	// Flag default values
-	defaultWatchCreateCloud           = ""
-	defaultWatchCreateMetadata        = ""
-	defaultWatchCreateKubeConfig      = ""
-	defaultWatchCreateBastionRsa      = ""
-	defaultWatchCreateBaseDomain      = ""
-	defaultWatchCreateShouldDebug     = "false"
+	defaultWatchCreateCloud       = ""
+	defaultWatchCreateMetadata    = ""
+	defaultWatchCreateKubeConfig  = ""
+	defaultWatchCreateBastionRsa  = ""
+	defaultWatchCreateBaseDomain  = ""
+	defaultWatchCreateShouldDebug = "false"
 
 	// Error message prefixes
 	errPrefixWatchCreate = "Error: "
 
 	// Usage messages
-	usageWatchCreateCloud           = "The cloud to use in clouds.yaml"
-	usageWatchCreateMetadata        = "The location of the metadata.json file"
-	usageWatchCreateKubeConfig      = "The KUBECONFIG file"
-	usageWatchCreateBastionRsa      = "The RSA filename for the bastion VM to use"
-	usageWatchCreateBaseDomain      = "The DNS base name to use"
-	usageWatchCreateShouldDebug     = "Should output debug output"
+	usageWatchCreateCloud       = "The cloud to use in clouds.yaml"
+	usageWatchCreateMetadata    = "The location of the metadata.json file"
+	usageWatchCreateKubeConfig  = "The KUBECONFIG file"
+	usageWatchCreateBastionRsa  = "The RSA filename for the bastion VM to use"
+	usageWatchCreateBaseDomain  = "The DNS base name to use"
+	usageWatchCreateShouldDebug = "Should output debug output"
 
 	// Environment variable names
 	envIBMCloudAPIKey = "IBMCLOUD_API_KEY"
@@ -98,12 +98,13 @@ const (
 //   - error: Any error encountered during flag parsing, validation, initialization, or status query
 //
 // Example usage:
-//   err := watchCreateClusterCommand(flagSet, []string{
-//       "-cloud", "mycloud",
-//       "-metadata", "/path/to/metadata.json",
-//       "-bastionRsa", "/path/to/key.rsa",
-//       "-shouldDebug", "true",
-//   })
+//
+//	err := watchCreateClusterCommand(flagSet, []string{
+//	    "-cloud", "mycloud",
+//	    "-metadata", "/path/to/metadata.json",
+//	    "-bastionRsa", "/path/to/key.rsa",
+//	    "-shouldDebug", "true",
+//	})
 func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
 	err := innerWatchCreateClusterCommand(watchCreateClusterFlags, args)
 	if err != nil {
@@ -138,6 +139,7 @@ func watchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []str
 //  7. Initializes runnable objects based on provided flags
 //  8. Loads metadata from file
 //  9. Creates services object
+//
 // 10. Initializes and sorts runnable objects by priority
 // 11. Queries status of each component
 func innerWatchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args []string) error {
@@ -232,13 +234,13 @@ func innerWatchCreateClusterCommand(watchCreateClusterFlags *flag.FlagSet, args 
 
 // watchCreateConfig holds the parsed configuration for the watch-create command
 type watchCreateConfig struct {
-	cloud           string
-	metadata        string
-	kubeConfig      string
-	bastionRsa      string
-	baseDomain      string
-	apiKey          string
-	shouldDebug     bool
+	cloud       string
+	metadata    string
+	kubeConfig  string
+	bastionRsa  string
+	baseDomain  string
+	apiKey      string
+	shouldDebug bool
 }
 
 // parseWatchCreateFlags parses command-line flags into a watchCreateConfig.
@@ -286,13 +288,13 @@ func parseWatchCreateFlags(preLog *strings.Builder, flagSet *flag.FlagSet, args 
 	apiKey := os.Getenv(envIBMCloudAPIKey)
 
 	return &watchCreateConfig{
-		cloud:           cloud,
-		metadata:        *ptrMetadata,
-		kubeConfig:      *ptrKubeConfig,
-		bastionRsa:      *ptrBastionRsa,
-		baseDomain:      *ptrBaseDomain,
-		apiKey:          apiKey,
-		shouldDebug:     shouldDebug,
+		cloud:       cloud,
+		metadata:    *ptrMetadata,
+		kubeConfig:  *ptrKubeConfig,
+		bastionRsa:  *ptrBastionRsa,
+		baseDomain:  *ptrBaseDomain,
+		apiKey:      apiKey,
+		shouldDebug: shouldDebug,
 	}, nil
 }
 

@@ -31,12 +31,10 @@ var (
 	errSecurityGroupDeleted = errors.New("security group deleted")
 )
 
-//
 // Remove the security groups
-//
 func createClusterPhase5(directory string) error {
 	var (
-		err           error
+		err error
 	)
 
 	err = runSplitCommand([]string{
@@ -122,7 +120,7 @@ func removeSecurityGroupsManifest(filename string) error {
 	if err != nil {
 		return fmt.Errorf("Error: could not convert yaml to json: %v", err)
 	}
-//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
+	//	log.Debugf("abyteJsonOld = %+v", string(abyteJsonOld))
 
 	err = json.Unmarshal(abyteJsonOld, &jsonOld)
 	if err != nil {

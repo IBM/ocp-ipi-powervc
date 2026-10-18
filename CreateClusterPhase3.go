@@ -14,13 +14,10 @@
 
 package main
 
-import (
-)
+import ()
 
-//
 // Process the install config.
 // Create the ignition config.
-//
 func createClusterPhase3(directory string) error {
 	var (
 		err error

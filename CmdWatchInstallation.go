@@ -85,51 +85,51 @@ import (
 
 const (
 	// Flag names for watch-installation command
-	flagWatchInstallationCloud            = "cloud"
-	flagWatchInstallationDomainName       = "domainName"
-	flagWatchInstallationBastionMetadata  = "bastionMetadata"
-	flagWatchInstallationBastionRsa       = "bastionRsa"
-	flagWatchInstallationEnableDhcpd      = "enableDhcpd"
-	flagWatchInstallationDhcpServer       = "dhcpServer"
-	flagWatchInstallationDhcpInterface    = "dhcpInterface"
-	flagWatchInstallationDhcpSubnet       = "dhcpSubnet"
-	flagWatchInstallationDhcpNetmask      = "dhcpNetmask"
-	flagWatchInstallationDhcpRouter       = "dhcpRouter"
-	flagWatchInstallationDhcpDnsServers   = "dhcpDnsServers"
-	flagWatchInstallationDhcpServerId     = "dhcpServerId"
-	flagWatchInstallationShouldDebug      = "shouldDebug"
-	flagWatchInstallationLog              = "log"
+	flagWatchInstallationCloud           = "cloud"
+	flagWatchInstallationDomainName      = "domainName"
+	flagWatchInstallationBastionMetadata = "bastionMetadata"
+	flagWatchInstallationBastionRsa      = "bastionRsa"
+	flagWatchInstallationEnableDhcpd     = "enableDhcpd"
+	flagWatchInstallationDhcpServer      = "dhcpServer"
+	flagWatchInstallationDhcpInterface   = "dhcpInterface"
+	flagWatchInstallationDhcpSubnet      = "dhcpSubnet"
+	flagWatchInstallationDhcpNetmask     = "dhcpNetmask"
+	flagWatchInstallationDhcpRouter      = "dhcpRouter"
+	flagWatchInstallationDhcpDnsServers  = "dhcpDnsServers"
+	flagWatchInstallationDhcpServerId    = "dhcpServerId"
+	flagWatchInstallationShouldDebug     = "shouldDebug"
+	flagWatchInstallationLog             = "log"
 
 	// Flag default values
-	defaultWatchInstallationDomainName       = ""
-	defaultWatchInstallationBastionMetadata  = ""
-	defaultWatchInstallationBastionRsa       = ""
-	defaultWatchInstallationEnableDhcpd      = "false"
-	defaultWatchInstallationDhcpServer       = dhcpServerDhcpd
-	defaultWatchInstallationDhcpInterface    = ""
-	defaultWatchInstallationDhcpSubnet       = ""
-	defaultWatchInstallationDhcpNetmask      = ""
-	defaultWatchInstallationDhcpRouter       = ""
-	defaultWatchInstallationDhcpDnsServers   = ""
-	defaultWatchInstallationDhcpServerId     = ""
-	defaultWatchInstallationShouldDebug      = "false"
-	defaultWatchInstallationLog              = ""
+	defaultWatchInstallationDomainName      = ""
+	defaultWatchInstallationBastionMetadata = ""
+	defaultWatchInstallationBastionRsa      = ""
+	defaultWatchInstallationEnableDhcpd     = "false"
+	defaultWatchInstallationDhcpServer      = dhcpServerDhcpd
+	defaultWatchInstallationDhcpInterface   = ""
+	defaultWatchInstallationDhcpSubnet      = ""
+	defaultWatchInstallationDhcpNetmask     = ""
+	defaultWatchInstallationDhcpRouter      = ""
+	defaultWatchInstallationDhcpDnsServers  = ""
+	defaultWatchInstallationDhcpServerId    = ""
+	defaultWatchInstallationShouldDebug     = "false"
+	defaultWatchInstallationLog             = ""
 
 	// Usage messages
-	usageWatchInstallationCloud            = "The cloud name to use in clouds.yaml (can be specified multiple times)"
-	usageWatchInstallationDomainName       = "The DNS domain to use"
-	usageWatchInstallationBastionMetadata  = "A root directory where OpenShift clusters installs are located"
-	usageWatchInstallationBastionRsa       = "The RSA filename for the bastion VM to use"
-	usageWatchInstallationEnableDhcpd      = "Should enable the DHCP server"
-	usageWatchInstallationDhcpServer       = "The DHCP server to manage: dhcpd or kea"
-	usageWatchInstallationDhcpInterface    = "The interface name for the dhcpd server"
-	usageWatchInstallationDhcpSubnet       = "The subnet for a DHCP request"
-	usageWatchInstallationDhcpNetmask      = "The netmask for a DHCP request"
-	usageWatchInstallationDhcpRouter       = "The router for a DHCP request"
-	usageWatchInstallationDhcpDnsServers   = "The DNS servers for a DHCP request"
-	usageWatchInstallationDhcpServerId     = "The DNS server identifier for a DHCP request"
-	usageWatchInstallationShouldDebug      = "Should output debug output"
-	usageWatchInstallationLog              = "The filename to log all output to"
+	usageWatchInstallationCloud           = "The cloud name to use in clouds.yaml (can be specified multiple times)"
+	usageWatchInstallationDomainName      = "The DNS domain to use"
+	usageWatchInstallationBastionMetadata = "A root directory where OpenShift clusters installs are located"
+	usageWatchInstallationBastionRsa      = "The RSA filename for the bastion VM to use"
+	usageWatchInstallationEnableDhcpd     = "Should enable the DHCP server"
+	usageWatchInstallationDhcpServer      = "The DHCP server to manage: dhcpd or kea"
+	usageWatchInstallationDhcpInterface   = "The interface name for the dhcpd server"
+	usageWatchInstallationDhcpSubnet      = "The subnet for a DHCP request"
+	usageWatchInstallationDhcpNetmask     = "The netmask for a DHCP request"
+	usageWatchInstallationDhcpRouter      = "The router for a DHCP request"
+	usageWatchInstallationDhcpDnsServers  = "The DNS servers for a DHCP request"
+	usageWatchInstallationDhcpServerId    = "The DNS server identifier for a DHCP request"
+	usageWatchInstallationShouldDebug     = "Should output debug output"
+	usageWatchInstallationLog             = "The filename to log all output to"
 
 	// Supported DHCP servers
 	dhcpServerDhcpd = "dhcpd"
@@ -139,9 +139,9 @@ const (
 	errPrefixWatchInstallation = "Error: "
 
 	// Timing constants
-	watchSleepDuration       = 30 * time.Second
-	watchIterationTimeout    = 5 * time.Minute
-	bastionContextTimeout    = 10 * time.Minute
+	watchSleepDuration    = 30 * time.Second
+	watchIterationTimeout = 5 * time.Minute
+	bastionContextTimeout = 10 * time.Minute
 
 	// Network constants
 	listenPort = ":8080"
@@ -177,10 +177,10 @@ func (s *stringArray) Set(value string) error {
 // bastionInformation holds configuration and state information for a bastion server.
 // It contains metadata about the cluster installation and connection details.
 type bastionInformation struct {
-	Valid        bool   // Whether the bastion information is valid
-	Metadata     string // Path to metadata file
-	Username     string // SSH username for bastion; determined at runtime by
-                            // sshDetermineUsername and written by updateBastionInformations
+	Valid    bool   // Whether the bastion information is valid
+	Metadata string // Path to metadata file
+	Username string // SSH username for bastion; determined at runtime by
+	// sshDetermineUsername and written by updateBastionInformations
 	InstallerRsa string // Path to RSA key for installer
 
 	ClusterName string // Name of the OpenShift cluster
@@ -262,7 +262,7 @@ func (c *WatchInstallationConfig) Validate() error {
 	// File path validation
 	if _, err := os.Stat(c.BastionRsa); err != nil {
 		if os.IsNotExist(err) {
-			return 	fmt.Errorf("bastionRsa: file not found: %q", c.BastionRsa)
+			return fmt.Errorf("bastionRsa: file not found: %q", c.BastionRsa)
 		} else {
 			return fmt.Errorf("bastionRsa: cannot access file: %w", err)
 		}
@@ -616,7 +616,6 @@ func (h *stdoutHook) Fire(entry *logrus.Entry) error {
 	return err
 }
 
-
 // watchInstallationCommand executes the watch-installation command with the given flags and arguments.
 //
 // This function continuously monitors OpenShift cluster installations and manages associated
@@ -631,12 +630,13 @@ func (h *stdoutHook) Fire(entry *logrus.Entry) error {
 //   - error: Any error encountered during flag parsing, validation, or operation execution
 //
 // Example usage:
-//   err := watchInstallationCommand(flagSet, []string{
-//       "--cloud", "mycloud",
-//       "--domainName", "example.com",
-//       "--bastionMetadata", "/path/to/metadata",
-//       "--bastionRsa", "/path/to/key.rsa",
-//   })
+//
+//	err := watchInstallationCommand(flagSet, []string{
+//	    "--cloud", "mycloud",
+//	    "--domainName", "example.com",
+//	    "--bastionMetadata", "/path/to/metadata",
+//	    "--bastionRsa", "/path/to/key.rsa",
+//	})
 func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	err := innerWatchInstallationCommand(watchInstallationFlags, args)
 	if err != nil {
@@ -667,10 +667,11 @@ func watchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []strin
 //  7. Validates the fully populated configuration
 //  8. Sets up OS signal handling (SIGINT, SIGTERM) for graceful shutdown
 //  9. Spawns the metadata listener goroutine on listenPort (:8080)
+//
 // 10. Performs an initial monitoring iteration immediately
 // 11. Enters a ticker-based loop (every 30 s) that:
-//     - Runs performMonitoringIteration on each tick
-//     - Returns on shutdown signal or listener failure
+//   - Runs performMonitoringIteration on each tick
+//   - Returns on shutdown signal or listener failure
 func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []string) error {
 	var (
 		preLog        strings.Builder
@@ -875,6 +876,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 //     (dhcpd: /tmp/dhcpd.conf -> /etc/dhcp/dhcpd.conf, restart dhcpd.service;
 //     kea: /tmp/kea-dhcp4.conf -> /etc/kea/kea-dhcp4.conf, restart kea-dhcp4.service)
 //  9. Update HAProxy configuration on each valid bastion via haproxyCfg
+//
 // 10. If an IBM Cloud API key is available: manage DNS records via dnsRecords
 //
 // Parameters:
@@ -1392,7 +1394,7 @@ func getServerSet(allServers []servers.Server) sets.Set[string] {
 // first valid IP address found.
 func findIpAddress(server servers.Server) (string, string, error) {
 	var (
-		subnetContents []interface {}
+		subnetContents []interface{}
 		mapSubNetwork  map[string]interface{}
 		ok             bool
 		ipAddress      string
@@ -1400,7 +1402,7 @@ func findIpAddress(server servers.Server) (string, string, error) {
 
 	for key := range server.Addresses {
 		// Addresses:map[vlan1337:[map[OS-EXT-IPS-MAC:mac_addr:fa:16:3e:b1:33:03 OS-EXT-IPS:type:fixed addr:10.20.182.169 version:4]]]
-		subnetContents, ok = server.Addresses[key].([]interface {})
+		subnetContents, ok = server.Addresses[key].([]interface{})
 		if !ok {
 			return "", "", fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
 		}
@@ -1611,8 +1613,8 @@ func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName
 			"max-valid-lifetime": 2678400,
 			"subnet4": []map[string]any{
 				{
-					"id":                     1,
-					"subnet":                 fmt.Sprintf("%s/%d", dhcpSubnet, prefixLen),
+					"id":                       1,
+					"subnet":                   fmt.Sprintf("%s/%d", dhcpSubnet, prefixLen),
 					"reservations-out-of-pool": true,
 					"option-data": []map[string]any{
 						{"name": "routers", "data": dhcpRouter},
@@ -1675,8 +1677,8 @@ func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName
 func haproxyCfg(ctx context.Context, clouds cloudFlags, bastionInformations []bastionInformation, statsUser string, statsPassword string) error {
 	var (
 		allServers []servers.Server
-		server      servers.Server
-		err         error
+		server     servers.Server
+		err        error
 	)
 
 	allServers, err = getAllServers(ctx, clouds)
@@ -2019,7 +2021,7 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 		if slices.ContainsFunc(
 			[]string{"bootstrap", "master", "worker"},
 			func(s string) bool {
-//				log.Debugf("strings.Contains(%s, %s) = %v", deletedServer, s, strings.Contains(deletedServer, s))
+				//				log.Debugf("strings.Contains(%s, %s) = %v", deletedServer, s, strings.Contains(deletedServer, s))
 				return strings.Contains(deletedServer, s)
 			}) {
 			err = createOrDeletePublicDNSRecord(ctx,
@@ -2051,7 +2053,7 @@ func dnsRecords(ctx context.Context, clouds cloudFlags, apiKey string, domainNam
 			if slices.ContainsFunc(
 				[]string{"bootstrap", "master", "worker"},
 				func(s string) bool {
-//					log.Debugf("strings.Contains(%s, %s) = %v", server.Name, s, strings.Contains(server.Name, s))
+					//					log.Debugf("strings.Contains(%s, %s) = %v", server.Name, s, strings.Contains(server.Name, s))
 					return strings.Contains(server.Name, s)
 				}) {
 				err = createOrDeletePublicDNSRecord(ctx,
@@ -2148,9 +2150,9 @@ func loadResourceControllerAPI(apiKey string) (controllerAPI *resourcecontroller
 //
 // The function creates a new DNS Records V1 client with IAM authentication
 // for managing DNS records in IBM Cloud Internet Services (CIS).
-func loadDnsServiceAPI(apiKey string, crnstr string, zoneID string)(service *dnsrecordsv1.DnsRecordsV1, err error) {
+func loadDnsServiceAPI(apiKey string, crnstr string, zoneID string) (service *dnsrecordsv1.DnsRecordsV1, err error) {
 	service, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
-		Authenticator:  &core.IamAuthenticator{
+		Authenticator: &core.IamAuthenticator{
 			ApiKey: apiKey,
 		},
 		Crn:            &crnstr,
@@ -2186,7 +2188,7 @@ func getServiceInfo(ctx context.Context, apiKey string, service string, serviceP
 		Authenticator: &core.IamAuthenticator{
 			ApiKey: apiKey,
 		},
-		URL:           globalcatalogv1.DefaultServiceURL,
+		URL: globalcatalogv1.DefaultServiceURL,
 	})
 	log.Debugf("getServiceInfo: gcv1 = %+v", gcv1)
 	if err != nil {
@@ -2221,7 +2223,7 @@ func getServiceInfo(ctx context.Context, apiKey string, service string, serviceP
 
 	kind := "plan"
 	getChildOpt := globalcatalogv1.GetChildObjectsOptions{
-		ID: &serviceID,
+		ID:   &serviceID,
 		Kind: &kind,
 	}
 
@@ -2281,7 +2283,7 @@ func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseD
 		Authenticator: &core.IamAuthenticator{
 			ApiKey: apiKey,
 		},
-		URL:           resourcecontrollerv2.DefaultServiceURL,
+		URL: resourcecontrollerv2.DefaultServiceURL,
 	})
 	log.Debugf("getDomainCrn: controllerSvc = %+v", controllerSvc)
 	if err != nil {
@@ -2310,7 +2312,7 @@ func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseD
 				Authenticator: &core.IamAuthenticator{
 					ApiKey: apiKey,
 				},
-				Crn:           instance.CRN,
+				Crn: instance.CRN,
 			})
 			log.Debugf("getDomainCrn: zv1 = %+v", zv1)
 			if err != nil {
@@ -2332,7 +2334,7 @@ func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseD
 				log.Debugf("getDomainCrn: zone.Name = %s, zone.ID = %s", *zone.Name, *zone.ID)
 				if *zone.Name == baseDomain {
 					crnstr = *instance.CRN
-					zoneID  = *zone.ID
+					zoneID = *zone.ID
 					err = nil
 					return
 				}
@@ -2377,7 +2379,7 @@ func getDomainCrn(ctx context.Context, apiKey string, cisServiceID string, baseD
 // The function queries the DNS service for records matching the specified name
 // and returns the ID and content of the first matching record. If no record
 // is found, empty strings are returned for foundID and content.
-func findDNSRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, cname string)(foundID string, content string, err error) {
+func findDNSRecord(ctx context.Context, dnsService *dnsrecordsv1.DnsRecordsV1, cname string) (foundID string, content string, err error) {
 	var (
 		listOptions *dnsrecordsv1.ListAllDnsRecordsOptions
 		records     *dnsrecordsv1.ListDnsrecordsResp
@@ -2454,7 +2456,7 @@ func createOrDeletePublicDNSRecord(ctx context.Context, dnsRecordType string, ho
 		log.Debugf("createOrDeletePublicDNSRecord: !shouldCreate = %v, (content != cname && shouldCreate) = %v", !shouldCreate, (content != cname && shouldCreate))
 
 		// If we should delete OR we are creating and the contents are different?
-		if (!shouldCreate || (content != cname && shouldCreate)) {
+		if !shouldCreate || (content != cname && shouldCreate) {
 			deleteOptions = dnsService.NewDeleteDnsRecordOptions(foundRecordID)
 			log.Debugf("createOrDeletePublicDNSRecord: deleteOptions = %+v", deleteOptions)
 
@@ -2666,14 +2668,14 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 				return err
 			}
 
-			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			err = sendByteArray(conn, marshalledData, 30*time.Second)
 			if err != nil {
 				return err
 			}
 
 		case "create-metadata":
 			var (
-				cmd            struct {
+				cmd struct {
 					Command string `json:"Command"`
 					Result  string `json:"Result"`
 				}
@@ -2716,14 +2718,14 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 			}
 			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
 
-			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			err = sendByteArray(conn, marshalledData, 30*time.Second)
 			if err != nil {
 				return err
 			}
 
 		case "delete-metadata":
 			var (
-				cmd            struct {
+				cmd struct {
 					Command string `json:"Command"`
 					Result  string `json:"Result"`
 				}
@@ -2766,7 +2768,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 			}
 			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
 
-			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			err = sendByteArray(conn, marshalledData, 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -2827,7 +2829,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 			} else {
 				// This is a single file deletion (original behavior)
 				var (
-					cmd            struct {
+					cmd struct {
 						Command string `json:"Command"`
 						Result  string `json:"Result"`
 					}
@@ -2920,7 +2922,7 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 			}
 			log.Debugf("handleConnection: marshalledData = %+v", marshalledData)
 
-			err = sendByteArray(conn, marshalledData, 30 * time.Second)
+			err = sendByteArray(conn, marshalledData, 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -2931,10 +2933,11 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 		}
 	}
 
-//	if err := scanner.Err(); err != nil {
-//		log.Debugf("handleConnection: scanner.Err return %v", err)
-//	}
-//	return err
+	//	if err := scanner.Err(); err != nil {
+	//		log.Debugf("handleConnection: scanner.Err return %v", err)
+	//	}
+	//
+	// return err
 }
 
 // handleCheckAlive processes a check-alive command from a client connection.
@@ -2948,8 +2951,8 @@ func handleConnection(ctx context.Context, conn net.Conn, config *WatchInstallat
 // if the JSON can be parsed.
 func handleCheckAlive(data string, errChan chan error) {
 	var (
-		cmd            CommandCheckAlive
-		err            error
+		cmd CommandCheckAlive
+		err error
 	)
 
 	// Print the incoming data

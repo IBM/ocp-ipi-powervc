@@ -53,11 +53,11 @@
 //
 // Use Cases:
 //
-//	- Pre-flight validation before OpenShift cluster installation
-//	- Verifying image availability across different OpenStack environments
-//	- Troubleshooting image naming issues and typos
-//	- Discovering available RHCOS images in a cloud
-//	- Automation scripts that need to verify prerequisites
+//   - Pre-flight validation before OpenShift cluster installation
+//   - Verifying image availability across different OpenStack environments
+//   - Troubleshooting image naming issues and typos
+//   - Discovering available RHCOS images in a cloud
+//   - Automation scripts that need to verify prerequisites
 //
 // Exit Codes:
 //
@@ -66,10 +66,10 @@
 //
 // Notes:
 //
-//	- The command uses a 2-minute timeout for OpenStack API operations
-//	- Requires valid OpenStack credentials in clouds.yaml
-//	- Image names are case-sensitive and must match exactly
-//	- The cloud name must correspond to an entry in clouds.yaml
+//   - The command uses a 2-minute timeout for OpenStack API operations
+//   - Requires valid OpenStack credentials in clouds.yaml
+//   - Image names are case-sensitive and must match exactly
+//   - The cloud name must correspond to an entry in clouds.yaml
 package main
 
 import (

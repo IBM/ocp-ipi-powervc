@@ -85,7 +85,7 @@ func initLogger(debug bool) *logrus.Logger {
 	}
 
 	return &logrus.Logger{
-		Out:   out,
+		Out: out,
 		Formatter: &logrus.TextFormatter{
 			FullTimestamp:   true,
 			TimestampFormat: "2006-01-02 15:04:05",

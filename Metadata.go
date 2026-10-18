@@ -96,11 +96,12 @@ type OpenStackSMetadata struct {
 //   - error: Any error encountered during file reading or JSON parsing
 //
 // Example:
-//   metadata, err := NewMetadataFromCCMetadata("./metadata.json")
-//   if err != nil {
-//       return fmt.Errorf("failed to load metadata: %w", err)
-//   }
-//   clusterName := metadata.GetClusterName()
+//
+//	metadata, err := NewMetadataFromCCMetadata("./metadata.json")
+//	if err != nil {
+//	    return fmt.Errorf("failed to load metadata: %w", err)
+//	}
+//	clusterName := metadata.GetClusterName()
 func NewMetadataFromCCMetadata(filename string) (*Metadata, error) {
 	if filename == "" {
 		return nil, fmt.Errorf("filename cannot be empty")
@@ -116,7 +117,7 @@ func NewMetadataFromCCMetadata(filename string) (*Metadata, error) {
 	}
 
 	log.Debugf("NewMetadataFromCCMetadata: Read %d bytes from file", len(content))
-//	log.Debugf("NewMetadataFromCCMetadata: content = %s", string(content))
+	//	log.Debugf("NewMetadataFromCCMetadata: content = %s", string(content))
 
 	// Parse the JSON content
 	var metadata Metadata

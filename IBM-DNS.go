@@ -484,11 +484,12 @@ func searchZonesInInstance(ctx context.Context, apiKey string, crn *string, base
 //   - error: Any error encountered during the operation
 //
 // Example:
-//   records, err := dns.listIBMDNSRecords()
-//   if err != nil {
-//       return fmt.Errorf("failed to list DNS records: %w", err)
-//   }
-//   // records contains: ["api.cluster.domain.com", "api-int.cluster.domain.com", "*.apps.cluster.domain.com"]
+//
+//	records, err := dns.listIBMDNSRecords()
+//	if err != nil {
+//	    return fmt.Errorf("failed to list DNS records: %w", err)
+//	}
+//	// records contains: ["api.cluster.domain.com", "api-int.cluster.domain.com", "*.apps.cluster.domain.com"]
 func (dns *IBMDNS) listIBMDNSRecords() ([]string, error) {
 	if dns == nil || dns.services == nil {
 		return []string{}, nil
@@ -637,8 +638,8 @@ func (dns *IBMDNS) fetchMatchingDNSRecords(ctx context.Context, matcher *regexp.
 //   - error: Any error encountered during the operation
 func (dns *IBMDNS) logAllDNSRecords(ctx context.Context) error {
 	var (
-		perPage      = defaultPerPage
-		page         = defaultPage
+		perPage          = defaultPerPage
+		page             = defaultPage
 		totalRecords int = 0
 	)
 
@@ -738,8 +739,9 @@ func (dns *IBMDNS) Run() error {
 // This implements the RunnableObject interface.
 //
 // Example output:
-//   IBM Domain Name Service is OK.
-//   IBM Domain Name Service is NOTOK. Expected DNS record api.cluster.domain.com does not exist
+//
+//	IBM Domain Name Service is OK.
+//	IBM Domain Name Service is NOTOK. Expected DNS record api.cluster.domain.com does not exist
 func (dns *IBMDNS) ClusterStatus() error {
 	fmt.Println("8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------")
 
@@ -848,7 +850,7 @@ func (dns *IBMDNS) ClusterStatus() error {
 					IBMDNSName, recordName, err)
 				return fmt.Errorf("ClusterStatus: Record %s does not resolve: %w", recordName, err)
 			}
-	
+
 			if len(addrs) == 0 {
 				fmt.Printf("%s is NOTOK. DNS record %s resolves to no addresses\n",
 					IBMDNSName, recordName)

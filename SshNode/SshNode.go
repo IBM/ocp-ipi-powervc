@@ -498,9 +498,9 @@ func generateSSHCommand(ip, sshKey string) string {
 type escapeReader struct {
 	r            io.Reader
 	done         chan struct{}
-	afterNewline bool  // true when the previous byte was \r, \n, or start-of-stream
-	hasHeld      bool  // true when heldByte contains a pending byte to emit
-	heldByte     byte  // byte to emit on the next Read before reading more input
+	afterNewline bool // true when the previous byte was \r, \n, or start-of-stream
+	hasHeld      bool // true when heldByte contains a pending byte to emit
+	heldByte     byte // byte to emit on the next Read before reading more input
 }
 
 func newEscapeReader(r io.Reader, done chan struct{}) *escapeReader {

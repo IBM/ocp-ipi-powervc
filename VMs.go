@@ -231,7 +231,7 @@ func (vms *VMs) ClusterStatus() error {
 		return fmt.Errorf("ClusterStatus: NewServiceClient returned error: %v", err)
 	}
 
-	allServers, err = getAllServers(ctx, []string{ cloud })
+	allServers, err = getAllServers(ctx, []string{cloud})
 	if err != nil {
 		fmt.Printf("%s is NOTOK. Failed to get servers: %v\n", VMsName, err)
 		return fmt.Errorf("ClusterStatus: getAllServers returned error: %v", err)

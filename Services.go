@@ -87,13 +87,13 @@ type User struct {
 
 func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud string, installerRsa string, baseDomain string) (*Services, error) {
 	var (
-		ctx             context.Context
-		controllerSvc   *resourcecontrollerv2.ResourceControllerV2
-		bxSession       *bxsession.Session
-		user            *User
-		cisInstanceCRN  string
-		services        *Services
-		err             error
+		ctx            context.Context
+		controllerSvc  *resourcecontrollerv2.ResourceControllerV2
+		bxSession      *bxsession.Session
+		user           *User
+		cisInstanceCRN string
+		services       *Services
+		err            error
 	)
 
 	ctx = context.Background()
@@ -120,21 +120,21 @@ func NewServices(metadata *Metadata, apiKey string, kubeConfig string, cloud str
 		log.Debugf("NewServices: cisInstanceCRN = %v, err = %+v", cisInstanceCRN, err)
 		if err != nil {
 			return nil, fmt.Errorf("NewServices: getCISInstanceCRN: %w", err)
-		} 
+		}
 	}
 
 	services = &Services{
-		apiKey:          apiKey,
-		kubeConfig:      kubeConfig,
-		cloud:           cloud,
-		controllerSvc:   controllerSvc,
-		installerRsa:    installerRsa,
-		metadata:        metadata,
-		baseDomain:      baseDomain,
-		cisInstanceCRN:  cisInstanceCRN,
-		bxSession:       bxSession,
-		user:            user,
-		ctx:             ctx,
+		apiKey:         apiKey,
+		kubeConfig:     kubeConfig,
+		cloud:          cloud,
+		controllerSvc:  controllerSvc,
+		installerRsa:   installerRsa,
+		metadata:       metadata,
+		baseDomain:     baseDomain,
+		cisInstanceCRN: cisInstanceCRN,
+		bxSession:      bxSession,
+		user:           user,
+		ctx:            ctx,
 	}
 
 	return services, nil

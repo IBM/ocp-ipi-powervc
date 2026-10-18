@@ -14,17 +14,13 @@
 
 package main
 
-import (
-)
+import ()
 
-//
 // Create the OpenShift cluster.
-//
 func createClusterPhase8(directory string) error {
 	var (
-		err           error
+		err error
 	)
-
 
 	err = runSplitCommand([]string{
 		"bash",

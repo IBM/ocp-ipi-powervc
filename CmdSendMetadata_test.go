@@ -839,7 +839,6 @@ func TestSendMetadataCommand_ValidMetadataContent(t *testing.T) {
 	}
 }
 
-
 // TestSendMetadataCommand_TimeoutFlag tests the timeout flag functionality
 func TestSendMetadataCommand_TimeoutFlag(t *testing.T) {
 	tmpFile := createValidMetadataFile(t, "test-metadata.json")

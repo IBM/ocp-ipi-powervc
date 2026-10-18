@@ -777,12 +777,12 @@ func TestMain_VersionFlagVariations(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		args           []string
-		expectVersion  bool
-		expectHelp     bool
-		expectError    bool
-		expectedExit   int
+		name          string
+		args          []string
+		expectVersion bool
+		expectHelp    bool
+		expectError   bool
+		expectedExit  int
 	}{
 		// Version flag tests
 		{

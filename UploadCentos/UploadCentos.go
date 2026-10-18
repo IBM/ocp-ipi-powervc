@@ -859,6 +859,7 @@ WORKFLOW:
 //  8. Checks if the image already exists in OpenStack; exits cleanly if so.
 //  9. Converts the image with pvsadm (if available) then imports with pvcctl
 //     or powervc-image.
+//
 // 10. Exits with status 0 on success or status 1 on failure.
 func main() {
 	// Resolve the directory containing this binary so that OVA files can be

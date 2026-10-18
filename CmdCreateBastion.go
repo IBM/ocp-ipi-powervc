@@ -102,8 +102,8 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 		shouldContinue := false
 		if err != nil {
 			if strings.Contains(err.Error(), "No route to host") ||
-			   strings.Contains(err.Error(), "Connection refused") ||
-			   strings.Contains(err.Error(), "Connection timed out") {
+				strings.Contains(err.Error(), "Connection refused") ||
+				strings.Contains(err.Error(), "Connection timed out") {
 				shouldContinue = true
 			}
 		}
@@ -145,7 +145,7 @@ func sshDetermineUsername(cfg *sshConfig) (string, error) {
 			"cloud-user",
 			"core",
 		}
-		err       error
+		err error
 	)
 
 	for _, username := range usernames {
@@ -359,6 +359,7 @@ const (
 //  1. Read the ID field from /etc/os-release over SSH.
 //  2. Read the VARIANT_ID field from /etc/os-release over SSH.
 //  3. Map the detected values to COREOS, RHEL, CENTOS, or UNKNOWN.
+//
 // The operation respects context cancellation and timeout through the SSH
 // commands it invokes.
 func getOSRelease(ctx context.Context, cfg *sshConfig) (osRelease, error) {
@@ -392,6 +393,7 @@ func getOSRelease(ctx context.Context, cfg *sshConfig) (osRelease, error) {
 //   - RHEL or CentOS: ensureDnfHAProxyInstalled
 //   - CoreOS:         ensureCoreosHAProxyInstalled
 //   - Unknown:        returns an error
+//
 // The operation respects context cancellation and timeout.
 func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 
@@ -417,6 +419,7 @@ func ensureHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 //  3. Configure SELinux for HAProxy.
 //  4. Enable and start the HAProxy service.
 //  5. Ensure firewalld ports are open.
+//
 // The operation respects context cancellation and timeout.
 func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	// Step 1: Is it installed?
@@ -486,6 +489,7 @@ func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 //  7. Create a systemd service unit file (/etc/systemd/system/haproxy.service)
 //  8. Reload systemd to recognize the new service
 //  9. Enable and start the HAProxy service
+//
 // 10. Make sure keep-alive.sh exists
 //
 // Parameters:
@@ -527,15 +531,16 @@ func ensureDnfHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 //   - Context cancellation is checked before each step to allow early termination
 //
 // Example Usage:
-//   cfg := &sshConfig{
-//       host: "bastion.example.com",
-//       port: "22",
-//       user: "core",
-//       key:  "/path/to/ssh/key",
-//   }
-//   if err := ensureCoreosHAProxyInstalled(ctx, cfg); err != nil {
-//       log.Fatalf("Failed to install HAProxy: %v", err)
-//   }
+//
+//	cfg := &sshConfig{
+//	    host: "bastion.example.com",
+//	    port: "22",
+//	    user: "core",
+//	    key:  "/path/to/ssh/key",
+//	}
+//	if err := ensureCoreosHAProxyInstalled(ctx, cfg); err != nil {
+//	    log.Fatalf("Failed to install HAProxy: %v", err)
+//	}
 func ensureCoreosHAProxyInstalled(ctx context.Context, cfg *sshConfig) error {
 	log.Debugf("ensureCoreosHAProxyInstalled: cfg = %+v", cfg)
 
@@ -1094,6 +1099,7 @@ func ensureFirewalldOpenPort(ctx context.Context, cfg *sshConfig, port int) erro
 //  1. Wait for SSH to become ready.
 //  2. Add the bastion host key to known_hosts.
 //  3. Ensure HAProxy is installed.
+//
 // The function returns a wrapped error for the first failed step.
 // The operation respects context cancellation and timeout, checking before each
 // step before invoking the corresponding SSH operation.
@@ -1150,8 +1156,8 @@ func getServerIPAddress(ctx context.Context, cloudName string, server servers.Se
 
 // BastionConfig holds all configuration for bastion creation.
 // It supports two modes of operation:
-//   1. Local setup: Requires BastionRsa for SSH access
-//   2. Remote setup: Requires ServerIP to delegate setup to another server
+//  1. Local setup: Requires BastionRsa for SSH access
+//  2. Remote setup: Requires ServerIP to delegate setup to another server
 type BastionConfig struct {
 	// OpenStack Configuration
 	Clouds      cloudFlags // OpenStack cloud name from clouds.yaml (required only 1 entry allowed)
@@ -1475,13 +1481,13 @@ func cleanupBastionIPFile(filename string) error {
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
 //   - config: BastionConfig containing all server creation parameters including:
-//     * BastionName: Name of the server to create
-//     * Clouds: OpenStack cloud configurations (uses first cloud for creation)
-//     * NetworkName: Network to attach the server to
-//     * AvailabilityZone: Zone where the server will be created
-//     * FlavorName: Server flavor/size
-//     * ImageName: OS image to use
-//     * SshKeyName: SSH key for server access
+//   - BastionName: Name of the server to create
+//   - Clouds: OpenStack cloud configurations (uses first cloud for creation)
+//   - NetworkName: Network to attach the server to
+//   - AvailabilityZone: Zone where the server will be created
+//   - FlavorName: Server flavor/size
+//   - ImageName: OS image to use
+//   - SshKeyName: SSH key for server access
 //
 // Returns:
 //   - nil if the server exists or was successfully created
@@ -1572,8 +1578,9 @@ func ensureServerExists(ctx context.Context, config *BastionConfig) error {
 
 // setupBastion configures the bastion server either remotely or locally.
 // The setup mode is determined by the BastionConfig:
-//  - Remote setup: delegates to another server via sendCreateBastion
-//  - Local setup: performs setup directly via SSH
+//   - Remote setup: delegates to another server via sendCreateBastion
+//   - Local setup: performs setup directly via SSH
+//
 // The operation respects context cancellation and timeout.
 func setupBastion(ctx context.Context, config *BastionConfig) error {
 	if config.IsRemoteSetup() {
@@ -1624,11 +1631,11 @@ func setupBastion(ctx context.Context, config *BastionConfig) error {
 //   - All cleanup operations use independent contexts to ensure completion
 func createServer(ctx context.Context, config *BastionConfig, port *ports.Port, subnet subnets.Subnet, userData []byte) error {
 	var (
-		flavor           flavors.Flavor
-		image            images.Image
-		sshKeyPair       keypairs.KeyPair
-		newServer        *servers.Server
-		err              error
+		flavor     flavors.Flavor
+		image      images.Image
+		sshKeyPair keypairs.KeyPair
+		newServer  *servers.Server
+		err        error
 	)
 	log.Debugf("createServer: userData = %v", string(userData))
 
@@ -1838,7 +1845,6 @@ func deleteServer(ctx context.Context, cloudName string, server *servers.Server)
 	return nil
 }
 
-
 // addServerKnownHosts adds the server's SSH host keys to known_hosts file.
 // It removes any existing host keys for the IP address before adding new ones.
 func addServerKnownHosts(ctx context.Context, ipAddress string) error {
@@ -1886,7 +1892,7 @@ func removeHostKey(knownHostsPath, ipAddress string) error {
 	if err != nil {
 		// Ignore "not found" errors - the host key may not exist yet
 		if strings.Contains(output, "not found") ||
-		   strings.Contains(output, "No such file or directory") {
+			strings.Contains(output, "No such file or directory") {
 			log.Debugf("removeHostKey: host key not found (expected), ignoring error")
 			return nil
 		}

@@ -136,9 +136,10 @@ func getPriority(ro RunnableObject) int {
 //   - []RunnableObject: Sorted array (same array, modified in place)
 //
 // Example:
-//   objects := []RunnableObject{obj1, obj2, obj3}
-//   sorted := BubbleSort(objects)
-//   // sorted[0] has the highest priority
+//
+//	objects := []RunnableObject{obj1, obj2, obj3}
+//	sorted := BubbleSort(objects)
+//	// sorted[0] has the highest priority
 func BubbleSort(input []RunnableObject) []RunnableObject {
 	if len(input) <= 1 {
 		return input
@@ -191,10 +192,11 @@ func BubbleSort(input []RunnableObject) []RunnableObject {
 //   - error: Any error encountered during initialization or execution
 //
 // Example:
-//   objects, err := initializeRunnableObjects(services, []NewRunnableObjectsEntry{
-//       {NRO: NewIBMDNS, Name: "IBM DNS"},
-//       {NRO: NewLoadBalancer, Name: "Load Balancer"},
-//   })
+//
+//	objects, err := initializeRunnableObjects(services, []NewRunnableObjectsEntry{
+//	    {NRO: NewIBMDNS, Name: "IBM DNS"},
+//	    {NRO: NewLoadBalancer, Name: "Load Balancer"},
+//	})
 func initializeRunnableObjects(ctx context.Context, services *Services, robjsFuncs []NewRunnableObjectsEntry) ([]RunnableObject, error) {
 	if services == nil {
 		return nil, fmt.Errorf("services cannot be nil")
@@ -213,7 +215,7 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 		// Check if context was cancelled
 		select {
 		case <-ctx.Done():
-			return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+			return []RunnableObject{}, fmt.Errorf("operation cancelled: %w", ctx.Err())
 		default:
 		}
 
@@ -252,7 +254,7 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 			// Check if context was cancelled
 			select {
 			case <-ctx.Done():
-				return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+				return []RunnableObject{}, fmt.Errorf("operation cancelled: %w", ctx.Err())
 			default:
 			}
 
@@ -289,7 +291,7 @@ func initializeRunnableObjects(ctx context.Context, services *Services, robjsFun
 		// Check if context was cancelled
 		select {
 		case <-ctx.Done():
-			return []RunnableObject{},fmt.Errorf("operation cancelled: %w", ctx.Err())
+			return []RunnableObject{}, fmt.Errorf("operation cancelled: %w", ctx.Err())
 		default:
 		}
 

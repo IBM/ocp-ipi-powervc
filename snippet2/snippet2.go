@@ -19,9 +19,9 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/utils/openstack/clientconfig"
+	"strings"
 )
 
 func main1() {
@@ -45,7 +45,7 @@ func main2() {
       auth_url: https://example.com:13000`
 
 	ao, _, _, err := clouds.Parse(
-//		clouds.WithCloudsYAML(strings.NewReader(exampleClouds)),
+		//		clouds.WithCloudsYAML(strings.NewReader(exampleClouds)),
 		clouds.WithCloudName("openstack"),
 	)
 	if err != nil {

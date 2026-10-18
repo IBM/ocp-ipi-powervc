@@ -63,7 +63,8 @@ func createCommand(ctx context.Context, acmdline []string) (*exec.Cmd, error) {
 //   - error: Any error encountered during command execution
 //
 // Example:
-//   err := runCommand("/path/to/kubeconfig", "kubectl get nodes")
+//
+//	err := runCommand("/path/to/kubeconfig", "kubectl get nodes")
 func runCommand(kubeconfig string, cmdline string) error {
 	if kubeconfig == "" {
 		return fmt.Errorf("kubeconfig path cannot be empty")
@@ -116,7 +117,8 @@ func runCommand(kubeconfig string, cmdline string) error {
 //   - error: Any error encountered during command execution
 //
 // Example:
-//   err := runSplitCommand([]string{"kubectl", "get", "nodes"})
+//
+//	err := runSplitCommand([]string{"kubectl", "get", "nodes"})
 func runSplitCommand(acmdline []string) error {
 	if len(acmdline) == 0 {
 		return fmt.Errorf("command array cannot be empty")
@@ -147,7 +149,8 @@ func runSplitCommand(acmdline []string) error {
 //   - error: Any error encountered during command execution
 //
 // Example:
-//   out, err := runSplitCommand2([]string{"kubectl", "version", "--client"})
+//
+//	out, err := runSplitCommand2([]string{"kubectl", "version", "--client"})
 func runSplitCommand2(acmdline []string) ([]byte, error) {
 	if len(acmdline) == 0 {
 		return nil, fmt.Errorf("command array cannot be empty")
@@ -188,10 +191,11 @@ func runSplitCommand2(acmdline []string) ([]byte, error) {
 //   - error: Any error encountered during command execution
 //
 // Example:
-//   out, err := runSplitCommandNoErr([]string{"kubectl", "get", "pods"}, false)
-//   if err != nil {
-//       log.Printf("Command failed: %v", err)
-//   }
+//
+//	out, err := runSplitCommandNoErr([]string{"kubectl", "get", "pods"}, false)
+//	if err != nil {
+//	    log.Printf("Command failed: %v", err)
+//	}
 //
 // Note:
 //   - stderr is discarded
@@ -226,8 +230,8 @@ func runSplitCommandNoErrWithContext(ctx context.Context, acmdline []string, sil
 	}
 
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout      // Capture stdout into a buffer
-	cmd.Stderr = io.Discard   // Explicitly discard stderr
+	cmd.Stdout = &stdout    // Capture stdout into a buffer
+	cmd.Stderr = io.Discard // Explicitly discard stderr
 
 	if !silent {
 		log.Debugf("runSplitCommandNoErr: Executing command: %v", acmdline)
@@ -263,7 +267,8 @@ func runSplitCommandNoErrWithContext(ctx context.Context, acmdline []string, sil
 //   - error: Any error encountered during command execution
 //
 // Example:
-//   err := runTwoCommands("/path/to/kubeconfig", "kubectl get pods -o json", "jq .items[].metadata.name")
+//
+//	err := runTwoCommands("/path/to/kubeconfig", "kubectl get pods -o json", "jq .items[].metadata.name")
 func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	var readPipeClosed bool
 
@@ -313,14 +318,14 @@ func runTwoCommands(kubeconfig string, cmdline1 string, cmdline2 string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
-	defer func () {
+	defer func() {
 		if !readPipeClosed {
 			readPipe.Close()
 		}
 	}()
 
 	// Connect first command's stdout to pipe
-	cmd1.Stdin  = os.Stdin
+	cmd1.Stdin = os.Stdin
 	cmd1.Stdout = writePipe
 	cmd1.Stderr = os.Stderr
 

@@ -25,8 +25,8 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/attachinterfaces"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
-	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/hypervisors"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
@@ -566,7 +566,7 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 		)
 
 		// Check server status
-		foundServer, err2 = findServer(ctx, []string{ cloudName }, name)
+		foundServer, err2 = findServer(ctx, []string{cloudName}, name)
 		if err2 != nil {
 			log.Debugf("waitForServer: findServer returned %v", err2)
 
@@ -586,7 +586,7 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 		}
 		if foundServer.Status == serverStatusError {
 			log.Debugf("waitForServer: server %s has %s state", name, foundServer.Status)
-			return false, fmt.Errorf ("server has ERROR state")
+			return false, fmt.Errorf("server has ERROR state")
 		}
 
 		log.Debugf("waitForServer: server %s not ready yet (Status=%s, PowerState=%d)", name, foundServer.Status, foundServer.PowerState)
@@ -607,6 +607,7 @@ func waitForServer(ctx context.Context, cloudName string, name string) error {
 // Parameters:
 //   - ctx: Context for the operation
 //   - clouds: List of cloud names to retrieve servers from
+//
 // Returns:
 //   - allServers: Slice of all servers retrieved from all clouds
 //   - err: Error if any operation fails

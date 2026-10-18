@@ -1406,6 +1406,7 @@ function run_openshift_install() {
 
 	# Optional: Enable multipath on master nodes
 	configure_multipath
+#exit 0
 
 	# Deploy the OpenShift cluster (this is the longest operation)
 	log_info "Creating OpenShift cluster (this may take 30-45 minutes)..."

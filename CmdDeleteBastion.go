@@ -22,10 +22,11 @@
 //   - Comprehensive input validation
 //
 // Usage Example:
-//   ./ocp-ipi-powervc delete-bastion \
-//     --cloud mycloud \
-//     --bastionName my-bastion \
-//     --shouldDebug true
+//
+//	./ocp-ipi-powervc delete-bastion \
+//	  --cloud mycloud \
+//	  --bastionName my-bastion \
+//	  --shouldDebug true
 package main
 
 import (
@@ -114,7 +115,7 @@ func parseDeleteBastionFlags(deleteBastionFlags *flag.FlagSet, args []string) (*
 func deleteBastionCommand(deleteBastionFlags *flag.FlagSet, args []string) error {
 	err := innerDeleteBastionCommand(deleteBastionFlags, args)
 	if err != nil {
-		fmt.Printf("%+v\n",err)
+		fmt.Printf("%+v\n", err)
 		if deleteBastionFlags != nil {
 			deleteBastionFlags.Usage()
 		}
