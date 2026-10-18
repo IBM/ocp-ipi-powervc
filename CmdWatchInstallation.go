@@ -29,6 +29,7 @@
 //   - bastionMetadata: Root directory where OpenShift cluster installs are located (required)
 //   - bastionRsa: The RSA filename for the bastion VM (required)
 //   - enableDhcpd: Enable the DHCP server (true/false, default: false)
+//   - dhcpServer: Which DHCP server to manage when enableDhcpd=true: "dhcpd" (default) or "kea"
 //   - dhcpInterface: The interface name for the DHCP server (required if enableDhcpd=true)
 //   - dhcpSubnet: The subnet for DHCP requests (required if enableDhcpd=true)
 //   - dhcpNetmask: The netmask for DHCP requests (required if enableDhcpd=true)
@@ -89,6 +90,7 @@ const (
 	flagWatchInstallationBastionMetadata  = "bastionMetadata"
 	flagWatchInstallationBastionRsa       = "bastionRsa"
 	flagWatchInstallationEnableDhcpd      = "enableDhcpd"
+	flagWatchInstallationDhcpServer       = "dhcpServer"
 	flagWatchInstallationDhcpInterface    = "dhcpInterface"
 	flagWatchInstallationDhcpSubnet       = "dhcpSubnet"
 	flagWatchInstallationDhcpNetmask      = "dhcpNetmask"
@@ -103,6 +105,7 @@ const (
 	defaultWatchInstallationBastionMetadata  = ""
 	defaultWatchInstallationBastionRsa       = ""
 	defaultWatchInstallationEnableDhcpd      = "false"
+	defaultWatchInstallationDhcpServer       = dhcpServerDhcpd
 	defaultWatchInstallationDhcpInterface    = ""
 	defaultWatchInstallationDhcpSubnet       = ""
 	defaultWatchInstallationDhcpNetmask      = ""
@@ -117,7 +120,8 @@ const (
 	usageWatchInstallationDomainName       = "The DNS domain to use"
 	usageWatchInstallationBastionMetadata  = "A root directory where OpenShift clusters installs are located"
 	usageWatchInstallationBastionRsa       = "The RSA filename for the bastion VM to use"
-	usageWatchInstallationEnableDhcpd      = "Should enable the dhcpd server"
+	usageWatchInstallationEnableDhcpd      = "Should enable the DHCP server"
+	usageWatchInstallationDhcpServer       = "The DHCP server to manage: dhcpd or kea"
 	usageWatchInstallationDhcpInterface    = "The interface name for the dhcpd server"
 	usageWatchInstallationDhcpSubnet       = "The subnet for a DHCP request"
 	usageWatchInstallationDhcpNetmask      = "The netmask for a DHCP request"
@@ -126,6 +130,10 @@ const (
 	usageWatchInstallationDhcpServerId     = "The DNS server identifier for a DHCP request"
 	usageWatchInstallationShouldDebug      = "Should output debug output"
 	usageWatchInstallationLog              = "The filename to log all output to"
+
+	// Supported DHCP servers
+	dhcpServerDhcpd = "dhcpd"
+	dhcpServerKea   = "kea"
 
 	// Error message prefix
 	errPrefixWatchInstallation = "Error: "
@@ -197,6 +205,7 @@ type WatchInstallationConfig struct {
 
 	// DHCP configuration
 	EnableDhcpd    bool   // Whether to enable the DHCP server
+	DhcpServer     string // Which DHCP server to manage: "dhcpd" (default when empty) or "kea"
 	DhcpInterface  string // Network interface name for DHCP server
 	DhcpSubnet     string // Subnet for DHCP requests
 	DhcpNetmask    string // Netmask for DHCP requests
@@ -280,6 +289,11 @@ func (c *WatchInstallationConfig) Validate() error {
 
 	// Validate DHCP configuration if enabled
 	if c.EnableDhcpd {
+		switch c.DhcpServer {
+		case "", dhcpServerDhcpd, dhcpServerKea:
+		default:
+			return fmt.Errorf("DHCP server must be %q or %q, got %q", dhcpServerDhcpd, dhcpServerKea, c.DhcpServer)
+		}
 		if c.DhcpInterface == "" {
 			return fmt.Errorf("DHCP interface is required when DHCP is enabled")
 		}
@@ -781,6 +795,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	log.Debugf("Bastion RSA: %s", config.BastionRsa)
 
 	if config.EnableDhcpd {
+		log.Debugf("DHCP server: %s", config.DhcpServer)
 		log.Debugf("DHCP interface: %s", config.DhcpInterface)
 		log.Debugf("DHCP subnet: %s", config.DhcpSubnet)
 		log.Debugf("DHCP netmask: %s", config.DhcpNetmask)
@@ -856,8 +871,9 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 //  5. If no changes are detected, return early (knownServers and bastions unchanged)
 //  6. Update knownServers to the new set
 //  7. Update bastion configurations via updateBastionInformations
-//  8. If DHCP is enabled: regenerate /tmp/dhcpd.conf, copy to /etc/dhcp/dhcpd.conf,
-//     and restart dhcpd.service
+//  8. If DHCP is enabled: regenerate the configuration for the selected server
+//     (dhcpd: /tmp/dhcpd.conf -> /etc/dhcp/dhcpd.conf, restart dhcpd.service;
+//     kea: /tmp/kea-dhcp4.conf -> /etc/kea/kea-dhcp4.conf, restart kea-dhcp4.service)
 //  9. Update HAProxy configuration on each valid bastion via haproxyCfg
 // 10. If an IBM Cloud API key is available: manage DNS records via dnsRecords
 //
@@ -925,41 +941,74 @@ func performMonitoringIteration(ctx context.Context, config *WatchInstallationCo
 	// Update DHCP configuration if enabled
 	log.Debugf("enableDhcpd = %v", config.EnableDhcpd)
 	if config.EnableDhcpd {
-		log.Infof("Updating DHCP configuration")
-		filename := "/tmp/dhcpd.conf"
-		err = dhcpdConf(iterCtx,
-			filename,
-			clouds,
-			config.DomainName,
-			config.DhcpInterface,
-			config.DhcpSubnet,
-			config.DhcpNetmask,
-			config.DhcpRouter,
-			config.DhcpDnsServers,
-			config.DhcpServerId,
+		var (
+			filename    string
+			destination string
+			serviceName string
+			generate    func() error
 		)
+
+		log.Infof("Updating DHCP configuration (server: %s)", config.DhcpServer)
+		switch config.DhcpServer {
+		case dhcpServerKea:
+			filename = "/tmp/kea-dhcp4.conf"
+			destination = "/etc/kea/kea-dhcp4.conf"
+			serviceName = "kea-dhcp4.service"
+			generate = func() error {
+				return keaConf(iterCtx,
+					filename,
+					clouds,
+					config.DomainName,
+					config.DhcpInterface,
+					config.DhcpSubnet,
+					config.DhcpNetmask,
+					config.DhcpRouter,
+					config.DhcpDnsServers,
+					config.DhcpServerId,
+				)
+			}
+		default:
+			filename = "/tmp/dhcpd.conf"
+			destination = "/etc/dhcp/dhcpd.conf"
+			serviceName = "dhcpd.service"
+			generate = func() error {
+				return dhcpdConf(iterCtx,
+					filename,
+					clouds,
+					config.DomainName,
+					config.DhcpInterface,
+					config.DhcpSubnet,
+					config.DhcpNetmask,
+					config.DhcpRouter,
+					config.DhcpDnsServers,
+					config.DhcpServerId,
+				)
+			}
+		}
+
+		err = generate()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate DHCP configuration: %w", err)
 		}
 		log.Infof("DHCP configuration generated: %s", filename)
 
-		log.Infof("Copying DHCP configuration to /etc/dhcp/dhcpd.conf")
+		log.Infof("Copying DHCP configuration to %s", destination)
 		err = runSplitCommand([]string{
 			"sudo",
 			"/usr/bin/cp",
 			filename,
-			"/etc/dhcp/dhcpd.conf",
+			destination,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy DHCP configuration: %w", err)
 		}
 
-		log.Infof("Restarting DHCP service")
+		log.Infof("Restarting DHCP service %s", serviceName)
 		err = runSplitCommand([]string{
 			"sudo",
 			"systemctl",
 			"restart",
-			"dhcpd.service",
+			serviceName,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to restart DHCP service: %w", err)
@@ -1497,6 +1546,104 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 	}
 
 	return nil
+}
+
+// keaConf generates a Kea DHCPv4 server configuration file for all OpenStack servers.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - filename: Path where the configuration file will be written
+//   - clouds: Cloud names to query for servers
+//   - domainName: DNS domain name for the cluster
+//   - dhcpInterface: Network interface for DHCP server
+//   - dhcpSubnet: Subnet address (the prefix length is derived from dhcpNetmask)
+//   - dhcpNetmask: Netmask for the subnet
+//   - dhcpRouter: Default gateway/router address
+//   - dhcpDnsServers: DNS server addresses (comma-separated)
+//   - dhcpServerId: DHCP server identifier
+//
+// Returns:
+//   - error: Any error encountered generating the configuration
+//
+// The function retrieves all servers from OpenStack and generates a kea-dhcp4.conf
+// JSON file with a static host reservation for every server that has a resolvable
+// MAC and IP address. No address pool is defined, so (like the dhcpd configuration's
+// "ignore unknown-clients") only reserved hosts receive leases.
+func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName string, dhcpInterface string, dhcpSubnet string, dhcpNetmask string, dhcpRouter string, dhcpDnsServers string, dhcpServerId string) error {
+	maskIP := net.ParseIP(dhcpNetmask).To4()
+	if maskIP == nil {
+		return fmt.Errorf("netmask must be a valid IPv4 address: %s", dhcpNetmask)
+	}
+	prefixLen, _ := net.IPMask(maskIP).Size()
+
+	dnsServers := make([]string, 0)
+	for _, dnsServer := range strings.Split(dhcpDnsServers, ",") {
+		dnsServers = append(dnsServers, strings.TrimSpace(dnsServer))
+	}
+
+	allServers, err := getAllServers(ctx, clouds)
+	if err != nil {
+		return err
+	}
+
+	reservations := make([]map[string]string, 0)
+	for _, server := range allServers {
+		macAddr, ipAddress, err := findIpAddress(server)
+		if err == nil && macAddr != "" && ipAddress != "" {
+			reservations = append(reservations, map[string]string{
+				"hw-address": macAddr,
+				"ip-address": ipAddress,
+				"hostname":   server.Name,
+			})
+		}
+	}
+
+	keaConfig := map[string]any{
+		"Dhcp4": map[string]any{
+			"interfaces-config": map[string]any{
+				"interfaces": []string{dhcpInterface},
+			},
+			"lease-database": map[string]any{
+				"type":    "memfile",
+				"persist": true,
+			},
+			"valid-lifetime":     2678400,
+			"max-valid-lifetime": 2678400,
+			"subnet4": []map[string]any{
+				{
+					"id":                     1,
+					"subnet":                 fmt.Sprintf("%s/%d", dhcpSubnet, prefixLen),
+					"reservations-out-of-pool": true,
+					"option-data": []map[string]any{
+						{"name": "routers", "data": dhcpRouter},
+						{"name": "subnet-mask", "data": dhcpNetmask},
+						{"name": "domain-name-servers", "data": strings.Join(dnsServers, ", ")},
+						{"name": "domain-name", "data": domainName},
+						{"name": "dhcp-server-identifier", "data": dhcpServerId},
+					},
+					"reservations": reservations,
+				},
+			},
+			"loggers": []map[string]any{
+				{
+					"name":     "kea-dhcp4",
+					"severity": "INFO",
+					"output-options": []map[string]any{
+						{"output": "stdout"},
+					},
+				},
+			},
+		},
+	}
+
+	content, err := json.MarshalIndent(keaConfig, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Writing %s", filename)
+
+	return os.WriteFile(filename, append(content, '\n'), 0644)
 }
 
 // haproxyCfg generates HAProxy configuration files for each bastion server.
