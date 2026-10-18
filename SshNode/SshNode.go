@@ -69,6 +69,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -478,10 +479,95 @@ func generateSSHCommand(ip, sshKey string) string {
 	return fmt.Sprintf("ssh-agent ssh -t -o StrictHostKeyChecking=no -i %q core@%s", sshKey, ip)
 }
 
+// escapeReader wraps an io.Reader and intercepts the SSH escape sequence
+// "~." (tilde-dot) when it appears after a newline (or at the start of
+// input), mirroring the behaviour of the openssh client.  On detection it
+// closes the done channel so that the caller can tear down the session, and
+// returns io.EOF to the copy loop so it stops gracefully.
+//
+// The recognised patterns are:
+//
+//	\r~.   — most common in raw-mode terminals (CR before tilde)
+//	\n~.   — newline before tilde (e.g. piped input)
+//	~.     — at the very start of the stream (afterNewline initialised true)
+//
+// A single "~" at a line start is held back (not forwarded) until the next
+// byte arrives so we can decide whether to suppress it.  If the next byte is
+// anything other than ".", the held tilde is forwarded first, followed by the
+// non-dot byte on the next Read call.
+type escapeReader struct {
+	r            io.Reader
+	done         chan struct{}
+	afterNewline bool  // true when the previous byte was \r, \n, or start-of-stream
+	hasHeld      bool  // true when heldByte contains a pending byte to emit
+	heldByte     byte  // byte to emit on the next Read before reading more input
+}
+
+func newEscapeReader(r io.Reader, done chan struct{}) *escapeReader {
+	return &escapeReader{r: r, done: done, afterNewline: true}
+}
+
+// Read implements io.Reader.  It reads one byte at a time so that escape
+// detection stays simple without a separate state machine buffer.
+func (e *escapeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Emit any byte held from a previous call first.
+	if e.hasHeld {
+		p[0] = e.heldByte
+		e.hasHeld = false
+		e.afterNewline = (e.heldByte == '\r' || e.heldByte == '\n')
+		return 1, nil
+	}
+
+	var b [1]byte
+	_, err := e.r.Read(b[:])
+	if err != nil {
+		return 0, err
+	}
+	ch := b[0]
+
+	if e.afterNewline && ch == '~' {
+		// Read one more byte to decide: escape or literal tilde?
+		_, err := e.r.Read(b[:])
+		if err != nil {
+			// Stream ended while holding tilde — emit it with the error.
+			p[0] = '~'
+			e.afterNewline = false
+			return 1, err
+		}
+		next := b[0]
+		if next == '.' {
+			// Escape sequence detected — signal the caller and stop.
+			select {
+			case <-e.done:
+			default:
+				close(e.done)
+			}
+			return 0, io.EOF
+		}
+		// Not an escape: emit the tilde now and hold `next` for the following Read.
+		p[0] = '~'
+		e.afterNewline = false
+		e.hasHeld = true
+		e.heldByte = next
+		return 1, nil
+	}
+
+	e.afterNewline = (ch == '\r' || ch == '\n')
+	p[0] = ch
+	return 1, nil
+}
+
 // runInteractiveSSH establishes an interactive SSH shell on the remote host,
 // equivalent to `ssh -t core@<ip>`. It allocates a PTY, puts the local
 // terminal in raw mode so that Ctrl-C and other control characters are
 // forwarded to the remote, and mirrors local terminal resize events.
+//
+// The SSH escape sequence "~." (typed after a newline) disconnects the
+// session locally, matching the behaviour of the openssh client.
 func runInteractiveSSH(client *ssh.Client, debug bool) error {
 	session, err := client.NewSession()
 	if err != nil {
@@ -521,10 +607,32 @@ func runInteractiveSSH(client *ssh.Client, debug bool) error {
 	}
 	defer term.Restore(fd, oldState)
 
-	// Wire up standard I/O.
-	session.Stdin = os.Stdin
+	// escapeDone is closed by escapeReader when "~." is detected.
+	escapeDone := make(chan struct{})
+
+	// Wire up standard I/O.  Stdin goes through the escape-sequence filter;
+	// stdout and stderr are forwarded directly.
+	stdinPR, stdinPW := io.Pipe()
+	session.Stdin = stdinPR
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
+
+	er := newEscapeReader(os.Stdin, escapeDone)
+
+	// Copy filtered stdin into the session pipe.
+	var stdinWg sync.WaitGroup
+	stdinWg.Add(1)
+	go func() {
+		defer stdinWg.Done()
+		defer stdinPW.Close()
+		io.Copy(stdinPW, er) //nolint:errcheck // EOF / escape closes the pipe
+	}()
+
+	// If "~." is detected, close the session so session.Wait() unblocks.
+	go func() {
+		<-escapeDone
+		session.Close()
+	}()
 
 	// Forward terminal-resize events (SIGWINCH) until the session ends.
 	sigWinch := make(chan os.Signal, 1)
@@ -558,14 +666,25 @@ func runInteractiveSSH(client *ssh.Client, debug bool) error {
 	}
 
 	// Wait for the remote shell to exit. ExitError is expected for interactive
-	// sessions (user types "exit", presses Ctrl-D, or is interrupted), so we
-	// only surface genuine I/O / connection errors.
-	if err := session.Wait(); err != nil {
+	// sessions (user types "exit", presses Ctrl-D, ~., or is interrupted), so
+	// we only surface genuine I/O / connection errors.
+	waitErr := session.Wait()
+	stdinWg.Wait() // drain the stdin goroutine before restoring the terminal
+
+	// Check whether the session ended due to the escape sequence.
+	select {
+	case <-escapeDone:
+		logDebug(debug, "session closed via escape sequence (~.)")
+		return nil
+	default:
+	}
+
+	if waitErr != nil {
 		var exitErr *ssh.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(waitErr, &exitErr) {
 			return nil // normal remote exit
 		}
-		return fmt.Errorf("SSH session ended: %w", err)
+		return fmt.Errorf("SSH session ended: %w", waitErr)
 	}
 	return nil
 }
