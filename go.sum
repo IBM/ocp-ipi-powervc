@@ -2,8 +2,8 @@ github.com/IBM-Cloud/bluemix-go v0.0.0-20260916083538-6e91b9f8f36f h1:HuLwiChEqL
 github.com/IBM-Cloud/bluemix-go v0.0.0-20260916083538-6e91b9f8f36f/go.mod h1:zPan3iqKUh60r18AtPwyC5lb553ia7e+RRbGNt3+57I=
 github.com/IBM/go-sdk-core/v5 v5.25.1 h1:vLQ5/fjn7+Fc4tWmyALqLytMM4Lrh4XHLUogaZWZ2w8=
 github.com/IBM/go-sdk-core/v5 v5.25.1/go.mod h1:mhCkszCCPNBJiXo+CeDvABZMTs6A+GfmIgeVV95UfaI=
-github.com/IBM/networking-go-sdk v0.55.2 h1:sB3m67YVfwThqy5W3kNGJozUMHm6oTLs8/Bi5ysqWrE=
-github.com/IBM/networking-go-sdk v0.55.2/go.mod h1:gvdy8j9MqmrZ/RxXbUNclzVP7aI+4jS8Uz8XMflFCd8=
+github.com/IBM/networking-go-sdk v0.55.3 h1:rV2Sy/al0aCffX5ZB7NA2u+5u5X/uBTJlk8fzFFyCQA=
+github.com/IBM/networking-go-sdk v0.55.3/go.mod h1:8AXHlpn+ovcju2zrijy0ZYxLttLyfUDPITf1qspSslU=
 github.com/IBM/platform-services-go-sdk v0.103.4 h1:vvEMFdlFic0w+3U7oWx94BY5gS2PSqRMUhcRz9n55k8=
 github.com/IBM/platform-services-go-sdk v0.103.4/go.mod h1:6cWplM5AFkkZ8iWDxnbvzaPjEFcHCc7am16BSfVpbBI=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
@@ -101,8 +101,8 @@ github.com/onsi/ginkgo/v2 v2.33.1 h1:62XfWJbEIjPSCSDYrsCPP/SHcmH7O0M8ne8zfqQ2iz4
 github.com/onsi/ginkgo/v2 v2.33.1/go.mod h1:+aXOY+vzZ5mu2iI2HpTZUPmM//oQfsNFX6gU9kNcA44=
 github.com/onsi/gomega v1.44.0 h1:eAiGl3Pw5jz5GQdDff0BcxYpAX1JxW8xD7mFUuwNfZQ=
 github.com/onsi/gomega v1.44.0/go.mod h1:e/C2HwaZ1DhvjzXXuFhcR7hY7Sh9pl7MmoWKEjzwcdA=
-github.com/openshift/api v0.0.0-20261014181538-59ba9565f475 h1:xSyefIZxO6TRkrGSkCbwcHdkSTEWo+WINDiQ+GYrHxc=
-github.com/openshift/api v0.0.0-20261014181538-59ba9565f475/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
+github.com/openshift/api v0.0.0-20261017003925-24b2699a9b32 h1:8S9304xp9Ufdfq0V9wCLsQWsqhWXAA5qIcW1Fdtqy8k=
+github.com/openshift/api v0.0.0-20261017003925-24b2699a9b32/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
 github.com/pborman/getopt v0.0.0-20170112200414-7148bc3a4c30/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
