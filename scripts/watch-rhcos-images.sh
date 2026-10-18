@@ -52,8 +52,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Options
 VERBOSE=false
@@ -208,7 +208,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #------------------------------------------------------------------------------
@@ -673,23 +673,23 @@ function extract_image_info() {
 		return 1
 	fi
 
-	result[download_url]="${jq_out%%|*}"
-	result[sha256]="${jq_out##*|}"
+	result["download_url"]="${jq_out%%|*}"
+	result["sha256"]="${jq_out##*|}"
 
-	if [[ -z "${result[download_url]}" || "${result[download_url]}" == "null" ]]; then
+	if [[ -z "${result["download_url"]}" || "${result["download_url"]}" == "null" ]]; then
 		log_error "Failed to extract download URL from JSON"
 		return 1
 	fi
 
-	result[filename]="${result[download_url]##*/}"
-	result[filename]="${result[filename]%.qcow2.gz}"
+	result["filename"]="${result["download_url"]##*/}"
+	result["filename"]="${result["filename"]%.qcow2.gz}"
 	if is_var_set PROJECT; then
 		local project="${PROJECT%-}"
 		log_info "Prepending project (${project}) to RHCOS filename"
-		result[filename]="${project}-${result[filename]}"
+		result["filename"]="${project}-${result["filename"]}"
 	fi
 
-	if [[ -z "${result[sha256]}" || "${result[sha256]}" == "null" ]]; then
+	if [[ -z "${result["sha256"]}" || "${result["sha256"]}" == "null" ]]; then
 		log_warning "SHA256 checksum not found in JSON — proceeding without integrity check"
 	fi
 
@@ -973,7 +973,7 @@ function main() {
 	# The directory is removed on EXIT regardless of how the script terminates.
 	local work_dir
 	work_dir=$(mktemp -d)
-	trap "/bin/rm -rf '${work_dir}'" EXIT
+	trap 'rm -rf "${work_dir}"' EXIT
 	cd "${work_dir}"
 	log_info "Working directory: ${work_dir}"
 

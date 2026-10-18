@@ -60,8 +60,8 @@ set -euo pipefail
 # Global Variables
 # Defines script-wide constants and configuration values
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # ANSI color codes for enhanced terminal output
 readonly COLOR_RED='\033[0;31m'      # Error messages
@@ -197,7 +197,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 ################################################################################
@@ -516,7 +516,8 @@ function filter_images() {
 		return 1
 	fi
 
-	# Check if name matches pattern
+	# Check if name matches pattern (unquoted RHS required for glob pattern matching)
+	# shellcheck disable=SC2053
 	if [[ ! "${name}" == ${pattern} ]]; then
 		return 1
 	fi
@@ -588,7 +589,7 @@ function process_images() {
 	fi
 
 	# Process each image
-	while IFS=$' ' read -r uuid name status; do
+	while IFS=$' ' read -r uuid name _status; do
 		# Skip empty lines
 		[[ -z "${uuid}" ]] && continue
 

@@ -160,6 +160,8 @@ if [[ -z "${BASTION_RE}" ]]; then
   exit 1
 fi
 re_rc=0
+# Capture regex evaluation exit code ($? >= 2 indicates syntax error in bash)
+# shellcheck disable=SC2319
 [[ "" =~ ${BASTION_RE} ]] 2>/dev/null || re_rc=$?
 if [[ ${re_rc} -ge 2 ]]; then
   log_error "Invalid regular expression for BASTION_RE: ${BASTION_RE}"

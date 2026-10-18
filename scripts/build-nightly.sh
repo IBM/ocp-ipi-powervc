@@ -19,7 +19,7 @@ USE_PATCH=false
 declare -a ENV_VARS
 ENV_VARS=( )
 
-for VAR in ${ENV_VARS[@]}
+for VAR in "${ENV_VARS[@]}"
 do
 	if [[ ! -v ${VAR} ]]
 	then
@@ -50,13 +50,12 @@ do
 	#echo "OPT=${OPT}"
 	case "${OPT}" in
 	v|V)
-		VERSION=$(cd ${SCRIPT_DIR}; git describe --tags --abbrev=0)
+		VERSION=$(cd "${SCRIPT_DIR}"; git describe --tags --abbrev=0)
 		echo "The version is ${VERSION}"
 		exit 0
 		;;
 	*)
 		usage
-		exit 1
 		;;
 	esac
 done
@@ -66,11 +65,10 @@ shift $((OPTIND - 1))
 if [[ $# -ne 1 ]]
 then
 	usage
-	exit 1
 fi
 
 RELEASE=$1
-RELEASE_DIR=$(mktemp --directory); trap "/bin/rm -rf ${RELEASE_DIR}" EXIT
+RELEASE_DIR=$(mktemp --directory); trap 'rm -rf "${RELEASE_DIR}"' EXIT
 echo "RELEASE=${RELEASE}"
 
 if [ -z "${HOME}" ]
@@ -79,13 +77,13 @@ then
 	exit 1
 fi
 
-if [ ! -d ${HOME}/installer/ ]
+if [ ! -d "${HOME}/installer/" ]
 then
 	echo "Error: Expecting the GIT directory ${HOME}/installer/ to exist!"
 	exit 1
 fi
 
-if [ ! -f ${HOME}/.pullSecretCompact ]
+if [ ! -f "${HOME}/.pullSecretCompact" ]
 then
 	echo "Error: Expecting the file ${HOME}/.pullSecretCompact to exist!"
 	exit 1
@@ -95,22 +93,22 @@ echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--
 
 declare -a PROGRAMS
 PROGRAMS=( git go make oc patch tar zip )
-for PROGRAM in ${PROGRAMS[@]}
+for PROGRAM in "${PROGRAMS[@]}"
 do
 	echo "Checking for program ${PROGRAM}"
-	if ! hash ${PROGRAM} 1>/dev/null 2>&1
+	if ! hash "${PROGRAM}" 1>/dev/null 2>&1
 	then
 		echo "Error: Missing ${PROGRAM} program!"
 		exit 1
 	fi
 done
 
-pushd ${RELEASE_DIR}
+pushd "${RELEASE_DIR}"
 
 echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
 echo "Downloading the tools for ${RELEASE}"
 
-oc adm release extract --tools -a ${HOME}/.pullSecretCompact "${RELEASE}"
+oc adm release extract --tools -a "${HOME}/.pullSecretCompact" "${RELEASE}"
 
 echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
 echo "Extracting the OpenShift installer from the tools"
@@ -124,7 +122,7 @@ echo "COMMIT=${COMMIT}"
 
 popd
 
-pushd ${HOME}/installer/
+pushd "${HOME}/installer/"
 
 echo "8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------"
 echo "Gitting"
@@ -135,7 +133,7 @@ git clean -fxd .
 
 git fetch origin
 
-git checkout ${COMMIT}
+git checkout "${COMMIT}"
 
 if ${USE_PATCH}
 then

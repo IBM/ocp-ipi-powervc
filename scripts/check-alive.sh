@@ -261,6 +261,8 @@ function log_debug() {
 #   signal_handler() - On SIGINT/SIGTERM
 #   main() - On normal exit
 #------------------------------------------------------------------------------
+# Invoked indirectly via signal_handler trap callback
+# shellcheck disable=SC2329
 function cleanup() {
 	log_info "Cleanup initiated"
 	SHUTDOWN_REQUESTED=true
@@ -280,10 +282,12 @@ function cleanup() {
 # Exit Code:
 #   EXIT_SUCCESS (0) - Always exits successfully after cleanup
 #------------------------------------------------------------------------------
+# Invoked via SIGINT/SIGTERM trap
+# shellcheck disable=SC2329
 function signal_handler() {
 	log_warn "Received interrupt signal, shutting down..."
 	cleanup
-	exit ${EXIT_SUCCESS}
+	exit "${EXIT_SUCCESS}"
 }
 
 #

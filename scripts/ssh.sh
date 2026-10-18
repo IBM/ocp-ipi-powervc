@@ -19,8 +19,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 readonly SSH_KEY="${HOME}/.ssh/id_installer_rsa"
 readonly KNOWN_HOSTS="${HOME}/.ssh/known_hosts"
 
@@ -251,7 +251,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #==============================================================================

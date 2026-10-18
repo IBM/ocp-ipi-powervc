@@ -92,7 +92,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # ANSI color codes for enhanced terminal output
 readonly COLOR_RED='\033[0;31m'      # Error messages
@@ -316,7 +317,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #==============================================================================

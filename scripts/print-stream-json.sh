@@ -37,8 +37,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Array to store multiple release versions
 declare -a RELEASES=()
@@ -640,20 +640,20 @@ function extract_image_info() {
 		return 1
 	fi
 
-	result[download_url]=$(jq -r '.formats."qcow2.gz".disk.location' "${FILE2}" 2>/dev/null)
-	if [[ -z "${result[download_url]}" || "${result[download_url]}" == "null" ]]; then
+	result["download_url"]=$(jq -r '.formats."qcow2.gz".disk.location' "${FILE2}" 2>/dev/null)
+	if [[ -z "${result["download_url"]}" || "${result["download_url"]}" == "null" ]]; then
 		log_error "Failed to extract download URL from JSON"
 		return 1
 	fi
 
-	result[filename]="${result[download_url]##*/}"
-	result[filename]="${result[filename]%.qcow2.gz}"
+	result["filename"]="${result["download_url"]##*/}"
+	result["filename"]="${result["filename"]%.qcow2.gz}"
 	# Optionally prepend project name if PROJECT variable is set
 	if is_var_set PROJECT; then
 		log_info "Prepending project name (${PROJECT}) to RHCOS filename"
-		result[filename]="${PROJECT}${result[filename]}"
+		result["filename"]="${PROJECT}${result["filename"]}"
 	fi
-	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
+	result["sha256"]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
 
 	return 0
 }
@@ -913,7 +913,7 @@ fi
 FILE1=$(mktemp)
 FILE2=$(mktemp)
 
-trap "/bin/rm -rf ${FILE1} ${FILE2}" EXIT
+trap 'rm -rf "${FILE1}" "${FILE2}"' EXIT
 
 # Run main function
 main "$@"

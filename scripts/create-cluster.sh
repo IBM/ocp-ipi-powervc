@@ -137,11 +137,12 @@ set -euo pipefail
 # Global Variables
 # Defines script-wide constants and configuration values
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Temporary file for storing bastion IP address
-readonly TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
+TEMP_BASTION_IP="$(mktemp -t bastionIp.XXXXXX)"
+readonly TEMP_BASTION_IP
 
 # Temporary HACK to use SR-IOV network adaptors rather than SEA adaptors
 readonly USE_SRIOV=false
@@ -312,7 +313,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 ################################################################################
@@ -1132,8 +1133,14 @@ function verify_vip_matches_dns() {
 function create_install_config() {
 	log_info "Creating install-config.yaml..."
 
-	local pull_secret=$(echo "${PULL_SECRET}" | sed "s/'/'\\\\''/g")
-	local ssh_key=$(echo "${SSH_KEY}" | sed 's/^/  /')
+	local pull_secret
+	# sed is used to properly escape single quotes in JSON string
+	# shellcheck disable=SC2001
+	pull_secret=$(echo "${PULL_SECRET}" | sed "s/'/'\\\\''/g")
+	local ssh_key
+	# sed indents every line including the first for YAML block format
+	# shellcheck disable=SC2001
+	ssh_key=$(echo "${SSH_KEY}" | sed 's/^/  /')
 
 	cat > "${CLUSTER_DIR}/install-config.yaml" <<EOF
 apiVersion: v1
@@ -1316,8 +1323,8 @@ function configure_sriov() {
 	for name in "${infra_id}-bootstrap" "${infra_id}-master-0" "${infra_id}-master-1" "${infra_id}-master-2"
 	do
 		echo "Creating port: ${name}-0"
-		openstack --os-cloud=${CLOUD} port create \
-			--network ${NETWORK_NAME} \
+		openstack --os-cloud="${CLOUD}" port create \
+			--network "${NETWORK_NAME}" \
 			--vnic-type direct \
 			--binding-profile '{"capacity": 0.02, "delete_with_instance": 1, "vnic_required_vfs": 2}' \
 			"${name}-0"

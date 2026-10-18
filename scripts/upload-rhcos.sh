@@ -51,8 +51,10 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 # Array to store multiple release versions
 declare -a RELEASES=()
@@ -589,7 +591,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #------------------------------------------------------------------------------
@@ -786,21 +788,21 @@ function extract_image_info() {
 		return 1
 	fi
 
-	result[download_url]=$(jq -r '.formats."qcow2.gz".disk.location' "${FILE2}" 2>/dev/null)
-	if [[ -z "${result[download_url]}" || "${result[download_url]}" == "null" ]]; then
+	result["download_url"]=$(jq -r '.formats."qcow2.gz".disk.location' "${FILE2}" 2>/dev/null)
+	if [[ -z "${result["download_url"]}" || "${result["download_url"]}" == "null" ]]; then
 		log_error "Failed to extract download URL from JSON"
 		return 1
 	fi
 
-	result[filename]="${result[download_url]##*/}"
-	result[filename]="${result[filename]%.qcow2.gz}"
+	result["filename"]="${result["download_url"]##*/}"
+	result["filename"]="${result["filename"]%.qcow2.gz}"
 	if is_var_set PROJECT; then
 		local project="${PROJECT%-}"
 		log_info "Prepending project (${project}) to RHCOS filename"
-		result[filename]="${project}-${result[filename]}"
+		result["filename"]="${project}-${result["filename"]}"
 	fi
-	result[sha256]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
-	if [[ -z "${result[sha256]}" || "${result[sha256]}" == "null" ]]; then
+	result["sha256"]=$(jq -r '.formats."qcow2.gz".disk.sha256' "${FILE2}" 2>/dev/null)
+	if [[ -z "${result["sha256"]}" || "${result["sha256"]}" == "null" ]]; then
 		log_warning "SHA256 checksum not found in JSON — proceeding without integrity check"
 	fi
 

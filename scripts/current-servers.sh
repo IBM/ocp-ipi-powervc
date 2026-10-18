@@ -103,7 +103,7 @@ declare -a standalone_images
 declare -a standalone_created
 standalone_max_name=4              # minimum width = length of "Name" header
 
-while IFS=',' read -r id name status networks image flavor created_at; do
+while IFS=',' read -r _id name status networks image flavor created_at; do
   name="${name//\"/}"
   status="${status//\"/}"
   image="${image//\"/}"
@@ -113,7 +113,7 @@ while IFS=',' read -r id name status networks image flavor created_at; do
 
   if [[ "$name" =~ ^p-[a-f0-9-]+-([a-z0-9]+)-(master|worker|bootstrap) ]]; then
     cluster_id="${BASH_REMATCH[1]}"
-    node="${name##*${cluster_id}-}"
+    node="${name##*"${cluster_id}"-}"
 
     if [[ -z "${cluster_images[$cluster_id]+set}" ]]; then
       cluster_images[$cluster_id]="$image"

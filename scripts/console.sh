@@ -66,8 +66,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 readonly CLOUDS_YAML="${HOME}/.config/openstack/clouds.yaml"
 
 # ANSI color codes for enhanced terminal output
@@ -270,7 +270,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #------------------------------------------------------------------------------
@@ -1061,6 +1061,8 @@ function display_console_command() {
 	log_info "To connect to the console, run the following command:"
 	echo ""
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	# Printing literal variable references for user command execution
+	# shellcheck disable=SC2016
 	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh-agent ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	echo ""

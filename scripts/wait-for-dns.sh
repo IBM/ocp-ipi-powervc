@@ -80,10 +80,10 @@ fi
 ################################################################################
 declare -a PROGRAMS
 PROGRAMS=( jq getent )
-for PROGRAM in ${PROGRAMS[@]}
+for PROGRAM in "${PROGRAMS[@]}"
 do
 	echo "Checking for program ${PROGRAM}"
-	if ! hash ${PROGRAM} 1>/dev/null 2>&1
+	if ! hash "${PROGRAM}" 1>/dev/null 2>&1
 	then
 		echo "Error: Missing ${PROGRAM} program!"
 		exit 1
@@ -98,7 +98,7 @@ done
 ################################################################################
 if [[ ! -v CLUSTER_DIR ]]
 then
-	read -p "What directory should be used for the installation [test]: " CLUSTER_DIR
+	read -r -p "What directory should be used for the installation [test]: " CLUSTER_DIR
 	if [ "${CLUSTER_DIR}" == "" ]
 	then
 		CLUSTER_DIR="test"
@@ -120,7 +120,7 @@ fi
 ################################################################################
 if [[ ! -v BASEDOMAIN ]]
 then
-	read -p "What is the base domain []: " BASEDOMAIN
+	read -r -p "What is the base domain []: " BASEDOMAIN
 fi
 if [ -z "${BASEDOMAIN}" ]
 then
@@ -175,7 +175,7 @@ do
 	do
 		DNS="a${TRIES}.apps.${CLUSTER_NAME}.${BASEDOMAIN}"
 		FOUND=false
-		if getent ahostsv4 ${DNS}
+		if getent ahostsv4 "${DNS}"
 		then
 			echo "Found! ${DNS}"
 			FOUND=true
@@ -204,7 +204,7 @@ do
 		for ((I=0; I < 10; I++))
 		do
 			echo "Trying ${DNS}"
-			if getent ahostsv4 ${DNS}
+			if getent ahostsv4 "${DNS}"
 			then
 				echo "Found! ${DNS}"
 				FOUND=true

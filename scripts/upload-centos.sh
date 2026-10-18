@@ -50,8 +50,10 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 # Options
 VERBOSE=false
@@ -352,7 +354,7 @@ function parse_arguments() {
 				if [[ -z "${2:-}" ]]; then
 					die "Error: --project requires a value"
 				fi
-				PROJECT="${2}"
+				export PROJECT="${2}"
 				shift 2
 				;;
 			--project-upload)
@@ -557,7 +559,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #------------------------------------------------------------------------------

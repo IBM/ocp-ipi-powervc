@@ -55,7 +55,8 @@ set -euo pipefail
 # Global Variables
 #==============================================================================
 
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 readonly SCRIPT_VERSION="2.0"
 
 # Exit codes
@@ -120,6 +121,8 @@ function log_error() {
 # Arguments:
 #   $@ - Error message
 #------------------------------------------------------------------------------
+# Reusable helper utility preserved for error handling consistency
+# shellcheck disable=SC2329
 function die() {
 	log_error "$*"
 	exit 1

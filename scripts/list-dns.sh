@@ -48,7 +48,8 @@ set -euo pipefail
 #==============================================================================
 # Global Variables
 #==============================================================================
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # DNS record name filter pattern (set via --match; empty means show all)
 MATCH=""
@@ -57,7 +58,8 @@ MATCH=""
 REGION="us-south"
 
 # Temporary file for storing JSON data
-readonly TEMP_JSON="$(mktemp)"
+TEMP_JSON="$(mktemp)"
+readonly TEMP_JSON
 
 # ANSI color codes
 readonly COLOR_RED='\033[0;31m'      # Error messages
@@ -159,7 +161,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 ################################################################################
@@ -364,6 +366,8 @@ function ibmcloud_cis_instance_set() {
 		log_info "Selected CIS instance: ${CIS_INSTANCE_NAMES[$(( choice - 1 ))]}"
 	fi
 
+	# Set global CIS_CRN as part of function output contract
+	# shellcheck disable=SC2034
 	declare -g CIS_CRN="${crn}"
 
 	if !  ibmcloud cis instance-set "${crn}" > "${TEMP_JSON}" > "${TEMP_JSON}" 2>&1; then
@@ -493,6 +497,8 @@ function ibmcloud_cis_dns_records() {
 	local total=0
 
 	log_debug "MATCH=${MATCH}"
+	# Single quotes are literal formatting inside double-quoted parameter expansion
+	# shellcheck disable=SC2016
 	log_info "Fetching DNS records for domain ${CIS_DOMAIN}${MATCH:+ matching '${MATCH}'}..."
 
 	while true; do

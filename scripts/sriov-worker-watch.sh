@@ -68,7 +68,8 @@ set -euo pipefail
 # Global constants
 #==============================================================================
 
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Seconds to sleep between consecutive machine-list polls.
 # Can be overridden by exporting WATCH_POLL_INTERVAL_SECONDS before invocation.
@@ -175,7 +176,7 @@ function prompt_input() {
 	fi
 
 	printf -v "${var_name}" '%s' "${input_value}"
-	export "${var_name}"
+	export "${var_name?}"
 }
 
 #==============================================================================
