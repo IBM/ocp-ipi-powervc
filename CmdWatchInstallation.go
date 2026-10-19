@@ -703,6 +703,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	ptrBastionMetadata := watchInstallationFlags.String(flagWatchInstallationBastionMetadata, defaultWatchInstallationBastionMetadata, usageWatchInstallationBastionMetadata)
 	ptrBastionRsa := watchInstallationFlags.String(flagWatchInstallationBastionRsa, defaultWatchInstallationBastionRsa, usageWatchInstallationBastionRsa)
 	ptrEnableDhcpd := watchInstallationFlags.String(flagWatchInstallationEnableDhcpd, defaultWatchInstallationEnableDhcpd, usageWatchInstallationEnableDhcpd)
+	ptrDhcpServer := watchInstallationFlags.String(flagWatchInstallationDhcpServer, defaultWatchInstallationDhcpServer, usageWatchInstallationDhcpServer)
 	ptrDhcpInterface := watchInstallationFlags.String(flagWatchInstallationDhcpInterface, defaultWatchInstallationDhcpInterface, usageWatchInstallationDhcpInterface)
 	ptrDhcpSubnet := watchInstallationFlags.String(flagWatchInstallationDhcpSubnet, defaultWatchInstallationDhcpSubnet, usageWatchInstallationDhcpSubnet)
 	ptrDhcpNetmask := watchInstallationFlags.String(flagWatchInstallationDhcpNetmask, defaultWatchInstallationDhcpNetmask, usageWatchInstallationDhcpNetmask)
@@ -725,6 +726,7 @@ func innerWatchInstallationCommand(watchInstallationFlags *flag.FlagSet, args []
 	config.DomainName = *ptrDomainName
 	config.BastionMetadataDir = *ptrBastionMetadata
 	config.BastionRsa = *ptrBastionRsa
+	config.DhcpServer = strings.ToLower(*ptrDhcpServer)
 	config.DhcpInterface = *ptrDhcpInterface
 	config.DhcpSubnet = *ptrDhcpSubnet
 	config.DhcpNetmask = *ptrDhcpNetmask
