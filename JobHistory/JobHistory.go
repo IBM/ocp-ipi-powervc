@@ -553,22 +553,36 @@ func getData(resp *http.Response) ([]byte, error) {
 	}
 }
 
+// unredact restores redacted strings (such as "XXXXXXX") back to their original
+// platform names ("powervc" or "powervs") based on the CI type.
+func unredact(s string, ciTypeStr string) string {
+	switch getCiType(ciTypeStr) {
+	case CI_TYPE_POWERVC:
+		return strings.ReplaceAll(s, "XXXXXXX", "powervc")
+	case CI_TYPE_POWERVS:
+		return strings.ReplaceAll(s, "XXXXXXX", "powervs")
+	default:
+		return s
+	}
+}
+
 // detectCouldNotRunSteps examines the top-level build-log.txt for a CI job and
 // detects whether the run ended with a "could not run steps" error. When that
 // error is present it extracts the names of every pod that is reported as
-// failed inside the error message.
+// failed inside the error message, unredacting any sanitized platform names.
 //
 // Parameters:
 //   - ctx:             Context for cancellation and timeout control
 //   - client:          HTTP client to use for fetching the build log
 //   - spyglassLink:    Job metadata containing the Spyglass link path
+//   - ciTypeStr:       CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p")
 //   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
 //   - bool:     true if the "could not run steps" error was detected
 //   - []string: deduplicated list of pod names that are reported as failed
 //   - error:    error if the build log cannot be fetched
-func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, artifactBaseURL string) (bool, []string, error) {
+func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLink SpyglassLink, ciTypeStr string, artifactBaseURL string) (bool, []string, error) {
 	buildLogURL := artifactBaseURL + getArtifactPath(spyglassLink.SpyglassLink) + "/build-log.txt"
 	buildLogStr, err := getURLString(ctx, client, buildLogURL)
 	if err != nil {
@@ -582,13 +596,14 @@ func detectCouldNotRunSteps(ctx context.Context, client *HTTPClient, spyglassLin
 	// Extract every pod name from 'pod "pod-name" failed:' occurrences.
 	rawMatches := rePodFailed.FindAllStringSubmatch(buildLogStr, -1)
 
-	// Deduplicate while preserving first-seen order.
+	// Deduplicate while preserving first-seen order and restoring redacted platform names.
 	seen := make(map[string]bool)
 	var pods []string
 	for _, m := range rawMatches {
-		if !seen[m[1]] {
-			seen[m[1]] = true
-			pods = append(pods, m[1])
+		pod := unredact(m[1], ciTypeStr)
+		if !seen[pod] {
+			seen[pod] = true
+			pods = append(pods, pod)
 		}
 	}
 
@@ -684,13 +699,20 @@ const (
 )
 
 // getCiStepName returns the CI step name for a given CI type and step phase.
+// It maps CI types (PowerVC or PowerVS) to their corresponding step names
+// for different phases of the CI pipeline (configuration, installation, testing).
+//
+// Step phases:
+//   - CI_STEP_CONF (0): Configuration phase ("/ipi-conf-powervc" or "/ipi-conf-powervs")
+//   - CI_STEP_INSTALL (1): Installation phase ("/ipi-install-powervc-install" or "/ipi-install-powervs-install")
+//   - CI_STEP_TEST (2): Testing phase ("/openshift-e2e-libvirt-test")
 //
 // Parameters:
 //   - ciType: CI type enum value (PowerVC or PowerVS)
 //   - stepPhase: Phase constant (CI_STEP_CONF, CI_STEP_INSTALL, or CI_STEP_TEST)
 //
 // Returns:
-//   - string: The step name path for the given CI type and phase
+//   - string: CI step name path (e.g., "/ipi-conf-powervc", "/ipi-install-powervc-install", "/openshift-e2e-libvirt-test")
 //   - error: Error if stepPhase is out of range or CI type is not recognized
 func getCiStepName(ciType CiType, stepPhase int) (string, error) {
 	var (
@@ -727,7 +749,7 @@ func getCiStepName(ciType CiType, stepPhase int) (string, error) {
 //   - ctx:             Context for cancellation and timeout control
 //   - client:          HTTP client to use for fetching artifacts
 //   - spyglassLink:    Job metadata containing the Spyglass link path
-//   - ciTypeStr:       CI type identifier
+//   - ciTypeStr:       CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 //   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
@@ -777,7 +799,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 
 	if len(matches) >= 2 {
 		confSummaryStr = "FAILURE: conf failed!"
-		confDetailsStr = matches[0]
+		confDetailsStr = unredact(matches[0], ciTypeStr)
 	} else {
 		confSummaryStr = "FAILURE: Could not find conf?"
 	}
@@ -793,7 +815,7 @@ func gatherConfRun(ctx context.Context, client *HTTPClient, spyglassLink Spyglas
 //   - ctx:             Context for cancellation and timeout control
 //   - client:          HTTP client to use for fetching artifacts
 //   - spyglassLink:    Job metadata containing the Spyglass link path
-//   - ciTypeStr:       CI type identifier
+//   - ciTypeStr:       CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
 //   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
@@ -842,7 +864,7 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 	matches := reCreateCluster.FindStringSubmatch(buildLogStr)
 	if len(matches) >= 2 {
 		buildSummaryStr = "FAILURE: create cluster failed!"
-		buildDetailsStr = matches[1]
+		buildDetailsStr = unredact(matches[1], ciTypeStr)
 	} else {
 		buildSummaryStr = "FAILURE: Could not find create cluster?"
 	}
@@ -857,8 +879,8 @@ func gatherBuildRun(ctx context.Context, client *HTTPClient, spyglassLink Spygla
 //   - ctx:             Context for cancellation and timeout control
 //   - client:          HTTP client to use for fetching artifacts
 //   - spyglassLink:    Job metadata containing the Spyglass link path
-//   - ciTypeStr:       CI type identifier
-//   - ciStats:         Statistics tracker to update
+//   - ciTypeStr:       CI type identifier (e.g., "ocp-e2e-ovn-powervc-multi-p-p", "ocp-e2e-ovn-powervs-capi-multi-p-p")
+//   - ciStats:         Statistics tracker to update (increments GreenRuns on success)
 //   - artifactBaseURL: Base URL for artifact retrieval
 //
 // Returns:
@@ -1039,7 +1061,7 @@ func processSingleJob(ctx context.Context, client *HTTPClient, args *Args, spygl
 	}
 
 	// Detect "could not run steps" error and list failed pods
-	if detected, failedPods, err := detectCouldNotRunSteps(ctx, client, spyglassLink, artifactBaseURL); err == nil && detected {
+	if detected, failedPods, err := detectCouldNotRunSteps(ctx, client, spyglassLink, ciTypeStr, artifactBaseURL); err == nil && detected {
 		data.couldNotRunSteps = true
 		data.failedPods = failedPods
 	}
@@ -1091,7 +1113,7 @@ func processURL(ctx context.Context, args *Args, ciStats *CIStats, urlStr string
 	}
 	ciStr := urlStr[idx+1:]
 
-	// Extract CI version (e.g., "4.12", "5.0") and type (e.g., "powervc-1") from job name
+	// Extract CI version (e.g., "4.12", "5.0") and type (e.g., "ocp-e2e-ovn-powervc-multi-p-p") from job name
 	matches := reCIInfo.FindStringSubmatch(ciStr)
 	if len(matches) < 4 {
 		return fmt.Errorf("failed to parse CI string: %s", ciStr)
@@ -1347,11 +1369,11 @@ func parseAndValidateArgs() (*Args, time.Time, time.Time, error) {
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (public bucket)\n")
-		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze today's jobs (private bucket)\n")
-		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --today https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Analyze last 7 days with CSV output and 12 workers\n")
-		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 -j 12 --csv --output results.csv <URL>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --last-n-days 7 -j 12 --csv --output results.csv https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Note: All options must be specified before the URL(s).\n")
 	}
 
