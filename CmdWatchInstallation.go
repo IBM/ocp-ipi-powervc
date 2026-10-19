@@ -1630,11 +1630,12 @@ func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName
 			},
 			"loggers": []map[string]any{
 				{
-					"name":     "kea-dhcp4",
-					"severity": "INFO",
+					"name": "kea-dhcp4",
 					"output-options": []map[string]any{
-						{"output": "stdout"},
+						{"output": "kea-dhcp4.log"},
 					},
+					"severity":   "DEBUG",
+					"debuglevel": 20,
 				},
 			},
 		},
