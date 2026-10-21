@@ -67,34 +67,36 @@ export OCP_CI_TOKEN=$(oc whoami -t)
 ./JobHistory --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Query yesterday's runs
-./JobHistory --yesterday <URL>
+./JobHistory --yesterday https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Query last N days
-./JobHistory --last-n-days 7 <URL>
+./JobHistory --last-n-days 7 https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Output to CSV
-./JobHistory --csv --output output.csv <URL>
+./JobHistory --csv --output output.csv https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Multiple URLs
-./JobHistory --today --csv --output output.csv <URL1> <URL2> <URL3>
+./JobHistory --today --csv --output output.csv \
+  https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/ \
+  https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/periodic-ci-openshift-multiarch-main-nightly-4.23-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Show only deploy failures
-./JobHistory --deploy-status-only <URL>
+./JobHistory --deploy-status-only https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 
 # Show only test failures
-./JobHistory --test-status-only <URL>
+./JobHistory --test-status-only https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 ```
 
 ### Common Mistakes
 
 Wrong - Flags after URL:
 ```bash
-./JobHistory <URL> --today  # This will fail!
+./JobHistory https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/ --today  # This will fail!
 ```
 
 Correct - Flags before URL:
 ```bash
-./JobHistory --today <URL>  # This works!
+./JobHistory --today https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/  # This works!
 ```
 
 ## Command-Line Options
@@ -128,7 +130,7 @@ Correct - Flags before URL:
 
 ### Query specific date range
 ```bash
-./JobHistory --after-date 2023-07-01 --before-date 2023-07-31 --csv --output july-results.csv <URL>
+./JobHistory --after-date 2023-07-01 --before-date 2023-07-31 --csv --output july-results.csv https://prow.ci.openshift.org/job-history/gs/test-platform-results-public/logs/periodic-ci-openshift-multiarch-main-nightly-5.0-ocp-e2e-ovn-powervc-multi-p-p/
 ```
 
 ## Key Features
