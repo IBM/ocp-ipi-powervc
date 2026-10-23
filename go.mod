@@ -16,7 +16,7 @@ require (
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/time v0.16.0
 	k8s.io/apimachinery v0.37.1
-	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
+	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	sigs.k8s.io/yaml v1.6.0
 )
 
