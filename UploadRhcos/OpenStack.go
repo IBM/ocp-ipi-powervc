@@ -26,14 +26,17 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack"
+	osconfig "github.com/gophercloud/gophercloud/v2/openstack/config"
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/pagination"
-	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -67,27 +70,6 @@ func getUserAgent() gophercloud.UserAgent {
 	return ua
 }
 
-// defaultClientOpts generates default client opts based on cloud name.
-func defaultClientOpts(cloudName string) *clientconfig.ClientOpts {
-	opts := new(clientconfig.ClientOpts)
-	opts.Cloud = cloudName
-	// Explicitly disable reading auth data from env variables by setting an
-	// invalid EnvPrefix, so clouds.yaml alone is enough to authenticate.
-	opts.EnvPrefix = "NO_ENV_VARIABLES_"
-	return opts
-}
-
-// newServiceClient wraps Gophercloud's NewServiceClient and consistently sets a
-// user-agent.
-func newServiceClient(ctx context.Context, service string, opts *clientconfig.ClientOpts) (*gophercloud.ServiceClient, error) {
-	client, err := clientconfig.NewServiceClient(ctx, service, opts)
-	if err != nil {
-		return nil, err
-	}
-	client.UserAgent = getUserAgent()
-	return client, nil
-}
-
 // createDefaultBackoff creates a standard backoff configuration for retry logic.
 func createDefaultBackoff(ctx context.Context) wait.Backoff {
 	return wait.Backoff{
@@ -98,8 +80,25 @@ func createDefaultBackoff(ctx context.Context) wait.Backoff {
 	}
 }
 
-// getServiceClient creates an OpenStack service client with retry logic, using
-// exponential backoff to handle transient failures.
+// getServiceClient creates an OpenStack image service client with retry logic,
+// using exponential backoff to handle transient failures.
+//
+// # Why we cannot use clientconfig.NewServiceClient directly
+//
+// clientconfig.NewServiceClient calls openstack.AuthenticatedClient internally,
+// which discards the ClientOpts (including any custom HTTP client) before it
+// makes the first TLS connection to the Keystone identity endpoint.  On a
+// PowerVC with a self-signed or privately-signed CA certificate this produces:
+//
+//	tls: failed to verify certificate: x509: certificate signed by unknown authority
+//
+// The fix uses clouds.Parse (which builds a *tls.Config from the cacert field
+// in clouds.yaml) and osconfig.NewProviderClient (which injects that TLS config
+// into the transport before authentication), matching the pattern shown in the
+// gophercloud documentation:
+//
+//	ao, _, tlsConfig, _ := clouds.Parse(clouds.WithCloudName(cloud))
+//	providerClient, _   := osconfig.NewProviderClient(ctx, ao, osconfig.WithTLSConfig(tlsConfig))
 func (c *config) getServiceClient(ctx context.Context, serviceType, cloud string) (client *gophercloud.ServiceClient, err error) {
 	if serviceType == "" {
 		return nil, fmt.Errorf("service type cannot be empty")
@@ -108,24 +107,50 @@ func (c *config) getServiceClient(ctx context.Context, serviceType, cloud string
 		return nil, fmt.Errorf("cloud name cannot be empty")
 	}
 
-	// Test for the existence of the cloud name in clouds.yaml.
-	if _, _, _, err = clouds.Parse(clouds.WithCloudName(cloud)); err != nil {
+	// Resolve ~/.config/openstack/clouds.yaml explicitly so that clouds.Parse
+	// always reads the user's file regardless of the current working directory.
+	// Without this, gophercloud checks $CWD/clouds.yaml first, which can pick
+	// up a stale or incomplete file when the binary is run from a checkout that
+	// contains its own clouds.yaml.
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	cloudsYAMLPath := filepath.Join(homeDir, ".config", "openstack", "clouds.yaml")
+
+	// Parse clouds.yaml once up-front to validate the cloud name and retrieve
+	// the TLS config (built from the cacert field, if present).
+	ao, _, tlsCfg, err := clouds.Parse(
+		clouds.WithCloudName(cloud),
+		clouds.WithLocations(cloudsYAMLPath),
+	)
+	if err != nil {
 		return nil, err
+	}
+	if tlsCfg == nil {
+		c.logWarning("no cacert found in clouds.yaml for cloud %q — TLS certificate verification may fail", cloud)
+	} else {
+		c.logDebug("TLS: loaded CA cert from clouds.yaml for cloud %q", cloud)
 	}
 
 	backoff := createDefaultBackoff(ctx)
 
 	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
-		var err2 error
+		c.logDebug("getServiceClient: duration = %v, calling NewProviderClient(%s, %s)", leftInContext(ctx), serviceType, cloud)
 
-		c.logDebug("getServiceClient: duration = %v, calling NewServiceClient(%s, %s)", leftInContext(ctx), serviceType, cloud)
-		client, err2 = newServiceClient(ctx, serviceType, defaultClientOpts(cloud))
+		providerClient, err2 := osconfig.NewProviderClient(ctx, ao, osconfig.WithTLSConfig(tlsCfg))
 		if err2 != nil {
-			c.logDebug("getServiceClient: Error: NewServiceClient returns error %v", err2)
-			// Stop retrying on authentication errors.
+			c.logDebug("getServiceClient: Error: NewProviderClient returns error %v", err2)
 			if strings.Contains(err2.Error(), "authentication") {
 				return false, err2
 			}
+			return false, nil
+		}
+		providerClient.UserAgent = getUserAgent()
+
+		client, err2 = openstack.NewImageV2(providerClient, gophercloud.EndpointOpts{})
+		if err2 != nil {
+			c.logDebug("getServiceClient: Error: NewImageV2 returns error %v", err2)
 			return false, nil
 		}
 
