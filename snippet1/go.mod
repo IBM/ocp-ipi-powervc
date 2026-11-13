@@ -1,6 +1,6 @@
 module example/user/snippet1
 
-go 1.27.0
+go 1.27.3
 
 require github.com/sirupsen/logrus v1.10.2
 

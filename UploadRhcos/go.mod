@@ -1,21 +1,16 @@
 module github.com/openshift/ocp-ipi-powervc/UploadRhcos
 
-go 1.27.0
+go 1.27.3
 
 require (
-	github.com/gophercloud/gophercloud/v2 v2.15.0
-	github.com/gophercloud/utils/v2 v2.0.0-20260922174841-b4759ea0529b
-	k8s.io/apimachinery v0.37.1
+	github.com/gophercloud/gophercloud/v2 v2.16.0
+	k8s.io/apimachinery v0.37.2
 )
 
 require (
 	github.com/go-logr/logr v1.4.3 // indirect
-	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
 )

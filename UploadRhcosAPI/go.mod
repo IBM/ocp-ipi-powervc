@@ -1,11 +1,11 @@
 module github.com/openshift/ocp-ipi-powervc/UploadRhcosAPI
 
-go 1.27.0
+go 1.27.3
 
 require (
-	github.com/gophercloud/gophercloud/v2 v2.15.0
+	github.com/gophercloud/gophercloud/v2 v2.16.0
 	github.com/gophercloud/utils/v2 v2.0.0-20260922174841-b4759ea0529b
-	k8s.io/apimachinery v0.37.1
+	k8s.io/apimachinery v0.37.2
 )
 
 require (
