@@ -61,8 +61,19 @@ export CLOUD="powervc"
 export CLUSTER_DIR="test"
 export CLUSTER_NAME="rdr-xxx-openstack"
 export FLAVOR_NAME="ocp-ipi"
+# Optional: flavor for the bastion host only (defaults to FLAVOR_NAME)
+#export BASTION_FLAVOR_NAME="ocp-ipi"
+# Optional: per-plane flavors (default to FLAVOR_NAME)
+#export CONTROL_FLAVOR_NAME="ocp-ipi"
+#export COMPUTE_FLAVOR_NAME="ocp-ipi"
 export INSTALLER_SSHKEY=/home/${USER}/.ssh/id_installer_rsa.pub
 export MACHINE_TYPE="s1022"
+# Optional: per-plane availability zones (default to MACHINE_TYPE)
+#export CONTROL_MACHINE_TYPE="s1022"
+#export COMPUTE_MACHINE_TYPE="s1022"
+# Optional: number of control plane and compute nodes (default: 3 each)
+#export CONTROL_REPLICAS=3
+#export COMPUTE_REPLICAS=3
 export NETWORK_NAME="vlan1337"
 export PULLSECRET_FILE="/home/${USER}/.pullSecretCompact"
 export SSHKEY_NAME="bastion-key"
