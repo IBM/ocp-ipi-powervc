@@ -37,8 +37,21 @@
 #   BASTION_IMAGE_NAME  - OpenStack image for bastion host
 #   CLUSTER_DIR         - Installation directory (default: test)
 #   CLUSTER_NAME        - Name of the OpenShift cluster
-#   FLAVOR_NAME         - OpenStack flavor for cluster nodes
-#   MACHINE_TYPE        - OpenStack availability zone used in install-config
+#   FLAVOR_NAME         - OpenStack flavor for cluster nodes (defaultMachinePlatform)
+#   CONTROL_FLAVOR_NAME - Optional OpenStack flavor for control plane nodes
+#                         (default: FLAVOR_NAME)
+#   COMPUTE_FLAVOR_NAME - Optional OpenStack flavor for compute nodes
+#                         (default: FLAVOR_NAME)
+#   BASTION_FLAVOR_NAME - Optional OpenStack flavor for the bastion host
+#                         (default: FLAVOR_NAME)
+#   MACHINE_TYPE        - OpenStack availability zone used for the bastion and as
+#                         the default for the control and compute planes
+#   CONTROL_MACHINE_TYPE - Optional availability zone for control plane nodes
+#                         (default: MACHINE_TYPE)
+#   COMPUTE_MACHINE_TYPE - Optional availability zone for compute nodes
+#                         (default: MACHINE_TYPE)
+#   CONTROL_REPLICAS    - Optional number of control plane nodes (default: 3)
+#   COMPUTE_REPLICAS    - Optional number of compute nodes (default: 3)
 #   NETWORK_NAME        - OpenStack network for cluster
 #   PULL_SECRET         - Pull secret content used in install-config
 #   PULLSECRET_FILE     - Path to pull secret file used for validation/loading
@@ -694,10 +707,23 @@ function collect_environment_variables() {
 		prompt_input "What is the OpenStack flavor" "FLAVOR_NAME"
 	fi
 
+	# Bastion and per-plane flavors default to FLAVOR_NAME
+	BASTION_FLAVOR_NAME="${BASTION_FLAVOR_NAME:-${FLAVOR_NAME}}"
+	CONTROL_FLAVOR_NAME="${CONTROL_FLAVOR_NAME:-${FLAVOR_NAME}}"
+	COMPUTE_FLAVOR_NAME="${COMPUTE_FLAVOR_NAME:-${FLAVOR_NAME}}"
+
 	# Availability zone (machine type)
 	if [[ ! -v MACHINE_TYPE ]]; then
 		prompt_input "What is the OpenStack machine type" "MACHINE_TYPE"
 	fi
+
+	# Per-plane machine types default to MACHINE_TYPE
+	CONTROL_MACHINE_TYPE="${CONTROL_MACHINE_TYPE:-${MACHINE_TYPE}}"
+	COMPUTE_MACHINE_TYPE="${COMPUTE_MACHINE_TYPE:-${MACHINE_TYPE}}"
+
+	# Node counts
+	CONTROL_REPLICAS="${CONTROL_REPLICAS:-3}"
+	COMPUTE_REPLICAS="${COMPUTE_REPLICAS:-3}"
 
 	# OpenStack network
 	if [[ ! -v NETWORK_NAME ]]; then
@@ -795,7 +821,14 @@ function validate_environment_variables() {
 		"CLUSTER_NAME"
 		"CONTROLLER_IP"
 		"FLAVOR_NAME"
+		"BASTION_FLAVOR_NAME"
+		"CONTROL_FLAVOR_NAME"
+		"COMPUTE_FLAVOR_NAME"
 		"MACHINE_TYPE"
+		"CONTROL_MACHINE_TYPE"
+		"COMPUTE_MACHINE_TYPE"
+		"CONTROL_REPLICAS"
+		"COMPUTE_REPLICAS"
 		"NETWORK_NAME"
 		"SSHKEY_NAME"
 	)
@@ -803,6 +836,13 @@ function validate_environment_variables() {
 	for var in "${required_vars[@]}"; do
 		validate_non_empty "${var}"
 	done
+
+	if [[ ! "${CONTROL_REPLICAS}" =~ ^[1-9][0-9]*$ ]]; then
+		die "CONTROL_REPLICAS must be a positive integer, got: ${CONTROL_REPLICAS}"
+	fi
+	if [[ ! "${COMPUTE_REPLICAS}" =~ ^[0-9]+$ ]]; then
+		die "COMPUTE_REPLICAS must be a non-negative integer, got: ${COMPUTE_REPLICAS}"
+	fi
 
 	log_success "All environment variables validated"
 }
@@ -812,7 +852,7 @@ function validate_environment_variables() {
 # Checks that all required OpenStack resources are available before proceeding
 # Verifies:
 #   - Bastion image
-#   - Node flavor
+#   - Node, bastion, control plane and compute flavors
 #   - Network
 #   - SSH keypair
 #   - Availability zone
@@ -823,16 +863,29 @@ function verify_all_openstack_resources() {
 	log_info "Verifying OpenStack resources..."
 
 	verify_openstack_resource "image" "${BASTION_IMAGE_NAME}"
-	verify_openstack_resource "flavor" "${FLAVOR_NAME}"
+	local flavor
+	local -A seen_flavors=()
+	for flavor in "${FLAVOR_NAME}" "${BASTION_FLAVOR_NAME}" "${CONTROL_FLAVOR_NAME}" "${COMPUTE_FLAVOR_NAME}"; do
+		[[ -n "${seen_flavors[${flavor}]:-}" ]] && continue
+		seen_flavors["${flavor}"]=1
+		verify_openstack_resource "flavor" "${flavor}"
+	done
 	verify_openstack_resource "network" "${NETWORK_NAME}"
 	verify_openstack_resource "keypair" "${SSHKEY_NAME}"
 
-	# Verify availability zone
-	log_info "Verifying availability zone: ${MACHINE_TYPE}"
-	if ! openstack --os-cloud="${CLOUD}" availability zone list --format csv 2>/dev/null | grep -qF "\"${MACHINE_TYPE}\""; then
-		die "Cannot find availability zone: ${MACHINE_TYPE}"
-	fi
-	log_success "Found availability zone: ${MACHINE_TYPE}"
+	# Verify availability zones (bastion, control plane, compute)
+	local zone
+	local -A seen_zones=()
+	for zone in "${MACHINE_TYPE}" "${CONTROL_MACHINE_TYPE}" "${COMPUTE_MACHINE_TYPE}"; do
+		[[ -n "${seen_zones[${zone}]:-}" ]] && continue
+		seen_zones["${zone}"]=1
+
+		log_info "Verifying availability zone: ${zone}"
+		if ! openstack --os-cloud="${CLOUD}" availability zone list --format csv 2>/dev/null | grep -qF "\"${zone}\""; then
+			die "Cannot find availability zone: ${zone}"
+		fi
+		log_success "Found availability zone: ${zone}"
+	done
 
 	# Verify RHCOS image
 	verify_openstack_resource "image" "${RHCOS_FILENAME}"
@@ -992,7 +1045,7 @@ function create_bastion_host() {
 		--cloud "${CLOUD}" \
 		--bastionName "${CLUSTER_NAME}" \
 		--availabilityZone "${MACHINE_TYPE}" \
-		--flavorName "${FLAVOR_NAME}" \
+		--flavorName "${BASTION_FLAVOR_NAME}" \
 		--imageName "${BASTION_IMAGE_NAME}" \
 		--networkName "${NETWORK_NAME}" \
 		--sshKeyName "${SSHKEY_NAME}" \
@@ -1151,18 +1204,20 @@ compute:
   name: worker
   platform:
     powervc:
+      type: ${COMPUTE_FLAVOR_NAME}
       zones:
-        - ${MACHINE_TYPE}
-  replicas: 3
+        - ${COMPUTE_MACHINE_TYPE}
+  replicas: ${COMPUTE_REPLICAS}
 controlPlane:
   architecture: ppc64le
   hyperthreading: Enabled
   name: master
   platform:
     powervc:
+      type: ${CONTROL_FLAVOR_NAME}
       zones:
-        - ${MACHINE_TYPE}
-  replicas: 3
+        - ${CONTROL_MACHINE_TYPE}
+  replicas: ${CONTROL_REPLICAS}
 metadata:
   creationTimestamp: null
   name: ${CLUSTER_NAME}
