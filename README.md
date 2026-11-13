@@ -1,736 +1,562 @@
-# PowerVC-Tool
-A useful tool to create and check OpenShift clusters on IBM Cloud PowerVC.
+# ocp-ipi-powervc
 
-To install an OpenShift cluster, please head to the main documentation root [here](https://github.com/IBM/ocp-ipi-powervc/tree/main/docs).
+A CLI tool and companion script suite for deploying and managing OpenShift clusters on IBM PowerVC using the IPI (Installer-Provisioned Infrastructure) installer.
 
-CLI commands:
-- [check-alive](https://github.com/IBM/ocp-ipi-powervc/tree/main#check-alive)
-- [create-bastion](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-bastion)
-- [create-rhcos](https://github.com/IBM/ocp-ipi-powervc/tree/main#create-rhcos)
-- [delete-bastion](https://github.com/IBM/ocp-ipi-powervc/tree/main#delete-bastion)
-- [erase-metadata](https://github.com/IBM/ocp-ipi-powervc/tree/main#erase-metadata)
-- [rhcos-exists](https://github.com/IBM/ocp-ipi-powervc/tree/main#rhcos-exists)
-- [send-metadata](https://github.com/IBM/ocp-ipi-powervc/tree/main#send-metadata)
-- [watch-create](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-create)
-- [watch-installation](https://github.com/IBM/ocp-ipi-powervc/tree/main#watch-installation)
+The tool coordinates the OpenShift IPI installer, PowerVC/OpenStack infrastructure, an HAProxy bastion load balancer, and optional IBM Cloud DNS into a single automated workflow.
 
-## check-alive
+---
 
-This will check if the [controller](https://github.com/IBM/ocp-ipi-powervc/blob/main/docs/controller.md) is alive.
+## Table of Contents
 
-Example usage:
-```
-$ ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip} --shouldDebug false
-```
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Building](#building)
+- [CLI Commands](#cli-commands)
+  - [check-alive](#check-alive)
+  - [create-bastion](#create-bastion)
+  - [create-rhcos](#create-rhcos)
+  - [delete-bastion](#delete-bastion)
+  - [erase-metadata](#erase-metadata)
+  - [rhcos-exists](#rhcos-exists)
+  - [send-metadata](#send-metadata)
+  - [watch-create](#watch-create)
+  - [watch-installation](#watch-installation)
+- [Scripts](#scripts)
+  - [create-cluster.sh configuration](#create-clustersh-configuration)
+- [Companion Tools](#companion-tools)
+- [CI and Release](#ci-and-release)
+- [Documentation](#documentation)
+- [License](#license)
 
-args:
-- `serverIP` The IP address or hostname of the controller.
+---
 
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
+## Overview
 
-## create-bastion
+`ocp-ipi-powervc` operates in a client-server model. A **controller** process runs on a dedicated VM and manages cluster lifecycle; CLI commands are dispatched to it (or run locally) to create bastions, send metadata, and monitor progress. See [docs/controller.md](docs/controller.md) for controller setup.
 
-This will create an HAProxy VM which will act as an OpenShift Load Balancer.  This VM will be managed by another instance of this program with the `watch-installation` parameter.
+The full installation documentation index is at [docs/README.md](docs/README.md).
 
-NOTE:
-The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure DNS is supported via CoreOS DNS or another method.
+---
 
-Example usage:
+## Prerequisites
 
-```
-$ ocp-ipi-powervc-linux-amd64 create-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshKeyName ${ssh_keyname} --domainName ${domain_name} --enableHAProxy true --serverIP ${controller_ip} --shouldDebug true
-```
+| Requirement | Notes |
+|---|---|
+| PowerVC server | Accessible over the network |
+| `~/.config/openstack/clouds.yaml` | PowerVC credentials — see [docs/configure-openstack.md](docs/configure-openstack.md) |
+| OpenShift pull secret | Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret), save as `~/.pullSecretCompact` |
+| SSH installer key | `ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_installer_rsa` |
+| `openshift-install` binary | See [docs/IPI-installer.md](docs/IPI-installer.md) |
+| RHCOS image in PowerVC | See [docs/IPI-installer.md](docs/IPI-installer.md) |
+| Controller VM | Running this tool's server mode — see [docs/controller.md](docs/controller.md) |
+| Environment variables | See [docs/environment-variables.md](docs/environment-variables.md) |
 
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
+Required external binaries: `openstack`, `jq`, `getent`, `podman`, `ssh-keygen`, `ping`.
 
-- `bastionName` The name of the VM to use which should match the OpenShift cluster name.
+---
 
-- `bastionRsa` The SSH private key file for the bastion VM.
-
-- `availabilityZone` The name of the OpenStack availability zone (defaults to `s1022`).
-
-- `flavorName` The OpenStack flavor to create the VM with.
-
-- `imageName` The OpenStack image to create the VM with.
-
-- `networkName` The OpenStack network to create the VM with.
-
-- `sshKeyName` The OpenStack ssh keyname to create the VM with.
-
-- `domainName` The DNS domain name for the bastion. (optional)
-
-- `enableHAProxy` defaults to `true`.  If we should install HA Proxy on the bastion node.
-
-- `serverIP` The IP address of the controller.
-
-- `bastionIpFile` The filename to write the bastion IP address to (defaults to `/tmp/bastionIp`).
-
-- `passwdHash` The password hash used in the CoreOS ignition file. (optional)
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## create-rhcos
-
-This will create a test RHCOS VM.  This VM will be managed by the controller.
-
-NOTE:
-The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure DNS is supported via CoreOS DNS or another method.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 create-rhcos --cloud ${cloud_name} --rhcosName ${rhcos_name} --flavorName ${flavor_name} --imageName ${image_name} --networkName ${network_name} --sshPublicKey $(cat ${HOME}/.ssh/id_installer_rsa.pub) --domainName ${domain_name} --shouldDebug true
-```
-
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `rhcosName` The name of the VM to use which should match the OpenShift cluster name.
-
-- `availabilityZone` The name of the OpenStack availability zone (defaults to `s1022`).
-
-- `flavorName` The OpenStack flavor to create the VM with.
-
-- `imageName` The OpenStack image to create the VM with.
-
-- `networkName` The OpenStack network to create the VM with.
-
-- `passwdHash` The password hash of the core user.
-
-- `sshPublicKey` The SSH public key contents to inject into the VM.
-
-- `domainName` The DNS domain name for the VM. (optional)
-
-- `timeout` Maximum duration for the operation (defaults to `15m`).
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## delete-bastion
-
-This will delete an existing bastion HAProxy VM.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 delete-bastion --cloud ${cloud_name} --bastionName ${bastion_name} --shouldDebug true
-```
-
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `bastionName` The name of the bastion VM to delete.
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## erase-metadata
-
-This will erase cluster metadata entries matching a pattern from a remote server.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 erase-metadata --pattern "test-*" --serverIP ${controller_ip} --timeout 5m --shouldDebug true
-```
-
-args:
-- `pattern` Pattern to match metadata entries for deletion (e.g., `test-*`, `staging-*`).
-
-- `serverIP` The IP address of the controller.
-
-- `timeout` Timeout for the erase operation (defaults to `1m`, e.g., `5m`, `10m`, `30s`).
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## rhcos-exists
-
-This will verify that a named RHCOS image exists in the OpenStack cloud.  If the image is not found, all available images are listed to help diagnose naming issues.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 rhcos-exists --cloud ${cloud_name} --imageName ${image_name} --shouldDebug false
-```
-
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `imageName` The name of the RHCOS image to search for (case-sensitive, exact match).
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## send-metadata
-
-This will send a command to the server to either create or delete a local copy of the metadata.json file.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 send-metadata --createMetadata ${directory}/metadata.json --serverIP ${controller_ip} --shouldDebug true
-```
-
-args:
-
-- `createMetadata` Tells the server to create a local copy of this metadata.json file (mutually exclusive with `deleteMetadata`).
-
-- `deleteMetadata` Tells the server to delete a local copy of this metadata.json file (mutually exclusive with `createMetadata`).
-
-- `serverIP` The IP address of the controller.
-
-- `timeout` Timeout for the send operation (defaults to `1m`, e.g., `5m`, `10m`, `30s`).
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## watch-create
-
-This monitors and displays the status of cluster resources during and after cluster creation.  It queries the state of VMs, the load balancer, and optionally the OpenShift cluster and IBM DNS.
-
-NOTE:
-The environment variable `IBMCLOUD_API_KEY` needs to be set.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 watch-create --metadata ${directory}/metadata.json --kubeconfig ${directory}/auth/kubeconfig --cloud ${cloud_name} --bastionRsa ${HOME}/.ssh/id_installer_rsa --baseDomain ${domain_name} --shouldDebug false
-```
-
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `metadata` the location of the `metadata.json` file created by the IPI OpenShift installer.
-
-- `kubeconfig` the location of the `kubeconfig` file created by the IPI OpenShift installer. (optional)
-
-- `bastionRsa` the SSH private key file for the bastion VM.
-
-- `baseDomain` the domain name of the OpenShift cluster. (optional)
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-## watch-installation
-
-This is for checking the progress of an ongoing `openshift-install create cluster` operation of the OpenShift IPI installer.  Run this in another window while the installer deploys a cluster.
-
-NOTE:
-The environment variable `IBMCLOUD_API_KEY` is optional.  If not set, make sure DNS is supported via CoreOS DNS or another method.
-
-Example usage:
-
-```
-$ ocp-ipi-powervc-linux-amd64 watch-installation --cloud ${cloud_name} --domainName ${domain_name} --bastionMetadata ${directory}/metadata.json --bastionRsa ${HOME}/.ssh/id_installer_rsa --dhcpSubnet ${dhcp_subnet} --dhcpNetmask ${dhcp_netmask} --dhcpRouter ${dhcp_router} --dhcpDnsServers "${dhcp_servers}" --shouldDebug true
-```
-
-args:
-- `cloud` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `domainName` the domain name to use for the OpenShift cluster.
-
-- `bastionMetadata` the location of the `metadata.json` file created by the IPI OpenShift installer.  This parameter can have more than one occurrence.
-
-- `bastionRsa` the SSH private key file for the default username for the HAProxy VM.
-
-- `enableDhcpd` defaults to `false`.  Enables updating the locally installed DHCP server.
-
-- `dhcpInterface` The network interface to listen for DHCPd requests.
-
-- `dhcpSubnet` The subnet to use for DHCPd requests.
-
-- `dhcpNetmask` The netmask to use for DHCPd requests.
-
-- `dhcpRouter` The router to use for DHCPd requests.
-
-- `dhcpDnsServers` The comma separated DNS servers to use for DHCPd requests.
-
-- `dhcpServerId` The DNS server identifier for a DHCP request.
-
-- `statsUser` HAProxy stats username (leave empty to disable stats). (optional)
-
-- `statsPassword` HAProxy stats password. (optional)
-
-- `shouldDebug` defaults to `false`.  This will cause the program to output verbose debugging information.
-
-# Useful scripts
-
-## scripts/build-nightly.sh
-
-This script downloads a nightly OCP build and sets up the environment for testing.
-
-## scripts/check-alive.sh
-
-This script will check if this repo tool is running on the controller IP address.  If it is not, then it will start it up inside of the tmux window number 0.
-
-Required environment variables before running this script:
-
-- `BASEDOMAIN` the domain name to use for the OpenShift cluster.
-
-- `BASTION_USERNAME` the default username for the HAProxy VM.
-
-- `BASTION_RSA` the ssh private key for the bastion node.
-
-- `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `CONTROLLER_IP` the IP address of the controller.
-
-- `DHCP_DNS_SERVERS` a list of DNS servers.
-
-- `DHCP_NETMASK` the netmask used for a DHCP request.
-
-- `DHCP_ROUTER` the router used for a DHCP request.
-
-- `DHCP_SERVER_ID` the DHCP server ID used for a DHCP request.
-
-- `DHCP_SUBNET` the DHCP subnet used for a DHCP request.
-
-Required existing binaries before running this script:
-
-- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
-
-- `awk` a Linux admin tool.
-
-- `cut` a Linux admin tool.
-
-- `ip` a Linux admin tool.
-
-- `tmux` a linux shell windowing tool.
-
-- `tr` a Linux admin tool.
-
-## scripts/cleanup-containers.sh
-
-This script removes all containers and their objects from an OpenStack cloud.  It processes containers one at a time, deleting all objects before removing the container itself.  Optionally filters by infrastructure ID.
-
-Required environment variables before running this script:
-
-- `CLOUD` the OpenStack cloud name from `clouds.yaml`.
-
-Optional arguments:
-
-- `INFRA_ID` filter containers by infrastructure ID (e.g., `cluster-abc123`).
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-## scripts/console.sh
-
-This script will output the ssh command needed to access the console for a VM or OpenShift node name.
-
-## scripts/create-cluster.sh
-
-This script will create an OpenShift cluster using the IPI installer.
-
-Required environment variables before running this script:
-
-- `BASEDOMAIN` the domain name to use for the OpenShift cluster.
-
-- `BASTION_IMAGE_NAME` the OpenStack image name for the HAProxy VM.
-
-- `BASTION_RSA` the ssh private key for the bastion node. (used for failure diagnostics)
-
-- `CLOUD` the name of the cloud to use in the `~/.config/openstack/clouds.yaml` file.
-
-- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files. (defaults to `test`)
-
-- `CLUSTER_NAME` the name prefix to use for the OpenShift cluster which you are installing.
-
-- `CONTROLLER_IP` the IP address of the controller.
-
-- `FLAVOR_NAME` the OpenStack flavor name to use for OpenShift VMs.
-
-- `INSTALLER_SSHKEY` the path to the ssh public key for access to the bootstrap and master nodes.  Usually named `~/.ssh/id_installer_rsa.pub`.
-
-- `MACHINE_TYPE` the PowerPC machine type / availability zone to use for OpenShift VMs.
-
-- `NETWORK_NAME` the OpenStack network name to use for OpenShift VMs.
-
-- `PROJECT` an optional prefix to prepend to the RHCOS image name. (optional)
-
-- `PULL_SECRET` the pull secret content (used inline in install-config). (optional alternative to `PULLSECRET_FILE`)
-
-- `PULLSECRET_FILE` the filename containing the pull secrets for the OpenShift containers. Usually named `~/.pullSecretCompact`.
-
-- `SSHKEY_NAME` the OpenStack ssh keyname to use for the HAProxy VM.
-
-Required existing files before running this script:
-
-- `~/.pullSecretCompact`
-
-- `~/.ssh/id_installer_rsa.pub`
-
-Required existing binaries before running this script:
-
-- `openshift-install` The OpenShift IPI installer.
-
-- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
-
-- `openstack` The OpenStack CLI tool existing on Fedora/RHEL/CentOS repositories.
-
-- `jq` The JSON query CLI tool found at https://jqlang.org/download/ and existing on Fedora/RHEL/CentOS repositories.
-
-- `getent` DNS resolution utility.
-
-- `podman` Container tool used for pull secret validation.
-
-- `ssh-keygen` Used for optional SSH public key validation and controller connectivity check.
-
-- `ping` Used to verify controller connectivity.
-
-## scripts/list-bastions.sh
-
-This script lists bastion (standalone) VMs on PowerVC/OpenStack.  Any server whose name does not match the cluster-node pattern is treated as a bastion VM.
-
-Optional arguments:
-
-- `--cloud <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
-
-- `--bastionRSA <path>` Path to SSH private key for bastion access.  When provided, each listed bastion is probed over SSH and only reachable ones are shown (with the matching username).
-
-Optional environment variables:
-
-- `CLOUD` the OpenStack cloud name from `clouds.yaml` (skips interactive prompt if set).
-
-- `BASTION_RSA` path to SSH private key for bastion access (skips prompt if set).
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-- `ssh` Required only when `--bastionRSA` is provided.
-
-## scripts/current-servers.sh
-
-This script lists OpenStack servers grouped by cluster and standalone VMs.
-
-Optional arguments:
-
-- `-c <cloud>` / `--cloud <cloud>` OpenStack cloud name (overrides `$CLOUD` / `$OS_CLOUD`).
-
-- `-i` / `--show-ips` Show IP addresses.
-
-- `-s` / `--show-standalone` Show standalone/bastion VMs (default: false).
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-## scripts/delete-cluster.sh
-
-This script will delete an OpenShift cluster using the IPI installer.
-
-Required environment variables before running this script:
-
-- `CLUSTER_DIR` the directory location where the OpenShift IPI installer will save important files.
-
-- `CONTROLLER_IP` the IP address of the controller.
-
-Required existing binaries before running this script:
-
-- `openshift-install` The OpenShift IPI installer.
-
-- `ocp-ipi-powervc-linux-${ARCH}` This repo tool.
-
-- `ping` a Linux admin tool.
-
-## scripts/list-dns.sh
-
-This script lists DNS records from an IBM Cloud CIS (Cloud Internet Services) instance.  It interactively selects the CIS instance and domain, then paginates through all DNS records, optionally filtering by a regex pattern.
-
-Required environment variables before running this script:
-
-- `IBMCLOUD_API_KEY` IBM Cloud API key used for authentication.
-
-- `BASEDOMAIN` DNS base domain; used to auto-select the matching CIS domain when only one matches.
-
-Optional arguments:
-
-- `-m, --match <pattern>` Filter DNS records by name (regex).
-
-- `-r, --region <region>` IBM Cloud region to target (defaults to `us-south`).
-
-Required existing binaries before running this script:
-
-- `ibmcloud` IBM Cloud CLI with the CIS plugin installed.
-
-- `jq` The JSON query CLI tool.
-
-## scripts/list-clusters-and-delete.sh
-
-This script lists running OpenShift clusters on PowerVC/OpenStack, prompts the user to select one, and deletes it.
-
-Optional arguments:
-
-- `-c <cloud>` OpenStack cloud name (skips interactive prompt).
-
-- `-l` List clusters only; do not prompt for deletion.
-
-Optional environment variables:
-
-- `CLOUD` the OpenStack cloud name from `clouds.yaml` (skips interactive prompt if set).
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-- `openshift-install` The OpenShift IPI installer.
-
-## scripts/print-stream-json.sh
-
-This script downloads CoreOS JSON metadata and verifies that RHCOS images exist in OpenStack.  It supports multiple release versions, multiple output formats (text, JSON, CSV), dry-run mode, and RHEL version preference (RHEL 9 or RHEL 10).
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-- `jq` The JSON query CLI tool.
-
-- `curl` For downloading CoreOS metadata.
-
-## scripts/rename-images.sh
-
-This script bulk-renames RHCOS images in OpenStack by adding a project prefix to their names.
-
-Required existing binaries before running this script:
-
-- `openstack` The OpenStack CLI tool.
-
-## scripts/ssh.sh
-
-This script will output the ssh command needed to access a specific OpenShift node.
-
-## scripts/upload-centos.sh
-
-This script downloads and uploads CentOS Stream GenericCloud images to PowerVC/OpenStack.  It resolves the latest dated `.qcow2` image for either CentOS Stream 9 or CentOS Stream 10 (ppc64le) from the official CentOS cloud mirror, verifies its SHA1 checksum, derives the image name, checks whether the image already exists in OpenStack, and if not converts it with `pvsadm` and imports it via `pvcctl` or `powervc-image`.
-
-Required environment variables before running this script:
-
-- `CLOUD` OpenStack cloud name from `~/.config/openstack/clouds.yaml` (or `--cloud`).
-
-- `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (or `--project-upload`).
-
-- `CENTOS_VERSION` CentOS stream version: `CentOS9` or `CentOS10` (or `--centOS`).
-
-- `SVC_HOST` PowerVC service host used by `pvcctl` (or `--svc-host`).
-
-- `TEMPLATE` PowerVC template UUID used during image import (or `--template`).
-
-Required existing binaries before running this script:
-
-- `curl` For downloading files and checking URLs.
-
-- `jq` The JSON query CLI tool.
-
-- `openstack` The OpenStack CLI tool.
-
-- `pvsadm` For converting qcow2 images to OVA format.
-
-- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
-
-Example usage:
+## Building
 
 ```bash
-source environmentCI
-./scripts/upload-centos.sh --centOS CentOS9
-./scripts/upload-centos.sh --centOS CentOS10 --dry-run
-./scripts/upload-centos.sh --centOS CentOS9 --verbose
+# Build for the current platform
+make build
+
+# Build all tools (main binary + all companion tools)
+make build-all
+
+# Build distribution binaries for all supported platforms (linux/darwin × amd64/arm64/ppc64le)
+make dist
+
+# Quick development cycle (deps → build → test)
+make dev
+
+# Run tests
+make test
+
+# Format, vet and test
+make check
+
+# Run golangci-lint (requires golangci-lint)
+make lint
+
+# Prepare a release (clean, deps, test, dist, release-scripts)
+make release
+
+# Show all Makefile targets
+make help
 ```
 
-## scripts/upload-rhcos.sh
+Other useful targets: `test-race`, `test-coverage`, `coverage-html`, `bench`, `fmt`, `vet`, `tidy`, `checksums`.
 
-This script downloads and uploads RHCOS images to PowerVC/OpenStack.  It handles multiple release versions, supports both RHEL 9 and RHEL 10 based images, converts images with `pvsadm`, and imports them via `pvcctl` or `powervc-image`.
+Each companion tool has its own `init-<tool>`, `build-<tool>`, `install-<tool>` and `dist-<tool>` targets.
 
-Required existing binaries before running this script:
+The output binary is named `ocp-ipi-powervc-<os>-<arch>` (e.g. `ocp-ipi-powervc-linux-x86_64`). The command examples below use `ocp-ipi-powervc-linux-amd64`; substitute the binary name for your platform.
 
-- `curl` For downloading files and checking URLs.
+> **Note:** The `create-cluster` command implementation (`CmdCreateCluster.go`, `CreateClusterPhase*.go`) is currently disabled and is not available from the CLI. Use [`scripts/create-cluster.sh`](scripts/create-cluster.sh) instead.
 
-- `jq` The JSON query CLI tool.
+---
 
-- `openstack` The OpenStack CLI tool.
+## CLI Commands
 
-- `pvsadm` For converting qcow2 images to OVA format.
+```
+ocp-ipi-powervc-linux-<arch> <command> [flags]
+ocp-ipi-powervc-linux-<arch> --version
+ocp-ipi-powervc-linux-<arch> --help
+```
 
-- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+Exit codes: `0` success · `2` invalid args · `3` unknown command · `4` command failed.
 
-## scripts/wait-for-dns.sh
+---
 
-This script polls DNS servers to verify that all required DNS entries for an OpenShift cluster are resolvable before proceeding with installation.  It checks wildcard DNS entries (`*.apps`), the API endpoint, and the internal API endpoint.
+### check-alive
 
-Required environment variables before running this script:
+Checks whether the controller service is reachable.
 
-- `CLUSTER_DIR` directory containing cluster metadata (prompts if not set).
+```bash
+ocp-ipi-powervc-linux-amd64 check-alive --serverIP ${controller_ip}
+```
 
-- `BASEDOMAIN` base domain for the cluster (prompts if not set).
+| Flag | Description |
+|---|---|
+| `--serverIP` | IP address or hostname of the controller |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
 
-Required existing files before running this script:
+---
 
-- `${CLUSTER_DIR}/metadata.json` Cluster metadata containing the cluster name.
+### create-bastion
 
-Required existing binaries before running this script:
+Creates an HAProxy VM that acts as an OpenShift load balancer. The bastion is managed by a `watch-installation` process.
 
-- `jq` The JSON query CLI tool.
+> **Note:** `IBMCLOUD_API_KEY` is optional. If not set, ensure DNS is provided by CoreDNS or another method.
 
-- `getent` DNS resolution utility.
+```bash
+ocp-ipi-powervc-linux-amd64 create-bastion \
+  --cloud ${cloud_name} \
+  --bastionName ${bastion_name} \
+  --flavorName ${flavor_name} \
+  --imageName ${image_name} \
+  --networkName ${network_name} \
+  --sshKeyName ${ssh_keyname} \
+  --serverIP ${controller_ip} \
+  --shouldDebug true
+```
 
-# Companion tools
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml` |
+| `--bastionName` | VM name (should match the OpenShift cluster name) |
+| `--bastionRsa` | SSH private key file for the bastion VM |
+| `--availabilityZone` | OpenStack availability zone (default: `s1022`) |
+| `--flavorName` | OpenStack flavor for the VM |
+| `--imageName` | OpenStack image for the VM |
+| `--networkName` | OpenStack network for the VM |
+| `--sshKeyName` | OpenStack SSH key name for the VM |
+| `--domainName` | DNS domain name for the bastion (optional) |
+| `--enableHAProxy` | Install HAProxy on the bastion (default: `true`) |
+| `--serverIP` | IP address of the controller |
+| `--bastionIpFile` | File to write the bastion IP into (default: `/tmp/bastionIp`) |
+| `--passwdHash` | Password hash used in the CoreOS ignition file (optional) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
 
-Standalone Go binaries that live in sub-directories and are built/installed separately from the main `ocp-ipi-powervc` binary.
+---
 
-- [JobHistory](#jobhistory)
-- [UploadCentos](#uploadcentos)
-- [UploadRhcos](#uploadrhcos)
+### create-rhcos
 
-## JobHistory
+Creates a test RHCOS VM managed by the controller.
 
-Extracts CI run information from OpenShift Prow job history pages and reports build and test results.  It can filter by date, output CSV files, and process multiple job URLs in one run.
+> **Note:** `IBMCLOUD_API_KEY` is optional. If not set, ensure DNS is handled externally.
 
-Build:
+```bash
+ocp-ipi-powervc-linux-amd64 create-rhcos \
+  --cloud ${cloud_name} \
+  --rhcosName ${rhcos_name} \
+  --flavorName ${flavor_name} \
+  --imageName ${image_name} \
+  --networkName ${network_name} \
+  --sshPublicKey $(cat ~/.ssh/id_installer_rsa.pub) \
+  --shouldDebug true
+```
+
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml` |
+| `--rhcosName` | VM name (should match the OpenShift cluster name) |
+| `--availabilityZone` | OpenStack availability zone (default: `s1022`) |
+| `--flavorName` | OpenStack flavor for the VM |
+| `--imageName` | OpenStack image for the VM |
+| `--networkName` | OpenStack network for the VM |
+| `--passwdHash` | Password hash of the core user |
+| `--sshPublicKey` | SSH public key contents to inject into the VM |
+| `--domainName` | DNS domain name for the VM (optional) |
+| `--timeout` | Maximum operation duration (default: `15m`) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### delete-bastion
+
+Deletes an existing bastion HAProxy VM.
+
+```bash
+ocp-ipi-powervc-linux-amd64 delete-bastion \
+  --cloud ${cloud_name} \
+  --bastionName ${bastion_name} \
+  --shouldDebug true
+```
+
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml` |
+| `--bastionName` | Name of the bastion VM to delete |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### erase-metadata
+
+Erases cluster metadata entries matching a pattern from the controller.
+
+```bash
+ocp-ipi-powervc-linux-amd64 erase-metadata \
+  --pattern "test-*" \
+  --serverIP ${controller_ip} \
+  --timeout 5m
+```
+
+| Flag | Description |
+|---|---|
+| `--pattern` | Pattern to match metadata entries for deletion (e.g. `test-*`) |
+| `--serverIP` | IP address of the controller |
+| `--timeout` | Operation timeout (default: `1m`) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### rhcos-exists
+
+Verifies that a named RHCOS image exists in the OpenStack cloud. Lists all available images if not found.
+
+```bash
+ocp-ipi-powervc-linux-amd64 rhcos-exists \
+  --cloud ${cloud_name} \
+  --imageName ${image_name}
+```
+
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml` |
+| `--imageName` | RHCOS image name to search for (case-sensitive, exact match) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### send-metadata
+
+Sends a command to the controller to create or delete a local copy of `metadata.json`.
+
+```bash
+ocp-ipi-powervc-linux-amd64 send-metadata \
+  --createMetadata ${cluster_dir}/metadata.json \
+  --serverIP ${controller_ip}
+```
+
+| Flag | Description |
+|---|---|
+| `--createMetadata` | Tells the controller to create a copy of this metadata.json (mutually exclusive with `--deleteMetadata`) |
+| `--deleteMetadata` | Tells the controller to delete a copy of this metadata.json (mutually exclusive with `--createMetadata`) |
+| `--serverIP` | IP address of the controller |
+| `--timeout` | Operation timeout (default: `1m`) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### watch-create
+
+Monitors and displays the status of cluster resources during and after cluster creation — VMs, the load balancer, and optionally the OpenShift cluster and IBM DNS.
+
+> **Note:** `IBMCLOUD_API_KEY` must be set.
+
+```bash
+ocp-ipi-powervc-linux-amd64 watch-create \
+  --metadata ${cluster_dir}/metadata.json \
+  --kubeconfig ${cluster_dir}/auth/kubeconfig \
+  --cloud ${cloud_name} \
+  --bastionRsa ~/.ssh/id_installer_rsa \
+  --baseDomain ${domain_name}
+```
+
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml` |
+| `--metadata` | Path to `metadata.json` created by the IPI installer |
+| `--kubeconfig` | Path to `kubeconfig` created by the IPI installer (optional) |
+| `--bastionRsa` | SSH private key file for the bastion VM |
+| `--baseDomain` | Domain name of the OpenShift cluster (optional) |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+### watch-installation
+
+Monitors the progress of an active `openshift-install create cluster` operation. Run this in a separate window while the installer deploys.
+
+> **Note:** `IBMCLOUD_API_KEY` is optional. If not set, ensure DNS is handled externally.
+
+```bash
+ocp-ipi-powervc-linux-amd64 watch-installation \
+  --cloud ${cloud_name} \
+  --domainName ${domain_name} \
+  --bastionMetadata ${installs_dir} \
+  --bastionRsa ~/.ssh/id_installer_rsa \
+  --dhcpSubnet ${dhcp_subnet} \
+  --dhcpNetmask ${dhcp_netmask} \
+  --dhcpRouter ${dhcp_router} \
+  --dhcpDnsServers "${dhcp_servers}"
+```
+
+| Flag | Description |
+|---|---|
+| `--cloud` | Cloud name from `~/.config/openstack/clouds.yaml`; may be specified more than once |
+| `--domainName` | Domain name for the OpenShift cluster |
+| `--bastionMetadata` | Root directory containing the OpenShift cluster install directories (one per infra ID, each holding a `metadata.json`) |
+| `--bastionRsa` | SSH private key for the HAProxy VM |
+| `--enableDhcpd` | Enable updating the local DHCP server (default: `false`) |
+| `--dhcpServer` | DHCP server to manage: `dhcpd` or `kea` (default: `dhcpd`) |
+| `--dhcpInterface` | Network interface for DHCPd requests |
+| `--dhcpSubnet` | Subnet for DHCPd requests |
+| `--dhcpNetmask` | Netmask for DHCPd requests |
+| `--dhcpRouter` | Router for DHCPd requests |
+| `--dhcpDnsServers` | Comma-separated DNS servers for DHCPd requests |
+| `--dhcpServerId` | DHCP server identifier |
+| `--statsUser` | HAProxy stats username — leave empty to disable (optional) |
+| `--statsPassword` | HAProxy stats password (optional) |
+| `--log` | File to log all output to |
+| `--shouldDebug` | Verbose debug output (default: `false`) |
+
+---
+
+## Scripts
+
+Helper shell scripts live in the [`scripts/`](scripts/) directory and are included in release tarballs.
+
+| Script | Purpose |
+|---|---|
+| `create-cluster.sh` | Create an OpenShift cluster using the IPI installer |
+| `delete-cluster.sh` | Delete an OpenShift cluster |
+| `check-alive.sh` | Check the controller is running; start it in tmux if not |
+| `console.sh` | Print the SSH command to access a VM or node by name |
+| `ssh.sh` | Print the SSH command to access a specific OpenShift node |
+| `current-servers.sh` | List OpenStack servers grouped by cluster |
+| `list-bastions.sh` | List standalone bastion VMs; optionally probe over SSH |
+| `list-clusters-and-delete.sh` | List clusters and interactively delete one |
+| `list-dns.sh` | List DNS records from an IBM Cloud CIS instance |
+| `list-openstack-versions.sh` | List OCP release versions that have ppc64le builds |
+| `print-stream-json.sh` | Download CoreOS metadata and verify RHCOS images exist in OpenStack |
+| `upload-rhcos.sh` | Download and upload RHCOS images to PowerVC |
+| `upload-centos.sh` | Download and upload CentOS Stream images to PowerVC |
+| `watch-rhcos-images.sh` | Watch the ppc64le OCP CI release streams and upload new RHCOS images to PowerVC every 24 hours |
+| `rename-images.sh` | Bulk-rename RHCOS images in OpenStack by adding a project prefix |
+| `cleanup-containers.sh` | Remove all OpenStack containers and their objects |
+| `find-orphaned-ports.py` | Find (and optionally delete with `--delete`) orphaned Neutron ports in the current project |
+| `watch-bastions-port.sh` | Continuously watch bastion VMs and print a line when their addresses or ports change or a bastion disappears |
+| `wait-for-dns.sh` | Poll DNS until all required OpenShift cluster entries are resolvable |
+| `build-nightly.sh` | Download a nightly OCP build and set up a test environment |
+| `extract-release-tools.sh` | Extract the `openshift-install` and `oc` binaries for a release into `./<VERSION>/` |
+| `download-yq.sh` | Download and checksum-verify a `mikefarah/yq` release |
+| `fetch-cluster-artifacts.sh` | Fetch cluster artifacts from a CI pod and the controller host |
+| `sriov-worker-watch.sh` | Provision SR-IOV-enabled worker nodes one at a time |
+| `delete-pods-e2e-pod-network-disruption-test.sh` | Delete leftover `e2e-pod-network-disruption-test-*` namespaces (pattern is the first argument) |
+
+See each script's inline comments for full flag details.
+
+### create-cluster.sh configuration
+
+`create-cluster.sh` reads its settings from environment variables, prompting for any required value that is not set. Ready-made examples live in the top-level `environment*` files (e.g. `environmentSelfSigned`); see [docs/environment-variables.md](docs/environment-variables.md) for the full list.
+
+| Variable | Description |
+|---|---|
+| `CLOUD`, `BASEDOMAIN`, `CLUSTER_NAME`, `CLUSTER_DIR`, `NETWORK_NAME`, `CONTROLLER_IP` | Cloud, DNS domain, cluster name and directory, OpenStack network, and PowerVC controller IP |
+| `BASTION_IMAGE_NAME`, `SSHKEY_NAME`, `BASTION_RSA` | Bastion image, OpenStack keypair, and private SSH key |
+| `PULL_SECRET` / `PULLSECRET_FILE`, `INSTALLER_SSHKEY` | Pull secret (content or file) and installer public SSH key |
+| `FLAVOR_NAME` | Flavor for cluster nodes (`defaultMachinePlatform`) |
+| `BASTION_FLAVOR_NAME`, `CONTROL_FLAVOR_NAME`, `COMPUTE_FLAVOR_NAME` | Optional per-role flavors (default: `FLAVOR_NAME`) |
+| `MACHINE_TYPE` | Availability zone for the bastion and the default for the control and compute planes |
+| `CONTROL_MACHINE_TYPE`, `COMPUTE_MACHINE_TYPE` | Optional per-plane availability zones (default: `MACHINE_TYPE`) |
+| `CONTROL_REPLICAS`, `COMPUTE_REPLICAS` | Optional node counts (default: `3` each) |
+
+---
+
+## Companion Tools
+
+Standalone Go binaries in sub-directories, built and installed separately from the main binary. `make build-all` builds all of them.
+
+### GrabConsole
+
+Captures serial console output from a PowerVC/OpenStack VM over SSH.
+
+```bash
+make build-grabconsole
+./GrabConsole/GrabConsole --help
+```
+
+### SshNode
+
+Establishes an SSH connection to a specific OpenShift node by name.
+
+```bash
+make build-sshnode
+./SshNode/SshNode --help
+```
+
+### JobHistory
+
+Extracts CI run information from OpenShift Prow job history pages and reports build and test results. Supports date filtering and CSV output.
 
 ```bash
 make build-jobhistory
-```
 
-**Important**: All flags must be specified **before** the URL(s).
-
-Example usage:
-
-```bash
 # All runs today, CSV output
 ./JobHistory/JobHistory --today --csv --output output.csv \
   https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/<job-name>/
 
 # Last 7 days
 ./JobHistory/JobHistory --last-n-days 7 <URL>
-
-# Custom date range
-./JobHistory/JobHistory --after-date 2024-07-01 --before-date 2024-07-31 <URL>
 ```
 
-args:
-- `--today` Only show runs from today.
+| Flag | Description |
+|---|---|
+| `--today` | Only show runs from today |
+| `--yesterday` | Only show runs from yesterday |
+| `-l, --last-n-days <n>` | Only show runs from the last n days |
+| `-a, --after-date <date>` | Only show runs after this date (ISO 8601) |
+| `-b, --before-date <date>` | Only show runs before this date (ISO 8601) |
+| `-c, --csv` | Output in CSV format |
+| `-o, --output <file>` | Write output to a file instead of stdout |
+| `-d, --deploy-status-only` | Only show deploy failures |
+| `-t, --test-status-only` | Only show test failures |
 
-- `--yesterday` Only show runs from yesterday.
+### UploadRhcosAPI
 
-- `-l, --last-n-days <n>` Only show runs from the last n days.
+Downloads RHCOS `ppc64le` images and uploads them into PowerVC/OpenStack by calling the PowerVC image import service directly, instead of running `pvcctl` as `UploadRhcos` does. It reads sensitive settings from environment variables and supports self-signed PowerVC certificates. See [UploadRhcosAPI/README.md](UploadRhcosAPI/README.md) for the full list of environment variables.
 
-- `-a, --after-date <date>` Only show runs after this date (ISO 8601, e.g. `2024-07-01`).
+```bash
+make build-uploadrhcosapi
 
-- `-b, --before-date <date>` Only show runs before this date (ISO 8601).
+./UploadRhcosAPI/UploadRhcosAPI --cloud mycloud --release release-4.21 --rhel rhel9
+```
 
-- `-c, --csv` Output in CSV format.
+| Flag | Description |
+|---|---|
+| `--cloud` | OpenStack cloud name from `clouds.yaml` |
+| `--release <version>` | Release branch; may be repeated (default: `release-4.21`) |
+| `--rhel` | `rhel9` or `rhel10` |
+| `--ca-cert <path>` | PEM CA certificate for the import service (auto-detected from `clouds.yaml` when `--cloud` is set) |
+| `--insecure` | Skip TLS certificate verification for the import service |
+| `--connect-timeout <d>` | Timeout for the OpenStack connectivity check (default: `2m`) |
+| `--dry-run` | Simulate operations without executing them |
+| `--log-payload` | Print the outgoing import JSON payload (credentials redacted) |
+| `-v, --verbose` | Enable debug output |
+| `--quiet` | Suppress non-error output |
 
-- `-o, --output <file>` Write output to this file instead of stdout.
+### UploadCentos
 
-- `-d, --deploy-status-only` Only show deploy failures.
-
-- `-t, --test-status-only` Only show test failures.
-
-- `-v, --version` Display the program version.
-
-## UploadCentos
-
-Downloads the latest CentOS Stream GenericCloud `ppc64le` image from `cloud.centos.org` and uploads it into a PowerVC/OpenStack environment.  It checks whether the image already exists before uploading and optionally converts to OVA format with `pvsadm`.
-
-Build:
+Downloads the latest CentOS Stream `ppc64le` GenericCloud image and uploads it into PowerVC/OpenStack.
 
 ```bash
 make build-uploadcentos
-```
 
-Example usage:
-
-```bash
-# Upload CentOS Stream 9
 ./UploadCentos/UploadCentos \
   --cloud mycloud \
-  --project-upload myproject \
   --centos CentOS9 \
+  --project-upload myproject \
   --svc-host powervc.example.com \
-  --template xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# Dry run
-./UploadCentos/UploadCentos --centos CentOS9 --dry-run
+  --template <uuid>
 ```
 
-args / environment variables:
-- `--cloud` / `CLOUD` OpenStack cloud name from `clouds.yaml` (required).
+| Flag / Env var | Description |
+|---|---|
+| `--cloud` / `CLOUD` | OpenStack cloud name (required) |
+| `--centos` / `CENTOS_VERSION` | `CentOS9` or `CentOS10` (required) |
+| `--project-upload` / `PROJECT_UPLOAD` | PowerVC project for the uploaded image (required) |
+| `--svc-host` / `SVC_HOST` | PowerVC service host used by `pvcctl` (required) |
+| `--template` / `TEMPLATE` | PowerVC template UUID for image import (required) |
+| `--project` / `PROJECT` | Optional prefix prepended to image filenames |
+| `--date <YYYYMMDD>` | Pin to a specific image build date |
+| `--dry-run` | Print commands without executing |
+| `-v, --verbose` | Enable debug output |
+| `-q, --quiet` | Suppress non-error output |
 
-- `--centos` / `CENTOS_VERSION` CentOS Stream version: `CentOS9` or `CentOS10` (required).
+### UploadRhcos
 
-- `--project-upload` / `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (required).
-
-- `--svc-host` / `SVC_HOST` PowerVC service host used by `pvcctl` (required).
-
-- `--template` / `TEMPLATE` PowerVC template UUID used during image import (required).
-
-- `--project` / `PROJECT` Optional prefix prepended to image filenames.
-
-- `--date <YYYYMMDD>` Pin to a specific image build date instead of using the latest.
-
-- `--dry-run` Print commands without executing them.
-
-- `-v, --verbose` Enable debug output.
-
-- `-q, --quiet` Suppress all non-error output.
-
-Required existing binaries:
-
-- `openstack` The OpenStack CLI tool.
-
-- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
-
-- `pvsadm` For converting qcow2 images to OVA format (optional; required when using `powervc-image`).
-
-## UploadRhcos
-
-Downloads Red Hat CoreOS (RHCOS) `ppc64le` images from the OpenShift installer GitHub repository and uploads them into a PowerVC/OpenStack environment.  Supports multiple release branches, RHEL 9 and RHEL 10 based images, and optional OVA conversion with `pvsadm`.
-
-Build:
+Downloads RHCOS `ppc64le` images from the OpenShift installer repository and uploads them into PowerVC/OpenStack. Supports multiple release branches and RHEL 9/10 image variants.
 
 ```bash
 make build-uploadrhcos
-```
 
-Example usage:
-
-```bash
-# Upload a single release
 ./UploadRhcos/UploadRhcos \
   --cloud mycloud \
-  --project-upload myproject \
   --release release-4.21 \
   --rhel rhel9 \
+  --project-upload myproject \
   --svc-host powervc.example.com \
-  --template xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# Multiple releases, dry run
-./UploadRhcos/UploadRhcos --release release-4.21 --release release-4.22 --dry-run
+  --template <uuid>
 ```
 
-args / environment variables:
-- `--cloud` / `CLOUD` OpenStack cloud name from `clouds.yaml` (required).
+| Flag / Env var | Description |
+|---|---|
+| `--cloud` / `CLOUD` | OpenStack cloud name (required) |
+| `--project-upload` / `PROJECT_UPLOAD` | PowerVC project for the uploaded image (required) |
+| `--release <version>` | Release branch (e.g. `release-4.21`); may be repeated (default: `release-4.21`) |
+| `--rhel` / `RHEL_VERSION` | RHEL version for CoreOS image: `rhel9` or `rhel10` (optional) |
+| `--svc-host` / `SVC_HOST` | PowerVC service host used by `pvcctl` (required) |
+| `--template` / `TEMPLATE` | PowerVC template UUID for image import (required) |
+| `--project` / `PROJECT` | Optional prefix prepended to image filenames |
+| `--dry-run` | Print commands without executing |
+| `-v, --verbose` | Enable debug output |
+| `--quiet` | Suppress non-error output |
 
-- `--project-upload` / `PROJECT_UPLOAD` PowerVC project to associate the uploaded image with (required).
+> **Note:** `UploadCentos` and `UploadRhcos` connect to OpenStack using the CA certificate from the `cacert` field in `clouds.yaml`, so authentication works against PowerVC servers that use a self-signed or privately signed certificate.
 
-- `--release <version>` Release branch to process (e.g. `release-4.21`); may be repeated for multiple releases (defaults to `release-4.21`).
+---
 
-- `--rhel` / `RHEL_VERSION` RHEL version preference for CoreOS JSON selection: `rhel9` or `rhel10`. (optional)
+## CI and Release
 
-- `--svc-host` / `SVC_HOST` PowerVC service host used by `pvcctl` (required).
+GitHub Actions workflows in [`.github/workflows/`](.github/workflows/):
 
-- `--template` / `TEMPLATE` PowerVC template UUID used during image import (required).
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `go.yml` | Push or pull request to `main` | Run `make build` and `make test` |
+| `release.yml` | GitHub release created | Run `make release` and `make checksums`, then attach the binaries for darwin, linux/amd64, linux/arm64 and linux/ppc64le, the release tarball, and their checksums to the release |
 
-- `--project` / `PROJECT` Optional prefix prepended to image filenames.
+`make release` prepares the same artifacts locally in `dist/`: it runs the tests, builds all platforms, and copies the release scripts (with checksums).
 
-- `--dry-run` Print commands without executing them.
+---
 
-- `-v, --verbose` Enable debug output.
+## Documentation
 
-- `--quiet` Suppress all non-error output.
+| Document | Description |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index and installation prerequisites |
+| [docs/easy-installation.md](docs/easy-installation.md) | Quick-start installation guide |
+| [docs/complex-installation.md](docs/complex-installation.md) | Advanced installation scenarios |
+| [docs/environment-variables.md](docs/environment-variables.md) | Environment variable reference |
+| [docs/controller.md](docs/controller.md) | Controller service setup and operation |
+| [docs/configure-openstack.md](docs/configure-openstack.md) | OpenStack/PowerVC configuration |
+| [docs/IPI-installer.md](docs/IPI-installer.md) | IPI installer integration and RHCOS images |
+| [docs/debugging.md](docs/debugging.md) | Troubleshooting guide |
+| [docs/tools.md](docs/tools.md) | Required external tools |
+| [docs/powervc-ci-lifecycle.md](docs/powervc-ci-lifecycle.md) | PowerVC CI lifecycle flowchart (also [`powervc-ci-lifecycle.png`](powervc-ci-lifecycle.png)) |
+| [docs/create-cluster-flowchart.mmd](docs/create-cluster-flowchart.mmd) | Mermaid flowchart of the cluster creation flow |
+| [docs/IBMCloud-documentation.md](docs/IBMCloud-documentation.md) | `IBMCloud.go` IBM Cloud SDK wrappers with retry logic |
+| [docs/IBM-DNS-documentation.md](docs/IBM-DNS-documentation.md) | `IBM-DNS.go` DNS record management |
+| [docs/Utils-documentation.md](docs/Utils-documentation.md) | `Utils.go` utility functions |
+| [docs/bugs-and-risks-CmdWatchInstallation.md](docs/bugs-and-risks-CmdWatchInstallation.md) | Known bugs and risks in `CmdWatchInstallation.go` |
+| [docs/testing-ssh-permission-denied-errors.md](docs/testing-ssh-permission-denied-errors.md) | How the SSH permission-denied error in `CmdCreateBastion.go` is tested |
 
-Required existing binaries:
+Dated code-review and improvement notes for each command are kept in [`improvements/`](improvements/). The [`ansible/`](ansible/) directory contains `install-cluster-master.yml`, a playbook that sets up a host: it installs packages, configures `dhcpd`, checks out and installs this tool, installs Go and `oc`, and writes `clouds.yaml`. It requires the variables `username`, `password`, `ip`, `project_id` and `project_name`.
 
-- `openstack` The OpenStack CLI tool.
+---
 
-- `pvcctl` or `powervc-image` For importing images into PowerVC (either one required).
+## License
 
-- `pvsadm` For converting qcow2 images to OVA format (optional; required when using `powervc-image`).
-
+Apache License 2.0 — see [LICENSE](LICENSE).
