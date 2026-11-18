@@ -184,6 +184,19 @@
         ) 
       become: yes
 
+    - name: Ensure /usr/local/go/bin is in PATH
+      ansible.builtin.blockinfile:
+        path: /home/cloud-user/.bashrc
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: go PATH"
+        block: |
+          if ! [[ "$PATH" =~ "/usr/local/go/bin" ]]; then
+              PATH="$PATH:/usr/local/go/bin"
+          fi
+        create: yes
+        owner: cloud-user
+        group: cloud-user
+        mode: '0644'
+
     - name: Create a new directory
       ansible.builtin.file:
         path: /home/cloud-user/.config/openstack/
