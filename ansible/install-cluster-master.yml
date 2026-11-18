@@ -119,21 +119,22 @@
         ) 
       become: yes
 
-    - name: Install packages
+    # CentOS Stream 10 has no centos-release-openstack-* or python3-openstackclient
+    # RPMs, so install the client from PyPI for the cloud-user account instead.
+    # gcc and python3-devel are needed because psutil and msgpack have no
+    # ppc64le wheels and must be built from source.
+    - name: Install pip and build dependencies
       yum:
-        name: "{{ packages }}"
-      vars:
-        packages:
-          - centos-release-openstack-dalmatian
+        name:
+          - python3-pip
+          - python3-devel
+          - gcc
       become: yes
 
-    - name: Install packages
-      yum:
-        name: "{{ packages }}"
-      vars:
-        packages:
-          - python3-openstackclient
-      become: yes
+    - name: Install python-openstackclient
+      ansible.builtin.pip:
+        name: python-openstackclient
+        extra_args: --user
 
     - name: Git checkout ocp-ipi-powervc
       ansible.builtin.git:
