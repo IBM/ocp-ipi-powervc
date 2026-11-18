@@ -174,7 +174,7 @@
     - name: Install Go
       shell: |
         (
-          VERSION="1.27.0"
+          VERSION="1.27.4"
           if [ -d /usr/local/go/ ]
           then
             /bin/rm -rf /usr/local/go/
