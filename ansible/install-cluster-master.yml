@@ -58,7 +58,7 @@
         name: "{{ packages }}"
       vars:
         packages:
-          - dhcp-server
+          - kea
           - git
           - make
           - patch
@@ -68,27 +68,46 @@
           - dnf-plugins-core
       become: yes
 
-    - name: Create /etc/dhcp/dhcpd.conf
+    - name: Create /etc/kea/kea-dhcp4.conf
       ansible.builtin.copy:
-        dest: /etc/dhcp/dhcpd.conf
+        dest: /etc/kea/kea-dhcp4.conf
         content: |
-          persistent;
-
-          default-lease-time 2678400;
-          max-lease-time 2678400;
-
-          subnet 10.130.32.0 netmask 255.255.240.0 {
-             interface {{ ethernet_interfaces[0] }};
-             ignore unknown-clients;
+          {
+            "Dhcp4": {
+              "interfaces-config": {
+                "interfaces": [ "{{ ethernet_interfaces[0] }}" ]
+              },
+              "lease-database": {
+                "type": "memfile",
+                "persist": true,
+                "name": "/var/lib/kea/kea-leases4.csv"
+              },
+              "valid-lifetime": 2678400,
+              "max-valid-lifetime": 2678400,
+              "subnet4": [
+                {
+                  "id": 1,
+                  "subnet": "10.130.32.0/20",
+                  "interface": "{{ ethernet_interfaces[0] }}",
+                  "pools": [],
+                  "reservations": [
+                    {
+                      "hw-address": "00:11:22:33:44:55",
+                      "ip-address": "10.130.32.10"
+                    }
+                  ]
+                }
+              ]
+            }
           }
         mode: '0644'
         owner: root
         group: root
       become: yes
 
-    - name: systemctl dhcpd
+    - name: systemctl kea-dhcp4
       ansible.builtin.systemd:
-        name: dhcpd.service
+        name: kea-dhcp4.service
         state: started
         enabled: true
       become: yes
