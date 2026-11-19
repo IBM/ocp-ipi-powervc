@@ -244,6 +244,14 @@
         mode: '0755'
         recurse: yes
 
+    - name: Create metadata directory
+      ansible.builtin.file:
+        path: /home/cloud-user/metadata
+        state: directory
+        owner: cloud-user
+        group: cloud-user
+        mode: '0755'
+
     - name: Get oc status
       stat:
         path: /home/cloud-user/bin/oc
