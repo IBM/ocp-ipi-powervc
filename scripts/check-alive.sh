@@ -33,6 +33,7 @@
 #   DHCP_DNS_SERVERS    - DNS servers for DHCP configuration (comma-separated)
 #   DHCP_NETMASK        - Network mask for DHCP subnet
 #   DHCP_ROUTER         - Router/gateway IP for DHCP configuration
+#   DHCP_SERVER         - DHCP server software in use (must be "dhcpd" or "kea")
 #   DHCP_SERVER_ID      - Server ID for DHCP server
 #   DHCP_SUBNET         - Subnet for DHCP configuration
 #
@@ -58,7 +59,7 @@
 #
 # EXIT CODES:
 #   0 - Normal exit (interrupted by signal)
-#   1 - Missing required environment variable
+#   1 - Missing required environment variable or invalid DHCP_SERVER value
 #   2 - Missing required program
 #   3 - Failed to detect tmux session
 #   4 - Failed to detect network interface
@@ -107,8 +108,15 @@ readonly REQUIRED_ENV_VARS=(
 	"DHCP_DNS_SERVERS"
 	"DHCP_NETMASK"
 	"DHCP_ROUTER"
+	"DHCP_SERVER"
 	"DHCP_SERVER_ID"
 	"DHCP_SUBNET"
+)
+
+# Allowed values for DHCP_SERVER
+readonly ALLOWED_DHCP_SERVERS=(
+	"dhcpd"
+	"kea"
 )
 
 # Optional environment variables which need to be set but can be empty
@@ -303,7 +311,10 @@ function signal_handler() {
 #
 # Required Variables:
 #   BASEDOMAIN, BASTION_USERNAME, BASTION_RSA, CLOUD, CONTROLLER_IP,
-#   DHCP_DNS_SERVERS, DHCP_NETMASK, DHCP_ROUTER, DHCP_SERVER_ID, DHCP_SUBNET
+#   DHCP_DNS_SERVERS, DHCP_NETMASK, DHCP_ROUTER, DHCP_SERVER, DHCP_SERVER_ID,
+#   DHCP_SUBNET
+#
+# DHCP_SERVER must be one of ALLOWED_DHCP_SERVERS ("dhcpd" or "kea").
 #
 # Returns:
 #   0 - All required variables are set and non-empty
@@ -344,6 +355,21 @@ function validate_environment_variables() {
 			log_error "Required environment variable ${var} is not set"
 		fi
 	done
+
+	if [[ -n "${DHCP_SERVER:-}" ]]; then
+		local allowed
+		local valid_dhcp_server=false
+		for allowed in "${ALLOWED_DHCP_SERVERS[@]}"; do
+			if [[ "${DHCP_SERVER}" == "${allowed}" ]]; then
+				valid_dhcp_server=true
+				break
+			fi
+		done
+		if [[ "${valid_dhcp_server}" == "false" ]]; then
+			missing_vars+=("DHCP_SERVER")
+			log_error "DHCP_SERVER must be one of: ${ALLOWED_DHCP_SERVERS[*]} (got '${DHCP_SERVER}')"
+		fi
+	fi
 
 	if [[ ${#missing_vars[@]} -gt 0 ]]; then
 		log_error "Missing or empty environment variables: ${missing_vars[*]}"
@@ -588,7 +614,8 @@ function detect_network_interface() {
 #
 # Dependencies:
 #   POWERVC_TOOL, CLOUD, BASEDOMAIN, HOME, BASTION_USERNAME, BASTION_RSA,
-#   LINK, DHCP_SUBNET, DHCP_NETMASK, DHCP_ROUTER, DHCP_DNS_SERVERS, DHCP_SERVER_ID
+#   LINK, DHCP_SERVER, DHCP_SUBNET, DHCP_NETMASK, DHCP_ROUTER, DHCP_DNS_SERVERS,
+#   DHCP_SERVER_ID
 #
 # Side Effects:
 #   Sets POWERVC_CMD global variable
@@ -614,6 +641,7 @@ function build_powervc_command() {
 		  --bastionMetadata "${BASTION_METADATA}"
 		  --bastionRsa "${BASTION_RSA}"
 		  --enableDhcpd true
+		  --dhcpServer "${DHCP_SERVER}"
 		  --dhcpInterface "${LINK}"
 		  --dhcpSubnet "${DHCP_SUBNET}"
 		  --dhcpNetmask "${DHCP_NETMASK}"
