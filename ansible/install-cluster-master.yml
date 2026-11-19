@@ -197,6 +197,19 @@
         group: cloud-user
         mode: '0644'
 
+    - name: Ensure /home/cloud-user/ocp-ipi-powervc is in PATH
+      ansible.builtin.blockinfile:
+        path: /home/cloud-user/.bashrc
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: ocp-ipi-powervc PATH"
+        block: |
+          if ! [[ "$PATH" =~ "/home/cloud-user/ocp-ipi-powervc" ]]; then
+              PATH="$PATH:/home/cloud-user/ocp-ipi-powervc"
+          fi
+        create: yes
+        owner: cloud-user
+        group: cloud-user
+        mode: '0644'
+
     - name: Create a new directory
       ansible.builtin.file:
         path: /home/cloud-user/.config/openstack/
