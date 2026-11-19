@@ -1063,7 +1063,7 @@ function display_console_command() {
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	# Printing literal variable references for user command execution
 	# shellcheck disable=SC2016
-	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh-agent ssh -t -o PubkeyAuthentication=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
+	echo 'for SSH_PASSWORD in "${SSH_PASSWORDS[@]}"; do sshpass -p "$SSH_PASSWORD" ssh-agent ssh -t -o PubkeyAuthentication=no -o StrictHostKeyChecking=no '"${USER_ID}@${SSH_IP}"' mkvterm -m '"${HOST_DISPLAY_NAME}"' -p '"${INSTANCE_NAME}"' && break; done'
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	echo ""
 	log_warning "Note: You must have SSH_PASSWORDS array set in your environment:"
