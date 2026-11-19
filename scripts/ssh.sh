@@ -21,7 +21,9 @@ set -euo pipefail
 #==============================================================================
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-readonly SSH_KEY="${HOME}/.ssh/id_installer_rsa"
+readonly DEFAULT_SSH_KEY="${HOME}/.ssh/id_installer_rsa"
+# Private key used for cluster access; override with --ssh-key
+SSH_KEY="${DEFAULT_SSH_KEY}"
 readonly KNOWN_HOSTS="${HOME}/.ssh/known_hosts"
 
 # ANSI color codes for enhanced terminal output
@@ -287,6 +289,8 @@ Arguments:
 
 Options:
   --execute      Execute SSH command directly instead of printing it
+  --ssh-key FILE Private key used to connect
+                 (default: ${DEFAULT_SSH_KEY})
   --help, -h	 Show this help message
 
 Environment Variables:
@@ -300,6 +304,9 @@ Examples:
 
   # Connect to master node and execute SSH
   ${SCRIPT_NAME} --execute master-0
+
+  # Connect using a different SSH key
+  ${SCRIPT_NAME} --ssh-key ~/.ssh/id_powervc bootstrap
 
   # Connect to worker node
   ${SCRIPT_NAME} worker-0
@@ -336,6 +343,7 @@ EOF
 #
 # Globals:
 #   EXECUTE_SSH - Set to true when --execute is provided
+#   SSH_KEY     - Overridden when --ssh-key is provided
 #   ARG         - Stores the requested server name argument
 #   IS_INFRA    - Indicates whether ARG should be expanded with infraID
 #   SERVER      - Set immediately for custom server names
@@ -358,6 +366,20 @@ function parse_arguments() {
 				;;
 			--execute)
 				EXECUTE_SSH=true
+				shift
+				;;
+			--ssh-key)
+				if [[ $# -lt 2 ]] || [[ -z "$2" ]]; then
+					die "--ssh-key requires a file argument"
+				fi
+				SSH_KEY="$2"
+				shift 2
+				;;
+			--ssh-key=*)
+				SSH_KEY="${1#--ssh-key=}"
+				if [[ -z "${SSH_KEY}" ]]; then
+					die "--ssh-key requires a file argument"
+				fi
 				shift
 				;;
 			-*)
