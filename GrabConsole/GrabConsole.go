@@ -345,7 +345,7 @@ Environment Variables:
   DEBUG           Set to "true" to enable debug output
   INTERACTIVE     Set to "true" to connect interactively without timeout
   SSH_PASSWORDS   Space-separated list of passwords to try for HMC/PowerVM SSH
-                  e.g.: export SSH_PASSWORDS="pass1 2word example3"
+                  e.g.: export SSH_PASSWORDS='pass1 2word example3'
   TOKEN_ID        Reuse an existing PowerVC auth token (skips token acquisition)
 
 Examples:
@@ -1134,7 +1134,11 @@ func main() {
 	passwords := sshPasswords()
 	if len(passwords) == 0 {
 		logError("SSH_PASSWORDS is not set — set it to a space-separated list of passwords, e.g.:")
-		logError(`  export SSH_PASSWORDS="pass1 2word example3"`)
+		logError(`  export SSH_PASSWORDS='pass1 2word example3'`)
+		if filepath.Base(os.Getenv("SHELL")) == "bash" {
+			logWarning("If you used array syntax, note that bash cannot export arrays:")
+			logWarning("  'export SSH_PASSWORDS=(...)' is not visible to child processes; use a plain string")
+		}
 		os.Exit(1)
 	}
 
