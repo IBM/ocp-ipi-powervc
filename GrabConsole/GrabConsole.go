@@ -851,33 +851,69 @@ type hypervisorInfo struct {
 	HostDisplayName string
 }
 
-// getHypervisorInfo queries the PowerVC /os-hosts/<hypervisor> endpoint and
-// extracts registration details.
-func getHypervisorInfo(hc *http.Client, serverIP, projectID, token, hypervisor string, debug bool) (hypervisorInfo, error) {
-	hvURL := fmt.Sprintf("https://%s:8774/v2.1/%s/os-hosts/%s", serverIP, projectID, hypervisor)
-	logDebug(debug, "GET %s", hvURL)
+// hypervisorQueryAttempts is how many times the /os-hosts query is tried.
+// PowerVC intermittently answers it with a transient
+// "400 PD-A000011 The 'powervm' type of host is not supported" error.
+const hypervisorQueryAttempts = 5
 
+// hypervisorQueryRetryDelay is the pause between /os-hosts query attempts.
+const hypervisorQueryRetryDelay = 2 * time.Second
+
+// fetchHypervisorBody performs one GET of the /os-hosts/<hypervisor> endpoint.
+// It returns the response body on HTTP 2xx. The retryable result is true for
+// failures that may be transient: transport errors, HTTP 400 and HTTP 5xx.
+func fetchHypervisorBody(hc *http.Client, hvURL, token string) (data []byte, retryable bool, err error) {
 	req, err := http.NewRequest(http.MethodGet, hvURL, nil)
 	if err != nil {
-		return hypervisorInfo{}, fmt.Errorf("cannot create hypervisor request: %w", err)
+		return nil, false, fmt.Errorf("cannot create hypervisor request: %w", err)
 	}
 	req.Header.Set("X-Auth-Token", token)
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return hypervisorInfo{}, fmt.Errorf("hypervisor query failed: %w", err)
+		return nil, true, fmt.Errorf("hypervisor query failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return hypervisorInfo{}, fmt.Errorf("hypervisor query returned HTTP %d", resp.StatusCode)
-	}
-
 	// Cap the response body to 1 MiB to guard against unexpectedly large payloads.
 	const maxBody = 1 << 20 // 1 MiB
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return hypervisorInfo{}, fmt.Errorf("cannot read hypervisor response: %w", err)
+		return nil, true, fmt.Errorf("cannot read hypervisor response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Include a short excerpt of the body: PowerVC explains the failure there.
+		excerpt := strings.TrimSpace(string(data))
+		if len(excerpt) > 300 {
+			excerpt = excerpt[:300] + "…"
+		}
+		retry := resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 500
+		return nil, retry, fmt.Errorf("hypervisor query returned HTTP %d: %s", resp.StatusCode, excerpt)
+	}
+
+	return data, false, nil
+}
+
+// getHypervisorInfo queries the PowerVC /os-hosts/<hypervisor> endpoint and
+// extracts registration details. Transient failures are retried.
+func getHypervisorInfo(hc *http.Client, serverIP, projectID, token, hypervisor string, debug bool) (hypervisorInfo, error) {
+	hvURL := fmt.Sprintf("https://%s:8774/v2.1/%s/os-hosts/%s", serverIP, projectID, hypervisor)
+	logDebug(debug, "GET %s", hvURL)
+
+	var data []byte
+	for attempt := 1; ; attempt++ {
+		var retryable bool
+		var err error
+		data, retryable, err = fetchHypervisorBody(hc, hvURL, token)
+		if err == nil {
+			break
+		}
+		if !retryable || attempt >= hypervisorQueryAttempts {
+			return hypervisorInfo{}, err
+		}
+		logWarning("hypervisor query failed (attempt %d/%d), retrying: %s", attempt, hypervisorQueryAttempts, err)
+		time.Sleep(hypervisorQueryRetryDelay)
 	}
 
 	// The response is {"host": [{"resource": {...}}, {"registration": {...}}]}
