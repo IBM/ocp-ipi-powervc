@@ -62,6 +62,7 @@
 //	  --cluster-dir <dir>  Directory containing metadata.json (env: CLUSTER_DIR, default: test)
 //	  --duration <dur>     Console capture duration (default: 30s; 0 disables timeout)
 //	  --interactive, -i    Connect interactively to console session without timeout (env: INTERACTIVE=true)
+//	                       Press Enter then ~. to disconnect (~~ sends a literal ~)
 //	  --debug              Enable verbose debug output (env: DEBUG=true)
 //	  -h, --help           Show this help message
 //
@@ -95,6 +96,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -330,7 +332,8 @@ Arguments:
                 For infrastructure nodes the cloud is read from metadata.json
 
 Options:
-  --interactive, -i    Connect interactively to the console without timeout (like SSH)
+  --interactive, -i    Connect interactively to the console without timeout (like SSH).
+                       Press Enter then ~. to disconnect (~~ sends a literal ~)
   --duration <dur>     Capture duration                 (default: 30s; 0 disables timeout)
   --cloud <name>       OpenStack cloud from clouds.yaml (env: CLOUD; only used for
                        custom server names, metadata.json wins for cluster nodes)
@@ -1306,7 +1309,7 @@ func main() {
 		shellQuote(target.HostDisplayName), shellQuote(target.InstanceName))
 
 	if args.Interactive {
-		logInfo("running: %s (interactive session, press ~. to disconnect)", remoteCmd)
+		logInfo("running: %s (interactive session, press Enter then ~. to disconnect)", remoteCmd)
 		fmt.Println()
 		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 		if err := runInteractiveMkvterm(sshClient, target.HostDisplayName, target.InstanceName, args.Debug); err != nil {
@@ -1330,12 +1333,62 @@ func main() {
 	}
 }
 
+// escapeFilter implements an ssh-style local escape for the interactive
+// console. A "~" typed at the start of a line (the very first byte, or right
+// after Enter) is held back until the next byte arrives:
+//
+//	~.  disconnect locally
+//	~~  send a single literal "~"
+//	~x  send "~x" unchanged
+//
+// Handling this locally means the escape works whatever the remote console
+// (for example a guest login prompt) is doing with the bytes it receives.
+type escapeFilter struct {
+	started      bool // false until the first byte has been processed
+	atLineStart  bool
+	pendingTilde bool
+}
+
+// process filters in and returns the bytes to forward to the remote console.
+// disconnect is true when the "~." escape was seen; any bytes after it are
+// discarded.
+func (f *escapeFilter) process(in []byte) (out []byte, disconnect bool) {
+	if !f.started {
+		f.started = true
+		f.atLineStart = true
+	}
+	for _, b := range in {
+		if f.pendingTilde {
+			f.pendingTilde = false
+			switch b {
+			case '.':
+				return out, true
+			case '~':
+				out = append(out, '~')
+				f.atLineStart = false
+				continue
+			default:
+				out = append(out, '~')
+				// Fall through to normal handling of b below.
+			}
+		}
+		if f.atLineStart && b == '~' {
+			f.pendingTilde = true
+			continue
+		}
+		out = append(out, b)
+		f.atLineStart = b == '\r' || b == '\n'
+	}
+	return out, false
+}
+
 // runInteractiveMkvterm opens an interactive SSH session on client, runs
 //
 //	mkvterm -m '<hostDisplayName>' -p '<instanceName>'
 //
 // puts the local terminal into raw mode, forwards window resize events, and
-// streams standard I/O interactively until the remote session terminates (e.g., via ~.).
+// streams standard I/O interactively until the remote session terminates or
+// the user types the local escape "~." at the start of a line.
 func runInteractiveMkvterm(client *ssh.Client, hostDisplayName, instanceName string, debug bool) error {
 	session, err := client.NewSession()
 	if err != nil {
@@ -1375,10 +1428,40 @@ func runInteractiveMkvterm(client *ssh.Client, hostDisplayName, instanceName str
 	}
 	defer term.Restore(fd, oldState)
 
-	// Wire up standard I/O.
-	session.Stdin = os.Stdin
+	// Wire up standard I/O. Stdin goes through escapeFilter so that "~."
+	// disconnects locally.
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("cannot open stdin pipe: %w", err)
+	}
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
+
+	var escaped atomic.Bool
+	go func() {
+		var f escapeFilter
+		buf := make([]byte, 1024)
+		for {
+			n, rerr := os.Stdin.Read(buf)
+			if n > 0 {
+				out, disconnect := f.process(buf[:n])
+				if len(out) > 0 {
+					if _, werr := stdinPipe.Write(out); werr != nil {
+						return
+					}
+				}
+				if disconnect {
+					escaped.Store(true)
+					session.Close()
+					return
+				}
+			}
+			if rerr != nil {
+				stdinPipe.Close()
+				return
+			}
+		}
+	}()
 
 	// Forward terminal-resize events (SIGWINCH) until the session ends.
 	sigWinch := make(chan os.Signal, 1)
@@ -1418,7 +1501,13 @@ func runInteractiveMkvterm(client *ssh.Client, hostDisplayName, instanceName str
 	// Wait for the remote command to exit. ExitError is expected for interactive
 	// sessions (user exits or disconnects with ~.), so we only surface genuine
 	// errors.
-	if err := session.Wait(); err != nil {
+	err = session.Wait()
+	if escaped.Load() {
+		// Raw mode is still active, so use \r\n.
+		fmt.Print("\r\n[disconnected]\r\n")
+		return nil
+	}
+	if err != nil {
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
 			return nil // normal exit
