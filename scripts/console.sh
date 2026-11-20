@@ -70,6 +70,11 @@ SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
 readonly CLOUDS_YAML="${HOME}/.config/openstack/clouds.yaml"
 
+# Network timeouts (seconds) so an unresponsive PowerVC cannot hang the script
+readonly CURL_CONNECT_TIMEOUT=10
+readonly CURL_MAX_TIME=30
+readonly OPENSTACK_TIMEOUT=60
+
 # ANSI color codes for enhanced terminal output
 readonly COLOR_RED='\033[0;31m'      # Error messages
 readonly COLOR_GREEN='\033[0;32m'    # Success messages
@@ -548,7 +553,7 @@ function extract_cloud_config() {
 	log_info "Extracting cloud configuration from ${CLOUDS_YAML}..."
 
 	# Extract auth_url
-	SERVER_URL=$(yq eval ".clouds.${CLOUD}.auth.auth_url" "${CLOUDS_YAML}" 2>/dev/null)
+	SERVER_URL=$(yq eval ".clouds.${CLOUD}.auth.auth_url" "${CLOUDS_YAML}" 2>/dev/null) || true
 	if [[ -z "${SERVER_URL}" ]] || [[ "${SERVER_URL}" == "null" ]]; then
 		die "Could not get auth_url from ${CLOUDS_YAML}"
 	fi
@@ -566,28 +571,28 @@ function extract_cloud_config() {
 	fi
 
 	# Extract project_id
-	PROJECT_ID=$(yq eval ".clouds.${CLOUD}.auth.project_id" "${CLOUDS_YAML}" 2>/dev/null)
+	PROJECT_ID=$(yq eval ".clouds.${CLOUD}.auth.project_id" "${CLOUDS_YAML}" 2>/dev/null) || true
 	if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
 		die "Could not get project_id from ${CLOUDS_YAML}"
 	fi
 	log_debug "PROJECT_ID=${PROJECT_ID}"
 
 	# Extract project_name
-	PROJECT_NAME=$(yq eval ".clouds.${CLOUD}.auth.project_name" "${CLOUDS_YAML}" 2>/dev/null)
+	PROJECT_NAME=$(yq eval ".clouds.${CLOUD}.auth.project_name" "${CLOUDS_YAML}" 2>/dev/null) || true
 	if [[ -z "${PROJECT_NAME}" ]] || [[ "${PROJECT_NAME}" == "null" ]]; then
 		die "Could not get project_name from ${CLOUDS_YAML}"
 	fi
 	log_debug "PROJECT_NAME=${PROJECT_NAME}"
 
 	# Extract username
-	USERNAME=$(yq eval ".clouds.${CLOUD}.auth.username" "${CLOUDS_YAML}" 2>/dev/null)
+	USERNAME=$(yq eval ".clouds.${CLOUD}.auth.username" "${CLOUDS_YAML}" 2>/dev/null) || true
 	if [[ -z "${USERNAME}" ]] || [[ "${USERNAME}" == "null" ]]; then
 		die "Could not get username from ${CLOUDS_YAML}"
 	fi
 	log_debug "USERNAME=${USERNAME}"
 
 	# Extract password
-	PASSWORD=$(yq eval ".clouds.${CLOUD}.auth.password" "${CLOUDS_YAML}" 2>/dev/null)
+	PASSWORD=$(yq eval ".clouds.${CLOUD}.auth.password" "${CLOUDS_YAML}" 2>/dev/null) || true
 	if [[ -z "${PASSWORD}" ]] || [[ "${PASSWORD}" == "null" ]]; then
 		die "Could not get password from ${CLOUDS_YAML}"
 	fi
@@ -670,7 +675,7 @@ function get_server_name() {
 			die "Metadata file not found: ${metadata_file}"
 		fi
 
-		INFRA_ID=$(jq -r .infraID "${metadata_file}" 2>/dev/null)
+		INFRA_ID=$(jq -r .infraID "${metadata_file}" 2>/dev/null) || true
 		if [[ -z "${INFRA_ID}" ]] || [[ "${INFRA_ID}" == "null" ]]; then
 			die "Could not extract infraID from ${metadata_file}"
 		fi
@@ -728,19 +733,19 @@ function query_server_info() {
 	trap 'rm -f "${SERVER_FILE}" "${HYPERVISOR_FILE}"' EXIT
 
 	# Get server information
-	if ! openstack --os-cloud="${CLOUD}" server show "${SERVER}" --format=json > "${SERVER_FILE}" 2>/dev/null; then
+	if ! timeout "${OPENSTACK_TIMEOUT}" openstack --os-cloud="${CLOUD}" server show "${SERVER}" --format=json > "${SERVER_FILE}" 2>/dev/null; then
 		die "Failed to query server: ${SERVER}"
 	fi
 
 	# Extract hypervisor hostname
-	HYPERVISOR=$(jq -r '."OS-EXT-SRV-ATTR:hypervisor_hostname"' "${SERVER_FILE}" 2>/dev/null)
+	HYPERVISOR=$(jq -r '."OS-EXT-SRV-ATTR:hypervisor_hostname"' "${SERVER_FILE}" 2>/dev/null) || true
 	if [[ -z "${HYPERVISOR}" ]] || [[ "${HYPERVISOR}" == "null" ]]; then
 		die "Could not extract hypervisor hostname from server info"
 	fi
 	log_debug "HYPERVISOR=${HYPERVISOR}"
 
 	# Extract instance name
-	INSTANCE_NAME=$(jq -r '."OS-EXT-SRV-ATTR:instance_name"' "${SERVER_FILE}" 2>/dev/null)
+	INSTANCE_NAME=$(jq -r '."OS-EXT-SRV-ATTR:instance_name"' "${SERVER_FILE}" 2>/dev/null) || true
 	if [[ -z "${INSTANCE_NAME}" ]] || [[ "${INSTANCE_NAME}" == "null" ]]; then
 		die "Could not extract instance name from server info"
 	fi
@@ -814,6 +819,7 @@ function get_auth_token() {
 		}')
 
 	TOKEN_ID=$(curl --tlsv1.2 --insecure --silent -i \
+		--connect-timeout "${CURL_CONNECT_TIMEOUT}" --max-time "${CURL_MAX_TIME}" \
 		--request POST \
 		--header "Accept: application/json" \
 		--header "Content-Type: application/json" \
@@ -821,7 +827,7 @@ function get_auth_token() {
 		"https://${SERVER_IP}:5000/v3/auth/tokens" 2>/dev/null | \
 		grep -i x-subject-token | \
 		cut -d ' ' -f2 | \
-		tr -d '\r')
+		tr -d '\r') || true
 
 	if [[ -z "${TOKEN_ID}" ]]; then
 		die "Failed to obtain authentication token"
@@ -861,17 +867,40 @@ function get_auth_token() {
 function query_hypervisor_info() {
 	log_info "Querying hypervisor information..."
 
-	if ! curl --tlsv1.2 --insecure --silent \
-		--request GET \
-		--header "X-Auth-Token:${TOKEN_ID}" \
-		"https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/os-hosts/${HYPERVISOR}" \
-		> "${HYPERVISOR_FILE}" 2>/dev/null; then
-		die "Failed to query hypervisor information"
-	fi
+	# PowerVC intermittently answers this request with a transient
+	# "400 PD-A000011 The 'powervm' type of host is not supported" error,
+	# so retry a few times before giving up.
+	local max_attempts=5
+	local attempt
 
-	# Extract manager type
-	MANAGER_TYPE=$(jq -r '.host[].registration | select(length > 0) | .manager_type' "${HYPERVISOR_FILE}" 2>/dev/null)
+	MANAGER_TYPE=""
+	for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+		if ! curl --tlsv1.2 --insecure --silent \
+			--connect-timeout "${CURL_CONNECT_TIMEOUT}" --max-time "${CURL_MAX_TIME}" \
+			--request GET \
+			--header "X-Auth-Token:${TOKEN_ID}" \
+			"https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/os-hosts/${HYPERVISOR}" \
+			> "${HYPERVISOR_FILE}" 2>/dev/null; then
+			log_debug "hypervisor query attempt ${attempt}/${max_attempts}: curl failed"
+		else
+			# Extract manager type
+			MANAGER_TYPE=$(jq -r '.host[].registration | select(length > 0) | .manager_type' "${HYPERVISOR_FILE}" 2>/dev/null) || true
+			if [[ -n "${MANAGER_TYPE}" ]] && [[ "${MANAGER_TYPE}" != "null" ]]; then
+				break
+			fi
+			log_debug "hypervisor query attempt ${attempt}/${max_attempts}: unexpected response"
+		fi
+
+		if ((attempt < max_attempts)); then
+			log_warning "Hypervisor query failed (attempt ${attempt}/${max_attempts}), retrying..."
+			sleep 2
+		fi
+	done
+
 	if [[ -z "${MANAGER_TYPE}" ]] || [[ "${MANAGER_TYPE}" == "null" ]]; then
+		log_error "Unexpected hypervisor response (expired token or unknown host?):"
+		cat "${HYPERVISOR_FILE}"
+		echo ""
 		die "Could not extract manager type from hypervisor info"
 	fi
 	log_debug "MANAGER_TYPE=${MANAGER_TYPE}"
@@ -911,7 +940,7 @@ function get_hmc_console_details() {
 	log_info "Getting HMC console details..."
 
 	# Extract primary HMC UUID
-	PRIMARY_HMC_UUID=$(jq -r '.host[].registration | select(length > 0) | .primary_hmc_uuid' "${HYPERVISOR_FILE}" 2>/dev/null)
+	PRIMARY_HMC_UUID=$(jq -r '.host[].registration | select(length > 0) | .primary_hmc_uuid' "${HYPERVISOR_FILE}" 2>/dev/null) || true
 	if [[ -z "${PRIMARY_HMC_UUID}" ]] || [[ "${PRIMARY_HMC_UUID}" == "null" ]]; then
 		log_error "Could not find primary HMC UUID in hypervisor info:"
 		cat "${HYPERVISOR_FILE}"
@@ -922,10 +951,11 @@ function get_hmc_console_details() {
 	# Query HMC information
 	log_info "Querying HMC information..."
 	SSH_IP=$(curl --tlsv1.2 --insecure --silent \
+		--connect-timeout "${CURL_CONNECT_TIMEOUT}" --max-time "${CURL_MAX_TIME}" \
 		--request GET \
 		--header "X-Auth-Token:${TOKEN_ID}" \
 		"https://${SERVER_IP}:8774/v2.1/${PROJECT_ID}/ibm-hmcs/${PRIMARY_HMC_UUID}" 2>/dev/null | \
-		jq -r .hmc.registration.access_ip 2>/dev/null)
+		jq -r .hmc.registration.access_ip 2>/dev/null) || true
 
 	if [[ -z "${SSH_IP}" ]] || [[ "${SSH_IP}" == "null" ]]; then
 		die "Could not extract HMC access IP"
@@ -966,14 +996,14 @@ function get_pvm_console_details() {
 	log_info "Getting PowerVM console details..."
 
 	# Extract user ID
-	USER_ID=$(jq -r '.host[].registration | select(length > 0) | .user_id' "${HYPERVISOR_FILE}" 2>/dev/null)
+	USER_ID=$(jq -r '.host[].registration | select(length > 0) | .user_id' "${HYPERVISOR_FILE}" 2>/dev/null) || true
 	if [[ -z "${USER_ID}" ]] || [[ "${USER_ID}" == "null" ]]; then
 		die "Could not extract user_id from hypervisor info"
 	fi
 	log_debug "USER_ID=${USER_ID}"
 
 	# Extract access IP
-	SSH_IP=$(jq -r '.host[].registration | select(length > 0) | .access_ip' "${HYPERVISOR_FILE}" 2>/dev/null)
+	SSH_IP=$(jq -r '.host[].registration | select(length > 0) | .access_ip' "${HYPERVISOR_FILE}" 2>/dev/null) || true
 	if [[ -z "${SSH_IP}" ]] || [[ "${SSH_IP}" == "null" ]]; then
 		die "Could not extract access_ip from hypervisor info"
 	fi
@@ -1022,7 +1052,7 @@ function get_console_details() {
 	esac
 
 	# Extract host display name
-	HOST_DISPLAY_NAME=$(jq -r '.host[].registration | select(length > 0) | .host_display_name' "${HYPERVISOR_FILE}" 2>/dev/null)
+	HOST_DISPLAY_NAME=$(jq -r '.host[].registration | select(length > 0) | .host_display_name' "${HYPERVISOR_FILE}" 2>/dev/null) || true
 	if [[ -z "${HOST_DISPLAY_NAME}" ]] || [[ "${HOST_DISPLAY_NAME}" == "null" ]]; then
 		die "Could not extract host display name from hypervisor info"
 	fi
