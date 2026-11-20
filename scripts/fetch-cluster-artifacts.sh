@@ -22,8 +22,9 @@
 # CI installation pod, including:
 #   - Extracting the INFRA ID from the pod logs
 #   - Fetching metadata.json and kubeconfig from the pod via oc rsh (Running pods)
-#   - Fetching the CI-generated installer SSH key pair (ssh-privatekey and
-#     ssh-publickey from /run/powervc-ipi-cicd-secrets/powervc-creds/) the same way
+#   - Fetching the installer SSH key pair the cluster was installed with
+#     (ssh-privatekey and ssh-publickey from the CI cluster profile, falling
+#     back to /tmp/.ssh) the same way, normalised for use with ssh
 #   - Falling back to SCP from the controller for metadata.json when the pod has
 #     already finished (kubeconfig is only accessible while the pod is Running)
 #
@@ -97,6 +98,14 @@ set -euo pipefail
 #==============================================================================
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
+
+# Directories inside the install container that hold the key pair the cluster
+# is installed with, in order of preference: the CI cluster profile mount, then
+# the copy the CI step places in /tmp/.ssh.
+readonly -a SSH_KEY_DIRS=(
+	"/var/run/secrets/ci.openshift.io/cluster-profile"
+	"/tmp/.ssh"
+)
 
 # ANSI color codes for enhanced terminal output
 readonly COLOR_RED='\033[0;31m'      # Error messages
@@ -786,14 +795,64 @@ function rsh_file() {
 }
 
 #------------------------------------------------------------------------------
+# fetch_ssh_key - Fetch one SSH key file from the pod and normalise it
+#
+# Tries each directory in SSH_KEY_DIRS in order and keeps the first copy that
+# oc rsh can read. oc rsh allocates a TTY, which turns every LF into CRLF, and
+# the CI secret has no trailing newline; OpenSSH rejects such a private key as
+# "invalid format". The file is therefore rewritten with CRs removed and a
+# trailing newline added. The key content is never printed.
+#
+# Arguments:
+#   $1 - File name inside each key directory (ssh-privatekey or ssh-publickey)
+#   $2 - Octal mode for the local file (600 or 644)
+#
+# Returns:
+#   0 - File written to <INFRAID>/<name>
+#   1 - File not readable from any directory
+#
+# Globals Read:
+#   INFRAID      - Destination directory name
+#   SSH_KEY_DIRS - Candidate directories inside the container
+#------------------------------------------------------------------------------
+function fetch_ssh_key() {
+	local name="$1"
+	local mode="$2"
+	local dest="${INFRAID}/${name}"
+	local dir
+
+	for dir in "${SSH_KEY_DIRS[@]}"; do
+		if rsh_file "${dir}/${name}" "${dest}"; then
+			local tmp
+			tmp=$(mktemp)
+			tr -d '\r' < "${dest}" > "${tmp}"
+			if [[ -n "$(tail -c1 "${tmp}")" ]]; then
+				echo >> "${tmp}"
+			fi
+			mv "${tmp}" "${dest}"
+			chmod "${mode}" "${dest}"
+			log_success "${name} written to ${dest} (from ${dir})"
+			return 0
+		fi
+	done
+
+	log_warning "Could not fetch ${name} via oc rsh from: ${SSH_KEY_DIRS[*]}"
+	return 1
+}
+
+#------------------------------------------------------------------------------
 # fetch_pod_artifacts - Retrieve metadata.json, kubeconfig and SSH keys from the pod
 #
 # Checks the pod phase first. If the pod is Running, uses oc rsh to fetch
-# /tmp/installer/metadata.json, /tmp/installer/auth/kubeconfig and the CI's
-# installer SSH key pair (ssh-privatekey, ssh-publickey) from
-# /run/powervc-ipi-cicd-secrets/powervc-creds/. The key pair is written to
+# /tmp/installer/metadata.json, /tmp/installer/auth/kubeconfig and the key pair
+# the cluster was installed with (ssh-privatekey, ssh-publickey) from the CI
+# cluster profile (SSH_KEY_DIRS). The key pair is written to
 # <INFRAID>/ssh-privatekey (mode 0600) and <INFRAID>/ssh-publickey; use the
 # private key with e.g. SshNode --ssh-key <INFRAID>/ssh-privatekey.
+#
+# Note: /run/powervc-ipi-cicd-secrets/powervc-creds/ssh-privatekey is a
+# different key (ed25519 "ci@powervc") that is not authorised on the cluster
+# nodes, so it is deliberately not used.
 #
 # If the pod has already finished, only the kubeconfig is inaccessible (it
 # lives only inside the container); a warning is emitted for it and the
@@ -830,7 +889,6 @@ function fetch_pod_artifacts() {
 
 	local metadata_ok=false
 	local kubeconfig_ok=false
-	local ssh_creds_dir="/run/powervc-ipi-cicd-secrets/powervc-creds"
 
 	if rsh_file "/tmp/installer/metadata.json" "${INFRAID}/metadata.json"; then
 		log_success "metadata.json written to ${INFRAID}/metadata.json"
@@ -847,21 +905,10 @@ function fetch_pod_artifacts() {
 	fi
 
 	# The CI generates the cluster's installer SSH key pair (not create-cluster.sh).
-	# Both files are best-effort. The private key is written 0600 (rsh_file
-	# moves a mktemp file) and is never printed.
-	if rsh_file "${ssh_creds_dir}/ssh-privatekey" "${INFRAID}/ssh-privatekey"; then
-		chmod 600 "${INFRAID}/ssh-privatekey"
-		log_success "ssh-privatekey written to ${INFRAID}/ssh-privatekey"
-	else
-		log_warning "Could not fetch ${ssh_creds_dir}/ssh-privatekey via oc rsh"
-	fi
-
-	if rsh_file "${ssh_creds_dir}/ssh-publickey" "${INFRAID}/ssh-publickey"; then
-		chmod 644 "${INFRAID}/ssh-publickey"
-		log_success "ssh-publickey written to ${INFRAID}/ssh-publickey"
-	else
-		log_warning "Could not fetch ${ssh_creds_dir}/ssh-publickey via oc rsh"
-	fi
+	# Both files are best-effort. The private key is written 0600 and is never
+	# printed.
+	fetch_ssh_key "ssh-privatekey" 600 || true
+	fetch_ssh_key "ssh-publickey" 644 || true
 
 	log_debug "metadata_ok=${metadata_ok} kubeconfig_ok=${kubeconfig_ok}"
 
