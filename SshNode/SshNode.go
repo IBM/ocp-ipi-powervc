@@ -612,20 +612,26 @@ func runInteractiveSSH(client *ssh.Client, debug bool) error {
 
 	// Wire up standard I/O.  Stdin goes through the escape-sequence filter;
 	// stdout and stderr are forwarded directly.
-	stdinPR, stdinPW := io.Pipe()
-	session.Stdin = stdinPR
+	//
+	// StdinPipe is used (rather than session.Stdin) so that session.Wait()
+	// does not wait for a stdin copier: that copier would be blocked reading
+	// the terminal, so Wait would hang after the remote shell exits until the
+	// user pressed another key.
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("cannot open stdin pipe: %w", err)
+	}
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
 
 	er := newEscapeReader(os.Stdin, escapeDone)
 
-	// Copy filtered stdin into the session pipe.
-	var stdinWg sync.WaitGroup
-	stdinWg.Add(1)
+	// Copy filtered stdin into the session. This goroutine may stay blocked
+	// reading the terminal after the session ends; it is not waited for, and
+	// the process exits right after this function returns.
 	go func() {
-		defer stdinWg.Done()
-		defer stdinPW.Close()
-		io.Copy(stdinPW, er) //nolint:errcheck // EOF / escape closes the pipe
+		defer stdinPipe.Close()
+		io.Copy(stdinPipe, er) //nolint:errcheck // EOF / escape / closed session ends the copy
 	}()
 
 	// If "~." is detected, close the session so session.Wait() unblocks.
@@ -669,7 +675,6 @@ func runInteractiveSSH(client *ssh.Client, debug bool) error {
 	// sessions (user types "exit", presses Ctrl-D, ~., or is interrupted), so
 	// we only surface genuine I/O / connection errors.
 	waitErr := session.Wait()
-	stdinWg.Wait() // drain the stdin goroutine before restoring the terminal
 
 	// Check whether the session ended due to the escape sequence.
 	select {
