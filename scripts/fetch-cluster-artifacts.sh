@@ -22,6 +22,8 @@
 # CI installation pod, including:
 #   - Extracting the INFRA ID from the pod logs
 #   - Fetching metadata.json and kubeconfig from the pod via oc rsh (Running pods)
+#   - Fetching the CI-generated installer SSH key pair (ssh-privatekey and
+#     ssh-publickey from /run/powervc-ipi-cicd-secrets/powervc-creds/) the same way
 #   - Falling back to SCP from the controller for metadata.json when the pod has
 #     already finished (kubeconfig is only accessible while the pod is Running)
 #
@@ -79,8 +81,9 @@
 #   2. Collect inputs: poll for running install pod, prompt for CONTROLLER_IP
 #      if not already set, validate SSH key
 #   3. Extract INFRA ID from pod logs (skipped if INFRAID is already set)
-#   4. Fetch metadata.json and kubeconfig from the pod via oc rsh (Running pod);
-#      if the pod has already finished, warns and skips the kubeconfig, then
+#   4. Fetch metadata.json, kubeconfig and the SSH key pair from the pod via
+#      oc rsh (Running pod); if the pod has already finished, warns and skips
+#      the kubeconfig and SSH keys, then
 #      falls back to SCP from the controller for metadata.json
 #   5. SCP artifact directory from controller host only when metadata.json was
 #      not already retrieved from the pod
@@ -783,10 +786,14 @@ function rsh_file() {
 }
 
 #------------------------------------------------------------------------------
-# fetch_pod_artifacts - Retrieve metadata.json and kubeconfig from the pod
+# fetch_pod_artifacts - Retrieve metadata.json, kubeconfig and SSH keys from the pod
 #
 # Checks the pod phase first. If the pod is Running, uses oc rsh to fetch
-# both /tmp/installer/metadata.json and /tmp/installer/auth/kubeconfig.
+# /tmp/installer/metadata.json, /tmp/installer/auth/kubeconfig and the CI's
+# installer SSH key pair (ssh-privatekey, ssh-publickey) from
+# /run/powervc-ipi-cicd-secrets/powervc-creds/. The key pair is written to
+# <INFRAID>/ssh-privatekey (mode 0600) and <INFRAID>/ssh-publickey; use the
+# private key with e.g. SshNode --ssh-key <INFRAID>/ssh-privatekey.
 #
 # If the pod has already finished, only the kubeconfig is inaccessible (it
 # lives only inside the container); a warning is emitted for it and the
@@ -814,8 +821,8 @@ function fetch_pod_artifacts() {
 	log_debug "pod_phase=${pod_phase}"
 
 	if [[ "${pod_phase}" != "Running" ]]; then
-		log_warning "Pod phase is '${pod_phase}' — kubeconfig is only accessible while the pod is Running"
-		log_warning "Skipping kubeconfig retrieval; set KUBECONFIG manually if needed"
+		log_warning "Pod phase is '${pod_phase}' — kubeconfig and SSH keys are only accessible while the pod is Running"
+		log_warning "Skipping kubeconfig and SSH key retrieval; set KUBECONFIG manually if needed"
 		return 1
 	fi
 
@@ -823,6 +830,7 @@ function fetch_pod_artifacts() {
 
 	local metadata_ok=false
 	local kubeconfig_ok=false
+	local ssh_creds_dir="/run/powervc-ipi-cicd-secrets/powervc-creds"
 
 	if rsh_file "/tmp/installer/metadata.json" "${INFRAID}/metadata.json"; then
 		log_success "metadata.json written to ${INFRAID}/metadata.json"
@@ -836,6 +844,23 @@ function fetch_pod_artifacts() {
 		kubeconfig_ok=true
 	else
 		log_warning "Could not fetch kubeconfig via oc rsh"
+	fi
+
+	# The CI generates the cluster's installer SSH key pair (not create-cluster.sh).
+	# Both files are best-effort. The private key is written 0600 (rsh_file
+	# moves a mktemp file) and is never printed.
+	if rsh_file "${ssh_creds_dir}/ssh-privatekey" "${INFRAID}/ssh-privatekey"; then
+		chmod 600 "${INFRAID}/ssh-privatekey"
+		log_success "ssh-privatekey written to ${INFRAID}/ssh-privatekey"
+	else
+		log_warning "Could not fetch ${ssh_creds_dir}/ssh-privatekey via oc rsh"
+	fi
+
+	if rsh_file "${ssh_creds_dir}/ssh-publickey" "${INFRAID}/ssh-publickey"; then
+		chmod 644 "${INFRAID}/ssh-publickey"
+		log_success "ssh-publickey written to ${INFRAID}/ssh-publickey"
+	else
+		log_warning "Could not fetch ${ssh_creds_dir}/ssh-publickey via oc rsh"
 	fi
 
 	log_debug "metadata_ok=${metadata_ok} kubeconfig_ok=${kubeconfig_ok}"
@@ -952,6 +977,9 @@ function main() {
 	log_info "Cluster directory: ./${INFRAID}/"
 	if [[ -s "${INFRAID}/auth/kubeconfig" ]]; then
 		log_info "Kubeconfig:        ./${INFRAID}/auth/kubeconfig"
+	fi
+	if [[ -s "${INFRAID}/ssh-privatekey" ]]; then
+		log_info "SSH private key:   ./${INFRAID}/ssh-privatekey"
 	fi
 }
 
