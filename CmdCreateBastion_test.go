@@ -16,6 +16,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,6 +432,32 @@ func TestNewSSHConfig(t *testing.T) {
 	}
 	if cfg.RetryDelay != sshRetryDelay {
 		t.Errorf("expected retryDelay %v, got %v", sshRetryDelay, cfg.RetryDelay)
+	}
+}
+
+func TestIsTransientSSHError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"no route", fmt.Errorf("unknown ssh response: ssh: connect to host 10.0.0.1 port 22: No route to host"), true},
+		{"refused", fmt.Errorf("unknown ssh response: ssh: connect to host 10.0.0.1 port 22: Connection refused"), true},
+		{"timed out", fmt.Errorf("unknown ssh response: ssh: connect to host 10.0.0.1 port 22: Connection timed out"), true},
+		{"closed by (sshd still starting)", fmt.Errorf("unknown ssh response: Connection closed by 10.130.41.162 port 22"), true},
+		{"reset by peer", fmt.Errorf("unknown ssh response: Connection reset by 10.0.0.1 port 22"), true},
+		{"kex identification", fmt.Errorf("unknown ssh response: kex_exchange_identification: Connection closed by remote host"), true},
+		{"permission denied", fmt.Errorf("SSH publickey permission denied for 10.0.0.1"), false},
+		{"unrelated", fmt.Errorf("unknown ssh response: something else"), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientSSHError(tc.err); got != tc.want {
+				t.Errorf("isTransientSSHError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

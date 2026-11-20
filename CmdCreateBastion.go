@@ -74,11 +74,39 @@ func newSSHConfig(host, keyPath string) *sshConfig {
 	}
 }
 
+// transientSSHErrors lists ssh output fragments that indicate the host is still
+// booting rather than permanently unreachable. The "closed"/"reset" forms occur
+// when sshd accepts the TCP connection but drops it while cloud-init is still
+// generating host keys or restarting sshd.
+var transientSSHErrors = []string{
+	"No route to host",
+	"Connection refused",
+	"Connection timed out",
+	"Connection closed by",
+	"Connection reset by",
+	"kex_exchange_identification",
+}
+
+// isTransientSSHError reports whether err looks like a transient failure that is
+// worth retrying while a freshly created server finishes booting.
+func isTransientSSHError(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, s := range transientSSHErrors {
+		if strings.Contains(err.Error(), s) {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForSSHReady waits for SSH to become available on the server.
 // It retries up to MaxRetries times with RetryDelay between attempts.
-// Only "No route to host", "Connection refused", and "Connection timed out"
-// errors are retried; any other error (including permission denied) causes
-// an immediate return.
+// Only the transient errors listed in transientSSHErrors (for example
+// "No route to host", "Connection refused", "Connection closed by") are
+// retried; any other error (including permission denied) causes an immediate
+// return.
 // Returns an error if the context is cancelled, if SSH doesn't become ready
 // after all attempts, or if a non-retryable error is encountered.
 func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
@@ -99,16 +127,7 @@ func waitForSSHReady(ctx context.Context, cfg *sshConfig) error {
 			return err
 		}
 
-		shouldContinue := false
-		if err != nil {
-			if strings.Contains(err.Error(), "No route to host") ||
-				strings.Contains(err.Error(), "Connection refused") ||
-				strings.Contains(err.Error(), "Connection timed out") {
-				shouldContinue = true
-			}
-		}
-
-		if !shouldContinue {
+		if !isTransientSSHError(err) {
 			return err
 		}
 
