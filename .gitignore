@@ -1,0 +1,27 @@
+# Private SSH key fetched by scripts/fetch-cluster-artifacts.sh into <INFRAID>/
+ssh-privatekey
+
+# Build output from the Makefile
+/ocp-ipi-powervc-linux-*
+/ocp-ipi-powervc-darwin-*
+/ocp-ipi-powervc-*.tgz
+/dist/
+/coverage.out
+/coverage.html
+/JobHistory/JobHistory
+/UploadRhcos/UploadRhcos
+/UploadRhcosAPI/UploadRhcosAPI
+/UploadCentos/UploadCentos
+/GrabConsole/GrabConsole
+/SshNode/SshNode
+
+# Local environment files (contain credentials); keep the example template
+/environment*
+!/environmentCI.example
+
+# Local logs, stray binaries and scratch output
+/PowerVC-Tool
+/UploadCentos/UploadCentos-linux-ppc64le
+/upload-rhcos.log
+/output.bug
+/output.errors
