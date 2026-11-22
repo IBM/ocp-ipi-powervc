@@ -122,7 +122,9 @@ To see which leases Kea currently holds, copy [`scripts/kea-leases.sh`](../scrip
 # ./kea-leases.sh -a -w 5
 ```
 
-If a VM's MAC never shows up, the VM is not sending DHCP requests. A VM configured with a static address (for example by cloud-init with `ipv4.method=manual`) never uses DHCP.
+Every Kea restart empties that table (for example when a reservation is added), so a VM that got its lease before the restart is missing until it renews, which can take about half the 31-day lease time. With `-a` such a VM is listed with its old address and "(before restart)" in the LAST-ACK column.
+
+If a VM's MAC never shows up, even with `-a`, the VM is not sending DHCP requests. A VM configured with a static address (for example by cloud-init with `ipv4.method=manual`) never uses DHCP.
 
 ## The console for the bootstrap VM should have a login prompt
 

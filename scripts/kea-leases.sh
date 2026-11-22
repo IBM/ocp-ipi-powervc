@@ -51,7 +51,11 @@
 #   -l, --log <file>     Kea log file (default: the file logger output in the
 #                        config, else /var/log/kea/kea-dhcp4.log); the rotated
 #                        <file>.1 is read first when it exists
-#   -a, --all            Also list reservations that have no current lease
+#   -a, --all            Also list reservations that have no current lease.  A
+#                        client whose lease was granted before the last Kea
+#                        restart is shown with its old address and
+#                        "(before restart)": Kea forgot the lease, but the
+#                        client still holds it until it renews.
 #   -w, --watch <sec>    Keep running: redraw the table every <sec> seconds
 #                        (like watch(1)) until interrupted.  The config and log
 #                        are re-read on every pass, so new VMs show up as their
@@ -201,6 +205,11 @@ function print_leases() {
 
       # File 2: the Kea log(s), oldest first.
       /DHCPSRV_MEMFILE_DB .*opening memory file lease database/ {
+        # Remember what the previous run held, for --all: those clients still
+        # believe they have a lease and only come back at their renew time.
+        for (ip in lmac) {
+          pip[lmac[ip]] = ip; pack[lmac[ip]] = lack[ip]; pexp[lmac[ip]] = lexp[ip]
+        }
         delete lmac; delete lack; delete lexp; delete ipof
         marker = 1
         persistent = ($0 ~ /persist=true/)
@@ -243,8 +252,13 @@ function print_leases() {
         }
         if (show_all)
           for (mac in rip)
-            if (!(mac in have))
-              printf "%s\t%s\t%s\t-\t-\n", rip[mac], mac, rhost[mac]
+            if (!(mac in have)) {
+              if ((mac in pip) && pexp[mac] > now)
+                printf "%s\t%s\t%s\t%s (before restart)\t%s\n", pip[mac], mac, rhost[mac], \
+                       pack[mac], strftime("%Y-%m-%d %H:%M:%S", pexp[mac])
+              else
+                printf "%s\t%s\t%s\t-\t-\n", rip[mac], mac, rhost[mac]
+            }
       }
     ' <(printf '%s\n' "${reservations}") <(cat "${log_files[@]}") \
       | sort -t "$(printf '\t')" -V -k1,1
