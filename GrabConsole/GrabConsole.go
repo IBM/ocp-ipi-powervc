@@ -434,6 +434,11 @@ type clusterMetadata struct {
 	OpenStack struct {
 		Cloud string `json:"cloud"`
 	} `json:"openstack"`
+	// PowerVC is written instead of "openstack" by installers that use the
+	// PowerVC platform.
+	PowerVC struct {
+		Cloud string `json:"cloud"`
+	} `json:"powervc"`
 }
 
 // readMetadata parses CLUSTER_DIR/metadata.json and returns infraID and cloud name.
@@ -450,10 +455,15 @@ func readMetadata(clusterDir string) (infraID, cloud string, err error) {
 	if m.InfraID == "" {
 		return "", "", fmt.Errorf("infraID is empty in %s", path)
 	}
-	if m.OpenStack.Cloud == "" {
-		return "", "", fmt.Errorf("openstack.cloud is empty in %s", path)
+	// Prefer openstack.cloud, then powervc.cloud (same order as Metadata.GetCloud).
+	cloud = m.OpenStack.Cloud
+	if cloud == "" {
+		cloud = m.PowerVC.Cloud
 	}
-	return m.InfraID, m.OpenStack.Cloud, nil
+	if cloud == "" {
+		return "", "", fmt.Errorf("neither openstack.cloud nor powervc.cloud is set in %s", path)
+	}
+	return m.InfraID, cloud, nil
 }
 
 // ─── clouds.yaml parsing ──────────────────────────────────────────────────────
