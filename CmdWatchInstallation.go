@@ -1573,6 +1573,11 @@ func dhcpdConf(ctx context.Context, filename string, clouds cloudFlags, domainNa
 // JSON file with a static host reservation for every server that has a resolvable
 // MAC and IP address. No address pool is defined, so (like the dhcpd configuration's
 // "ignore unknown-clients") only reserved hosts receive leases.
+//
+// Leases are kept in memory only ("persist": false), so every restart of
+// kea-dhcp4 (which happens whenever this configuration changes) discards all
+// leases. The reservations are the source of truth, and a lease left behind by a
+// deleted VM would otherwise block a new VM that Neutron gave the same address.
 func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName string, dhcpInterface string, dhcpSubnet string, dhcpNetmask string, dhcpRouter string, dhcpDnsServers string, dhcpServerId string) error {
 	maskIP := net.ParseIP(dhcpNetmask).To4()
 	if maskIP == nil {
@@ -1609,7 +1614,7 @@ func keaConf(ctx context.Context, filename string, clouds cloudFlags, domainName
 			},
 			"lease-database": map[string]any{
 				"type":    "memfile",
-				"persist": true,
+				"persist": false,
 			},
 			"valid-lifetime":     2678400,
 			"max-valid-lifetime": 2678400,
