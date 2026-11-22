@@ -86,3 +86,18 @@ func TestReadMetadata(t *testing.T) {
 		})
 	}
 }
+
+// TestCloudsYAMLPathUsesHOME verifies that $HOME decides where clouds.yaml is
+// looked up, so a container UID with no passwd entry still works.
+func TestCloudsYAMLPathUsesHOME(t *testing.T) {
+	t.Setenv("HOME", "/tmp/fakehome")
+
+	got, err := cloudsYAMLPath()
+	if err != nil {
+		t.Fatalf("cloudsYAMLPath() error: %v", err)
+	}
+	want := "/tmp/fakehome/.config/openstack/clouds.yaml"
+	if got != want {
+		t.Errorf("cloudsYAMLPath() = %q, want %q", got, want)
+	}
+}

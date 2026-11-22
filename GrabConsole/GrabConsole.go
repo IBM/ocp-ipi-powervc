@@ -487,19 +487,25 @@ type cloudsYAML struct {
 
 // cloudsYAMLPath returns the resolved path to clouds.yaml.
 //
-// We use os/user.Current().HomeDir rather than os.Getenv("HOME") so that the
-// path matches what gophercloud/utils clientconfig.FindAndReadCloudsYAML uses
-// internally.  If $HOME and the real home directory differ (e.g. the process
-// was started with a modified environment), using os.Getenv("HOME") here would
-// let our readCloudsYAML succeed while clientconfig.AuthOptions would still
-// fail with "no clouds.yml file found" because its independent search never
-// finds the file.
+// The home directory comes from $HOME (os.UserHomeDir) first, then from
+// os/user.Current().HomeDir.  $HOME has to win: OpenShift runs containers under
+// an arbitrary UID that has no /etc/passwd entry, so user.Current() fails with
+// "unknown userid" there, and the user has to be able to point HOME at a
+// directory holding .config/openstack/clouds.yaml.
+//
+// Using $HOME instead of the passwd entry cannot make this disagree with
+// gophercloud: getServerDetails exports the path returned here as
+// OS_CLIENT_CONFIG_FILE, which clientconfig.FindAndReadCloudsYAML checks first.
 func cloudsYAMLPath() (string, error) {
-	u, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine current user home directory: %w", err)
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		u, uerr := user.Current()
+		if uerr != nil {
+			return "", fmt.Errorf("cannot determine home directory ($HOME is unset and the current user lookup failed): %w", uerr)
+		}
+		home = u.HomeDir
 	}
-	return filepath.Join(u.HomeDir, ".config", "openstack", "clouds.yaml"), nil
+	return filepath.Join(home, ".config", "openstack", "clouds.yaml"), nil
 }
 
 // readCloudsYAML parses clouds.yaml and returns the auth block for the named
@@ -587,14 +593,14 @@ type serverExtAttrs struct {
 //
 //  1. $OS_CLIENT_CONFIG_FILE  (checked first — this is what we set)
 //  2. ./clouds.yaml  (current working directory)
-//  3. ~/.config/openstack/clouds.yaml  (via user.Current().HomeDir)
+//  3. ~/.config/openstack/clouds.yaml  (via the passwd entry's home directory)
 //  4. /etc/openstack/clouds.yaml
 //
-// Our own readCloudsYAML uses user.Current().HomeDir, which matches search
-// path 3 above.  However, if the library reaches path 3 and still does not
-// find the file — for example because the CWD search (path 2) contains a
-// stale or misnamed file — it falls through to try clouds.yml, producing the
-// misleading error:
+// Our own readCloudsYAML resolves ~ from $HOME (see cloudsYAMLPath), which can
+// differ from the passwd entry the library uses for search path 3.  Without
+// pinning, the library could reach path 3 and not find the file — for example
+// because the CWD search (path 2) contains a stale or misnamed file — and fall
+// through to try clouds.yml, producing the misleading error:
 //
 //	unable to load clouds.yaml: no clouds.yml file found: file does not exist
 //

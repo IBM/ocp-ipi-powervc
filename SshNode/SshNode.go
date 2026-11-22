@@ -299,11 +299,17 @@ type cloudsYAML struct {
 // Errors reading or parsing the file are returned so the caller can decide
 // whether to abort or fall back.
 func readCACert(cloud string) (string, error) {
-	u, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	// $HOME first: OpenShift runs containers under an arbitrary UID with no
+	// /etc/passwd entry, where user.Current() fails with "unknown userid".
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		u, uerr := user.Current()
+		if uerr != nil {
+			return "", fmt.Errorf("cannot determine home directory ($HOME is unset and the current user lookup failed): %w", uerr)
+		}
+		home = u.HomeDir
 	}
-	path := filepath.Join(u.HomeDir, ".config", "openstack", "clouds.yaml")
+	path := filepath.Join(home, ".config", "openstack", "clouds.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("cannot read %s: %w", path, err)
