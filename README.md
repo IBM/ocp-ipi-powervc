@@ -360,6 +360,7 @@ Helper shell scripts live in the [`scripts/`](scripts/) directory and are includ
 | `find-orphaned-ports.py` | Find (and optionally delete with `--delete`) orphaned Neutron ports in the current project |
 | `watch-bastions-port.sh` | Continuously watch bastion VMs and print a line when their addresses or ports change or a bastion disappears |
 | `dhcp-dump-reserved.sh` | Run on the controller: `tcpdump` only the DHCP packets for MACs reserved in the Kea config, re-reading the config as reservations come and go |
+| `kea-leases.sh` | Run on the controller: list the DHCPv4 leases Kea currently holds in memory (rebuilt from its log), paired with the server name from the reservation; `-w <sec>` redraws it periodically |
 | `wait-for-dns.sh` | Poll DNS until all required OpenShift cluster entries are resolvable |
 | `build-nightly.sh` | Download a nightly OCP build and set up a test environment |
 | `extract-release-tools.sh` | Extract the `openshift-install` and `oc` binaries for a release into `./<VERSION>/` |

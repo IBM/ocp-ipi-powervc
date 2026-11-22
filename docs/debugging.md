@@ -116,6 +116,12 @@ To watch only the DHCP traffic of the reserved MACs, copy [`scripts/dhcp-dump-re
 # ./dhcp-dump-reserved.sh
 ```
 
+To see which leases Kea currently holds, copy [`scripts/kea-leases.sh`](../scripts/kea-leases.sh) to the controller and run it there. Leases are kept in memory only (there is no lease file), so the script rebuilds the table from Kea's log since its last start and pairs each lease with the server name from the matching reservation. Use `-a` to also list reservations that have no lease yet, and `-w <seconds>` to keep running and redraw the table every few seconds:
+
+```
+# ./kea-leases.sh -a -w 5
+```
+
 If a VM's MAC never shows up, the VM is not sending DHCP requests. A VM configured with a static address (for example by cloud-init with `ipv4.method=manual`) never uses DHCP.
 
 ## The console for the bootstrap VM should have a login prompt
