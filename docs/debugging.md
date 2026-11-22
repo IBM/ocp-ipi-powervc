@@ -101,6 +101,23 @@ Then make sure that the dhcpd server assigned the DHCP IP addresses:
 # journalctl --no-pager --boot --unit=dhcpd | egrep $(echo -n '('; grep 'hardware ethernet' /etc/dhcp/dhcpd.conf | sed -r -e 's,^[^f]*([^;]*);.*$,\1,' | paste -sd '|' | tr -d '\n'; echo -n ')')
 ```
 
+If the controller uses Kea (`--dhcpServer kea`) instead of dhcpd, check the `kea-dhcp4` service and its log:
+
+```
+# systemctl status kea-dhcp4.service --no-pager -l
+# tail -f /var/log/kea/kea-dhcp4.log
+```
+
+The generated Kea config has no address pool; it only answers MACs listed under `reservations` in `/etc/kea/kea-dhcp4.conf`. A `DHCPDISCOVER` from any other MAC logs `ALLOC_ENGINE_V4_ALLOC_FAIL_NO_POOLS`. This is expected for unrelated machines on the same network and is not an error.
+
+To watch only the DHCP traffic of the reserved MACs, copy [`scripts/dhcp-dump-reserved.sh`](../scripts/dhcp-dump-reserved.sh) to the controller and run it there. It re-reads the Kea config every few seconds, so it follows reservations as VMs are created and deleted:
+
+```
+# ./dhcp-dump-reserved.sh
+```
+
+If a VM's MAC never shows up, the VM is not sending DHCP requests. A VM configured with a static address (for example by cloud-init with `ipv4.method=manual`) never uses DHCP.
+
 ## The console for the bootstrap VM should have a login prompt
 
 Use the script `console.sh` to get the ssh command which will log into the HMC or NovaLink controller and access the specific VM's console.
